@@ -2,7 +2,7 @@
 
 #SBATCH --nodes=1
 #SBATCH --ntasks=10
-#SBATCH --time=00:30:00
+#SBATCH --time=01:00:00
 #SBATCH --job-name=pelec-post
 #SBATCH --output=pelec-post_%j.out
 #SBATCH --error=pelec-post_%j.err

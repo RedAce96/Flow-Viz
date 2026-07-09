@@ -24,6 +24,8 @@ from matplotlib.patches import Rectangle
 from matplotlib.cm import ScalarMappable
 from matplotlib.animation import FuncAnimation, PillowWriter
 
+import pp_functions_database as fdb_mod
+
 
 # ---------------------------------------------------------------------------
 # 0.  COLOURMAP HELPERS
@@ -1660,4 +1662,547 @@ def plot_gpi_profiles(bl_profiles, gpi_results, output_path=None,
         plt.savefig(output_path, dpi=200, bbox_inches="tight")
         plt.close(fig)
 
+    return fig
+
+
+# ===========================================================================
+#  PHASE 1: DISTURBANCE RECONSTRUCTION PLOTS
+# ===========================================================================
+
+def plot_harmonic_reconstruction(time, measured, reconstructed, residual,
+                                  harmonic_signals, probe_label="",
+                                  output_path=None, figsize=(14, 10),
+                                  mean_background=None,
+                                  recon_method=None,
+                                  recon_freq=None):
+    """4-panel figure: measured, overlay, per-harmonic contributions, residual.
+
+    Parameters
+    ----------
+    time : ndarray — time array [s]
+    measured : ndarray — measured (full) signal
+    reconstructed : ndarray — summed harmonic reconstruction (mean-shifted)
+    residual : ndarray — zero-mean residual
+    harmonic_signals : dict — per-harmonic signals from ``reconstruct_from_harmonics``
+    probe_label : str, default '' — label for titles
+    output_path : str, optional
+    figsize : tuple, default (14, 10)
+    mean_background : float, optional — DC level subtracted before reconstruction
+    recon_method : str, optional — "harmonics" or "band"
+    recon_freq : float, optional — fundamental frequency [Hz]
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    fig, axes = plt.subplots(4, 1, figsize=figsize, sharex=True)
+
+    # Build metadata string
+    meta_parts = []
+    if recon_method is not None:
+        meta_parts.append(f"method={recon_method}")
+    if recon_freq is not None:
+        meta_parts.append(f"f₀={recon_freq:.3e} Hz")
+    if mean_background is not None:
+        meta_parts.append(f"mean={mean_background:.2f}")
+    meta_str = "  |  ".join(meta_parts) if meta_parts else ""
+
+    # Panel 1: Measured
+    axes[0].plot(time, measured, "k-", linewidth=0.8, label="Measured")
+    if mean_background is not None:
+        axes[0].axhline(mean_background, color="gray", linestyle=":",
+                        linewidth=0.7, label=f"Background mean = {mean_background:.1f}")
+    axes[0].set_ylabel("Signal", fontsize=11)
+    title0 = f"Measured signal — {probe_label}"
+    if meta_str:
+        title0 += f"\n{meta_str}"
+    axes[0].set_title(title0, fontsize=11)
+    axes[0].grid(True, alpha=0.3)
+    axes[0].legend(fontsize=8, loc="upper right")
+
+    # Panel 2: Overlay measured + reconstruction
+    axes[1].plot(time, measured, "k-", linewidth=0.5, alpha=0.5, label="Measured")
+    axes[1].plot(time, reconstructed, "r-", linewidth=1.2, label="Reconstructed")
+    axes[1].set_ylabel("Signal", fontsize=11)
+    rms_err = np.sqrt(np.mean(residual**2))
+    rel_rms = rms_err / np.sqrt(np.mean((measured - np.mean(measured))**2)) if np.std(measured) > 0 else 0
+    axes[1].set_title(f"Measured vs reconstruction  |  rel. RMS = {rel_rms:.3f}", fontsize=12)
+    axes[1].grid(True, alpha=0.3)
+    axes[1].legend(fontsize=9, loc="upper right")
+
+    # Panel 3: Per-harmonic contributions (offset for clarity)
+    offset = 0.0
+    colors = ["C0", "C1", "C2", "C3", "C4", "C5", "C6", "C7"]
+    for i, (label, sig) in enumerate(sorted(harmonic_signals.items())):
+        sig_off = sig - offset
+        axes[2].plot(time, sig_off, color=colors[i % len(colors)],
+                     linewidth=0.8, label=label)
+        offset += max(np.abs(sig)) * 1.5
+    axes[2].set_ylabel("Signal (offset)", fontsize=11)
+    axes[2].set_title("Per-harmonic contributions", fontsize=12)
+    axes[2].grid(True, alpha=0.3)
+    axes[2].legend(fontsize=8, loc="upper right", ncol=2)
+
+    # Panel 4: Residual
+    axes[3].plot(time, residual, "b-", linewidth=0.8, label="Residual")
+    axes[3].axhline(0, color="gray", linestyle=":", linewidth=0.5)
+    axes[3].set_xlabel("Time [s]", fontsize=11)
+    axes[3].set_ylabel("Residual", fontsize=11)
+    axes[3].set_title(f"Residual (zero-mean basis)  |  RMS = {rms_err:.3f}", fontsize=12)
+    axes[3].grid(True, alpha=0.3)
+    axes[3].legend(fontsize=9, loc="upper right")
+
+    plt.tight_layout()
+    if output_path is not None:
+        plt.savefig(output_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_energy_budget_vs_x(probe_x, energy_budgets, output_path=None,
+                             figsize=(12, 5)):
+    """Plot energy fractions (fundamental, harmonic, residual) vs streamwise position.
+
+    Parameters
+    ----------
+    probe_x : array-like — probe x-positions [cm]
+    energy_budgets : list of dict — one per probe, from ``compute_energy_budget``
+    output_path : str, optional
+    figsize : tuple, default (12, 5)
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    probe_x = np.asarray(probe_x, dtype=float)
+    n = len(energy_budgets)
+
+    E_total = np.array([eb["E_total"] for eb in energy_budgets])
+    E_recon = np.array([eb["E_recon_frac"] for eb in energy_budgets])
+    E_resid = np.array([eb["E_residual_frac"] for eb in energy_budgets])
+
+    # Sort by x for clean monotonic plots
+    sort_idx = np.argsort(probe_x)
+    probe_x = probe_x[sort_idx]
+    E_total = E_total[sort_idx]
+    E_recon = E_recon[sort_idx]
+    E_resid = E_resid[sort_idx]
+
+    # Extract metadata if present
+    mean_bg = np.array([eb.get("mean_background", np.nan) for eb in energy_budgets])
+    method = energy_budgets[0].get("reconstruction_method", "unknown") if energy_budgets else "unknown"
+    f0 = energy_budgets[0].get("fundamental_freq", None) if energy_budgets else None
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize, sharex=True)
+
+    # Top: stacked area — fractions
+    ax1.fill_between(probe_x, 0, E_recon, color="C0", alpha=0.6,
+                     label="Reconstruction (harmonics)")
+    ax1.fill_between(probe_x, E_recon, E_recon + E_resid, color="C1", alpha=0.6,
+                     label="Residual (broadband)")
+    ax1.set_ylabel("Energy fraction", fontsize=11)
+    title1 = "Energy budget vs x — reconstruction vs residual"
+    if f0 is not None:
+        title1 += f"  |  f₀={f0:.3e} Hz"
+    ax1.set_title(title1, fontsize=12)
+    ax1.legend(fontsize=9, loc="upper right")
+    ax1.set_ylim(0, 1.05)
+    ax1.grid(True, alpha=0.3)
+
+    # Bottom: log total energy
+    ax2.semilogy(probe_x, E_total, "ko-", markersize=3, linewidth=1.0,
+                 label="Total mean-square energy")
+    ax2.set_xlabel("x [cm]", fontsize=11)
+    ax2.set_ylabel("Mean-square energy", fontsize=11)
+    ax2.set_title("Total disturbance energy (zero-mean basis)", fontsize=12)
+    ax2.grid(True, alpha=0.3)
+    ax2.legend(fontsize=9)
+
+    # Add annotation
+    info_text = f"Method: {method}  |  N={n} probes"
+    if not np.all(np.isnan(mean_bg)):
+        info_text += f"  |  mean_bg ≈ {np.nanmean(mean_bg):.1f}"
+    fig.text(0.5, 0.01, info_text, ha="center", fontsize=9,
+             style="italic", color="dimgray")
+
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.08)
+    if output_path is not None:
+        plt.savefig(output_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_residual_vs_x(probe_x, residual_stats, output_path=None,
+                        figsize=(12, 8)):
+    """Plot residual RMS, R², skewness, and kurtosis vs streamwise position.
+
+    Parameters
+    ----------
+    probe_x : array-like — probe x-positions [cm]
+    residual_stats : list of dict — one per probe, from ``compute_residual_stats``
+    output_path : str, optional
+    figsize : tuple, default (12, 8)
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    probe_x = np.asarray(probe_x, dtype=float)
+    n = len(residual_stats)
+
+    rms_rel = np.array([rs["rms_residual_rel"] for rs in residual_stats])
+    R_sq = np.array([rs["R_squared"] for rs in residual_stats])
+    skew = np.array([rs["skewness"] for rs in residual_stats])
+    kurt = np.array([rs["kurtosis"] for rs in residual_stats])
+
+    fig, axes = plt.subplots(4, 1, figsize=figsize, sharex=True)
+
+    # Sort by x for clean monotonic plots
+    sort_idx = np.argsort(probe_x)
+    probe_x = probe_x[sort_idx]
+    rms_rel = rms_rel[sort_idx]
+    R_sq = R_sq[sort_idx]
+    skew = skew[sort_idx]
+    kurt = kurt[sort_idx]
+
+    axes[0].plot(probe_x, rms_rel, "bo-", markersize=4, linewidth=1.0)
+    axes[0].set_ylabel("RMS residual (rel.)", fontsize=11)
+    axes[0].set_title("Residual RMS (rel. to measured signal variance)", fontsize=12)
+    axes[0].grid(True, alpha=0.3)
+
+    axes[1].plot(probe_x, R_sq, "go-", markersize=4, linewidth=1.0)
+    axes[1].axhline(0.95, color="gray", linestyle=":", alpha=0.5, label="0.95")
+    axes[1].axhline(0.99, color="gray", linestyle=":", alpha=0.5, label="0.99")
+    axes[1].set_ylabel("R²", fontsize=11)
+    axes[1].set_title("Coefficient of determination (1 = perfect reconstruction)", fontsize=12)
+    axes[1].legend(fontsize=8)
+    axes[1].grid(True, alpha=0.3)
+
+    axes[2].plot(probe_x, skew, "mo-", markersize=4, linewidth=1.0)
+    axes[2].axhline(0, color="gray", linestyle=":", alpha=0.5)
+    axes[2].set_ylabel("Skewness", fontsize=11)
+    axes[2].set_title("Residual skewness (0 = symmetric; |skew| > 2 suggests nonlinearity)", fontsize=12)
+    axes[2].grid(True, alpha=0.3)
+
+    axes[3].plot(probe_x, kurt, "co-", markersize=4, linewidth=1.0)
+    axes[3].axhline(0, color="gray", linestyle=":", alpha=0.5)
+    axes[3].set_xlabel("x [cm]", fontsize=11)
+    axes[3].set_ylabel("Kurtosis (excess)", fontsize=11)
+    axes[3].set_title("Residual excess kurtosis (0 = Gaussian; >> 0 = heavy tails)", fontsize=12)
+    axes[3].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    if output_path is not None:
+        plt.savefig(output_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_harmonic_recon_comparison(time_uniform, signal_matrix, probe_data,
+                                    probe_x, energy_budgets, residual_stats_chosen,
+                                    n_valid, output_dir, probe_prefix,
+                                    probe_indices=None,
+                                    harmonic_freq=None, num_harmonics=5):
+    """Convenience: loop over selected probes and generate reconstruction plots.
+
+    Parameters
+    ----------
+    time_uniform : ndarray — common time base
+    signal_matrix : ndarray, (L, n_valid) — preprocessed signals
+    probe_data : list of dict — probe metadata
+    probe_x : list of float — probe x-positions [cm]
+    energy_budgets : list of dict — per-probe energy budgets
+    residual_stats_chosen : list of dict — per-probe residual stats
+    n_valid : int — number of valid probes
+    output_dir : Path — output directory for figures
+    probe_prefix : str — prefix for filenames
+    probe_indices : list of int, optional — which probes to plot (default [0,49,99])
+    harmonic_freq : float, optional — fundamental harmonic frequency [Hz]
+    num_harmonics : int, default 5 — number of harmonics to reconstruct
+    """
+    if harmonic_freq is None:
+        harmonic_freq = 10.0e6
+    if probe_indices is None:
+        probe_indices = [0, min(49, n_valid - 1), min(99, n_valid - 1)]
+
+    for idx in probe_indices:
+        if idx >= n_valid:
+            continue
+        sim_signal = signal_matrix[:, idx]
+        p = probe_data[idx]
+        label = f"Probe {idx} — x={p['x']:.3f} cm"
+
+        # Reconstruct harmonics for this probe
+        dt = p.get("dt", 1.0)
+        recon_total, harm_sigs, _ = fdb_mod.reconstruct_from_harmonics(
+            sim_signal, dt,
+            harmonic_freq=harmonic_freq,
+            num_harmonics=num_harmonics,
+        )
+        recon_total = recon_total.ravel()
+        for key in harm_sigs:
+            harm_sigs[key] = harm_sigs[key].ravel()
+
+        residual = sim_signal - recon_total
+        out = output_dir / f"{probe_prefix}_recon_probe{idx:03d}.png"
+        plot_harmonic_reconstruction(
+            time_uniform, sim_signal, recon_total, residual,
+            harm_sigs, probe_label=label, output_path=str(out),
+        )
+
+
+# ===========================================================================
+#  PHASE 2: TRANSIENT ANALYSIS PLOTS
+# ===========================================================================
+
+def plot_spectrogram(time, signal, fs, output_path=None, fmax=None,
+                     title="Spectrogram", figsize=(12, 5)):
+    """Plot STFT spectrogram of a probe signal.
+
+    Parameters
+    ----------
+    time : ndarray — time [s]
+    signal : ndarray — signal
+    fs : float — sampling frequency [Hz]
+    output_path : str, optional
+    fmax : float, optional — frequency limit for y-axis
+    title : str, default "Spectrogram"
+    figsize : tuple, default (12, 5)
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    try:
+        from scipy import signal as scipy_signal
+    except ImportError:
+        raise ImportError("scipy.signal required for plot_spectrogram")
+
+    signal = np.asarray(signal, dtype=float).ravel()
+    f, t, Sxx_dB = fdb_mod.compute_spectrogram(signal, fs)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    im = ax.pcolormesh(t, f, Sxx_dB, shading="auto", cmap="inferno",
+                       rasterized=True)
+    cb = fig.colorbar(im, ax=ax, pad=0.02, shrink=0.85)
+    cb.set_label("Magnitude [dB]", fontsize=10)
+
+    ax.set_xlabel("Time [s]", fontsize=11)
+    ax.set_ylabel("Frequency [Hz]", fontsize=11)
+    ax.set_title(title, fontsize=12)
+    if fmax is not None:
+        ax.set_ylim(0, fmax)
+    ax.grid(True, alpha=0.2, which="both")
+
+    plt.tight_layout()
+    if output_path is not None:
+        plt.savefig(output_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_envelope_with_signal(time, signal_raw, signal_filtered, envelope,
+                               packet_stats, output_path=None,
+                               title="Envelope analysis", figsize=(12, 8)):
+    """3-panel: raw+filtered, envelope, instantaneous frequency.
+
+    Parameters
+    ----------
+    time : ndarray
+    signal_raw : ndarray — original signal
+    signal_filtered : ndarray — bandpass-filtered signal
+    envelope : ndarray — Hilbert envelope
+    packet_stats : dict — from ``extract_packet_stats``
+    output_path : str, optional
+    title : str
+    figsize : tuple, default (12, 8)
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    fig, axes = plt.subplots(3, 1, figsize=figsize, sharex=True)
+
+    ax = axes[0]
+    ax.plot(time, signal_raw, "k-", linewidth=0.5, alpha=0.5, label="Raw")
+    ax.plot(time, signal_filtered, "r-", linewidth=1.0, label="Filtered")
+    ax.set_ylabel("Signal", fontsize=11)
+    ax.legend(fontsize=9, loc="upper right")
+    ax.grid(True, alpha=0.3)
+    ax.set_title(title, fontsize=12)
+
+    ax = axes[1]
+    ax.plot(time, signal_filtered, "r-", linewidth=0.5, alpha=0.3)
+    ax.plot(time, envelope, "b-", linewidth=1.5, label="Envelope")
+    if packet_stats.get("peak_time") is not None:
+        pt = packet_stats["peak_time"]
+        pa = packet_stats["peak_amplitude"]
+        ax.axvline(pt, color="gray", linestyle=":", alpha=0.7)
+        ax.plot(pt, pa, "ko", markersize=6)
+    if packet_stats.get("arrival_time") is not None:
+        ax.axvline(packet_stats["arrival_time"], color="green",
+                   linestyle="--", alpha=0.5, label="Arrival")
+    ax.set_ylabel("Amplitude", fontsize=11)
+    ax.legend(fontsize=9, loc="upper right")
+    ax.grid(True, alpha=0.3)
+
+    ax = axes[2]
+    ax.plot(time, signal_filtered, "r-", linewidth=0.5, alpha=0.3)
+    ax.set_xlabel("Time [s]", fontsize=11)
+    ax.set_ylabel("Filtered signal", fontsize=11)
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    if output_path is not None:
+        plt.savefig(output_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_envelope_growth(probe_x, packet_stats_list, output_path=None,
+                          figsize=(12, 8)):
+    """Plot envelope metrics vs streamwise position.
+
+    Parameters
+    ----------
+    probe_x : array-like — x-positions [cm]
+    packet_stats_list : list of dict — one per probe from ``extract_packet_stats``
+    output_path : str, optional
+    figsize : tuple, default (12, 8)
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    probe_x = np.asarray(probe_x, dtype=float)
+    peak_amp = np.array([ps.get("peak_amplitude", np.nan) for ps in packet_stats_list])
+    arrival = np.array([ps.get("arrival_time", np.nan) for ps in packet_stats_list])
+    energy = np.array([ps.get("integrated_energy", np.nan) for ps in packet_stats_list])
+
+    fig, axes = plt.subplots(3, 1, figsize=figsize, sharex=True)
+
+    ax = axes[0]
+    ax.semilogy(probe_x, peak_amp, "ro-", markersize=4, linewidth=1.0)
+    ax.set_ylabel("Peak envelope amplitude", fontsize=11)
+    ax.set_title("Envelope peak growth vs x", fontsize=12)
+    ax.grid(True, alpha=0.3)
+
+    ax = axes[1]
+    valid = np.isfinite(arrival)
+    if np.any(valid):
+        ax.plot(probe_x[valid], arrival[valid], "bs-", markersize=4, linewidth=1.0)
+        ax.set_ylabel("Arrival time [s]", fontsize=11)
+        ax.set_title("Envelope arrival time vs x", fontsize=12)
+        ax.grid(True, alpha=0.3)
+
+    ax = axes[2]
+    ax.semilogy(probe_x, energy, "go-", markersize=4, linewidth=1.0)
+    ax.set_xlabel("x [cm]", fontsize=11)
+    ax.set_ylabel("Integrated energy", fontsize=11)
+    ax.set_title("Wavepacket energy vs x", fontsize=12)
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    if output_path is not None:
+        plt.savefig(output_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+# ===========================================================================
+#  PHASE 3: NONLINEAR DIAGNOSTICS PLOTS (BISPECTRUM)
+# ===========================================================================
+
+def plot_bicoherence_map(freq, bicoh_matrix, output_path=None, fmax=None,
+                         title="Squared bicoherence", figsize=(10, 8)):
+    """2-D contour plot of b²(f1, f2) with labeled triads and significance.
+
+    Parameters
+    ----------
+    freq : ndarray — frequency bins [Hz]
+    bicoh_matrix : ndarray, (n_freq, n_freq) — b² values
+    output_path : str, optional
+    fmax : float, optional — frequency limit
+    title : str
+    figsize : tuple, default (10, 8)
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    n_freq = len(freq)
+
+    # Upper triangle only
+    tri_upper = np.triu(bicoh_matrix)
+    tri_upper[tri_upper < 1e-6] = np.nan  # mask near-zero for visual clarity
+
+    im = ax.pcolormesh(freq[:n_freq], freq[:n_freq], tri_upper,
+                       cmap="hot", shading="auto", vmin=0, vmax=1,
+                       rasterized=True)
+    cb = fig.colorbar(im, ax=ax, pad=0.02, shrink=0.8)
+    cb.set_label(r"$b^2$", fontsize=12)
+
+    ax.plot([0, freq[-1]], [0, freq[-1]], "w--", linewidth=0.5, alpha=0.4)
+    ax.set_xlabel(r"$f_1$ [Hz]", fontsize=12)
+    ax.set_ylabel(r"$f_2$ [Hz]", fontsize=12)
+    ax.set_title(title, fontsize=13)
+    if fmax is not None:
+        ax.set_xlim(0, fmax)
+        ax.set_ylim(0, fmax)
+    ax.set_aspect("equal")
+
+    plt.tight_layout()
+    if output_path is not None:
+        plt.savefig(output_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_bicoherence_vs_x(probe_x, triad_bicoh_list, output_path=None,
+                           figsize=(12, 5)):
+    """Plot bicoherence at key triads vs streamwise position.
+
+    Parameters
+    ----------
+    probe_x : array-like — x-positions [cm]
+    triad_bicoh_list : list of dict — one per probe from ``extract_triad_bicoherence``
+    output_path : str, optional
+    figsize : tuple, default (12, 5)
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    probe_x = np.asarray(probe_x, dtype=float)
+
+    # Collect all triad labels
+    all_labels = set()
+    for tb in triad_bicoh_list:
+        all_labels.update(tb.keys())
+    all_labels = sorted(all_labels)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    colors = plt.cm.tab10(np.linspace(0, 1, len(all_labels)))
+
+    for li, label in enumerate(all_labels):
+        vals = np.array([tb.get(label, np.nan) for tb in triad_bicoh_list])
+        valid = np.isfinite(vals)
+        if np.sum(valid) < 3:
+            continue
+        ax.plot(probe_x[valid], vals[valid], "o-", markersize=3, linewidth=0.8,
+                color=colors[li], label=label)
+
+    ax.axhline(0.95, color="gray", linestyle=":", alpha=0.5, label="0.95 sig.")
+    ax.set_xlabel("x [cm]", fontsize=12)
+    ax.set_ylabel(r"$b^2$", fontsize=12)
+    ax.set_title("Triad bicoherence vs streamwise position", fontsize=13)
+    ax.legend(fontsize=8, loc="best", ncol=2)
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    if output_path is not None:
+        plt.savefig(output_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
     return fig

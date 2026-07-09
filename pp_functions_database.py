@@ -2627,3 +2627,481 @@ def compute_growth_rate_from_probes(probe_x, freq, P1, target_freq,
             out["alpha_i_delta"] = np.full(n_probes, np.nan)
 
     return out
+
+
+# ===========================================================================
+#  PHASE 1: DISTURBANCE SIGNAL RECONSTRUCTION
+# ===========================================================================
+#  Functions for recomposing time-domain disturbances from FFT frequency
+#  bins, computing energy budgets, and residual statistics.
+# ===========================================================================
+
+def compute_complex_fft(signal_matrix, dt, win_scale=1.0):
+    """Compute full complex FFT and single-sided amplitude spectrum.
+
+    Parameters
+    ----------
+    signal_matrix : ndarray, shape (L, n_signals)
+        Uniformly-sampled time series, one column per signal.
+    dt : float
+        Sampling interval [s].
+    win_scale : float, default 1.0
+        Amplitude compensation factor from windowing.
+
+    Returns
+    -------
+    freq : ndarray, shape (n_freq,)
+        Single-sided frequency bins [Hz].
+    Y_complex : ndarray, shape (n_freq, n_signals)
+        Single-sided complex FFT coefficients (NOT multiplied by 2, so DC and
+        Nyquist are correctly positioned; use for phase).
+    P1 : ndarray, shape (n_freq, n_signals)
+        Single-sided amplitude spectrum (DC correct, other bins x2).
+    """
+    signal_matrix = np.asarray(signal_matrix, dtype=float)
+    if signal_matrix.ndim == 1:
+        signal_matrix = signal_matrix.reshape(-1, 1)
+    L, n_signals = signal_matrix.shape
+    Fs = 1.0 / dt
+
+    Y_full = np.fft.fft(signal_matrix, axis=0)
+
+    n_freq = L // 2 + 1
+    freq = Fs * np.arange(0, n_freq) / L
+    Y_complex = Y_full[:n_freq, :].copy()
+
+    P1 = np.abs(Y_complex) / L * win_scale
+    if L % 2 == 0:
+        P1[1:-1, :] = 2.0 * P1[1:-1, :]
+    else:
+        P1[1:, :] = 2.0 * P1[1:, :]
+
+    return freq, Y_complex, P1
+
+
+def reconstruct_from_bins(Y_full, bin_mask):
+    """Reconstruct time-domain signal from selected frequency bins.
+
+    Parameters
+    ----------
+    Y_full : ndarray, shape (L, n_signals)
+        Full (two-sided) complex FFT coefficients from ``np.fft.fft``.
+    bin_mask : ndarray, shape (L,) — bool mask, True for bins to retain.
+        Must include both positive and conjugate-negative bins for a real
+        reconstructed signal.
+
+    Returns
+    -------
+    reconstructed : ndarray, shape (L, n_signals)
+        Time-domain reconstruction via IFFT of masked spectrum.
+    """
+    Y_masked = Y_full * bin_mask[:, np.newaxis]
+    reconstructed = np.real(np.fft.ifft(Y_masked, axis=0))
+    return reconstructed
+
+
+def reconstruct_from_harmonics(signal_matrix, dt, harmonic_freq, num_harmonics):
+    """Reconstruct signal from fundamental and harmonic frequency bins only.
+
+    Parameters
+    ----------
+    signal_matrix : ndarray, shape (L, n_signals)
+        Input time series.
+    dt : float
+        Sampling interval [s].
+    harmonic_freq : float
+        Fundamental frequency [Hz].
+    num_harmonics : int
+        Number of harmonics to include (1 = fundamental only).
+
+    Returns
+    -------
+    reconstructed_total : ndarray, shape (L, n_signals)
+        Sum of all selected harmonic reconstructions.
+    harmonic_signals : dict of ndarray
+        Keys ``'1xf0'``, ``'2xf0'``, ..., each shape (L, n_signals).
+    harmonic_bins : list of int
+        Positive-frequency bin indices used.
+    """
+    signal_matrix = np.asarray(signal_matrix, dtype=float)
+    if signal_matrix.ndim == 1:
+        signal_matrix = signal_matrix.reshape(-1, 1)
+    L, n_signals = signal_matrix.shape
+    Fs = 1.0 / dt
+
+    Y_full = np.fft.fft(signal_matrix, axis=0)
+    freq = np.fft.fftfreq(L, dt)
+
+    harmonic_bins = []
+    for nh in range(1, num_harmonics + 1):
+        f_target = nh * harmonic_freq
+        idx = int(np.argmin(np.abs(freq - f_target)))
+        harmonic_bins.append(idx)
+
+    total_mask = np.zeros(L, dtype=bool)
+    for idx in harmonic_bins:
+        total_mask[idx] = True
+        neg_idx = L - idx
+        if neg_idx < L and neg_idx != idx:
+            total_mask[neg_idx] = True
+    reconstructed_total = reconstruct_from_bins(Y_full, total_mask)
+
+    harmonic_signals = {}
+    for nh, idx in enumerate(harmonic_bins, 1):
+        mask = np.zeros(L, dtype=bool)
+        mask[idx] = True
+        neg_idx = L - idx
+        if neg_idx < L and neg_idx != idx:
+            mask[neg_idx] = True
+        harmonic_signals[f"{nh}xf0"] = reconstruct_from_bins(Y_full, mask)
+
+    return reconstructed_total, harmonic_signals, harmonic_bins
+
+
+def reconstruct_from_band(signal_matrix, dt, f_low, f_high):
+    """Reconstruct signal from a frequency band via IFFT.
+
+    Parameters
+    ----------
+    signal_matrix : ndarray, shape (L, n_signals)
+        Input time series.
+    dt : float
+        Sampling interval [s].
+    f_low, f_high : float
+        Band-edges [Hz].
+
+    Returns
+    -------
+    reconstructed : ndarray, shape (L, n_signals)
+        Band-limited time-domain reconstruction.
+    bin_mask : ndarray, shape (L,)
+        Bool mask of retained frequency bins.
+    """
+    signal_matrix = np.asarray(signal_matrix, dtype=float)
+    if signal_matrix.ndim == 1:
+        signal_matrix = signal_matrix.reshape(-1, 1)
+    L = signal_matrix.shape[0]
+    Fs = 1.0 / dt
+
+    Y_full = np.fft.fft(signal_matrix, axis=0)
+    freq = np.fft.fftfreq(L, dt)
+
+    bin_mask = np.abs(freq) >= f_low
+    bin_mask &= np.abs(freq) <= f_high
+    bin_mask[0] = False
+
+    reconstructed = reconstruct_from_bins(Y_full, bin_mask)
+    return reconstructed, bin_mask
+
+
+def compute_energy_budget(signal_measured, signal_reconstructed, harmonic_signals):
+    """Compute energy fractions for fundamental, harmonics, and residual.
+
+    Parameters
+    ----------
+    signal_measured : ndarray, shape (L,)
+        Original (preprocessed) signal for one probe.
+    signal_reconstructed : ndarray, shape (L,)
+        Summed harmonic reconstruction.
+    harmonic_signals : dict of ndarray
+        Per-harmonic signals from ``reconstruct_from_harmonics``.
+
+    Returns
+    -------
+    dict with keys:
+        'E_total' : mean square of measured signal
+        'E_recon_frac' : fraction of energy explained by reconstruction
+        'E_residual_frac' : fraction of energy in residual
+        'E_per_harm_frac' : dict of per-harmonic energy fractions
+        'recon_to_total_ratio' : same as E_recon_frac
+    """
+    E_total = float(np.mean(signal_measured**2))
+    eps = 1e-30
+    if E_total < eps:
+        E_total = eps
+
+    E_recon = float(np.mean(signal_reconstructed**2))
+    residual = signal_measured - signal_reconstructed
+    E_residual = float(np.mean(residual**2))
+
+    E_per_harm = {}
+    for label, sig in harmonic_signals.items():
+        E_h = float(np.mean(sig**2))
+        E_per_harm[label] = E_h / E_total if E_total > eps else 0.0
+
+    return {
+        "E_total": E_total,
+        "E_recon_frac": E_recon / E_total if E_total > eps else 0.0,
+        "E_residual_frac": E_residual / E_total if E_total > eps else 0.0,
+        "E_per_harm_frac": E_per_harm,
+        "recon_to_total_ratio": E_recon / E_total if E_total > eps else 0.0,
+    }
+
+
+def compute_residual_stats(measured, reconstructed):
+    """Compute residual statistics between measured and reconstructed signals.
+
+    Parameters
+    ----------
+    measured : ndarray, shape (L,)
+    reconstructed : ndarray, shape (L,)
+
+    Returns
+    -------
+    dict with keys: rms_residual, rms_residual_rel, peak_residual,
+    R_squared, skewness, kurtosis.
+    """
+    measured = np.asarray(measured, dtype=float).ravel()
+    reconstructed = np.asarray(reconstructed, dtype=float).ravel()
+    residual = measured - reconstructed
+
+    rms_res = float(np.sqrt(np.mean(residual**2)))
+    rms_meas = float(np.sqrt(np.mean(measured**2)))
+    rms_rel = rms_res / rms_meas if rms_meas > 0 else 0.0
+
+    R_sq = 1.0 - np.mean(residual**2) / np.mean(measured**2) if rms_meas > 0 else 0.0
+
+    resid_c = residual - np.mean(residual)
+    sigma = float(np.std(residual))
+    if sigma > 1e-30:
+        skew = float(np.mean(resid_c**3) / sigma**3)
+        kurt = float(np.mean(resid_c**4) / sigma**4 - 3.0)
+    else:
+        skew = 0.0
+        kurt = 0.0
+
+    return {
+        "rms_residual": rms_res,
+        "rms_residual_rel": rms_rel,
+        "peak_residual": float(np.max(np.abs(residual))),
+        "R_squared": float(R_sq),
+        "skewness": skew,
+        "kurtosis": kurt,
+    }
+
+
+# ===========================================================================
+#  PHASE 2: TRANSIENT ANALYSIS (STFT / HILBERT ENVELOPE)
+# ===========================================================================
+
+def compute_spectrogram(signal, fs, nperseg=256, noverlap=None, window="hann"):
+    """Compute STFT spectrogram in dB.
+
+    Parameters
+    ----------
+    signal : ndarray, shape (L,)
+    fs : float
+        Sampling frequency [Hz].
+    nperseg : int, default 256
+        Segment length.
+    noverlap : int, optional
+        Overlap in samples. Defaults to 75% of nperseg.
+    window : str, default 'hann'
+
+    Returns
+    -------
+    f : ndarray — frequency bins [Hz]
+    t : ndarray — time bins [s]
+    Sxx_dB : ndarray — spectrogram magnitude in dB
+    """
+    try:
+        from scipy import signal as scipy_signal
+    except ImportError:
+        raise ImportError("scipy.signal is required for compute_spectrogram")
+
+    signal = np.asarray(signal, dtype=float).ravel()
+    if noverlap is None:
+        noverlap = int(0.75 * nperseg)
+    f, t, Sxx = scipy_signal.spectrogram(
+        signal, fs=fs, window=window, nperseg=nperseg,
+        noverlap=noverlap, mode="magnitude",
+    )
+    eps = 1e-20
+    Sxx_dB = 10.0 * np.log10(np.maximum(Sxx, eps))
+    return f, t, Sxx_dB
+
+
+def bandpass_hilbert_envelope(signal, fs, f_low, f_high, order=4):
+    """Apply bandpass filter and extract analytic signal envelope.
+
+    Parameters
+    ----------
+    signal : ndarray, shape (L,)
+    fs : float
+        Sampling frequency [Hz].
+    f_low, f_high : float
+        Passband edges [Hz].
+    order : int, default 4
+        Butterworth filter order.
+
+    Returns
+    -------
+    envelope : ndarray — instantaneous amplitude
+    inst_phase : ndarray — unwrapped instantaneous phase [rad]
+    inst_freq : ndarray — instantaneous frequency [Hz]
+    filtered : ndarray — bandpass-filtered signal
+    """
+    try:
+        from scipy import signal as scipy_signal
+    except ImportError:
+        raise ImportError("scipy.signal is required for bandpass_hilbert_envelope")
+
+    signal = np.asarray(signal, dtype=float).ravel()
+    nyquist = fs / 2.0
+    Wn = [f_low / nyquist, f_high / nyquist]
+
+    sos = scipy_signal.butter(order, Wn, btype="band", output="sos")
+    filtered = scipy_signal.sosfiltfilt(sos, signal)
+
+    analytic = scipy_signal.hilbert(filtered)
+    envelope = np.abs(analytic)
+    inst_phase = np.unwrap(np.angle(analytic))
+    inst_freq = np.gradient(inst_phase) * fs / (2.0 * np.pi)
+
+    return envelope, inst_phase, inst_freq, filtered
+
+
+def extract_packet_stats(envelope, time):
+    """Extract wavepacket statistics from envelope.
+
+    Parameters
+    ----------
+    envelope : ndarray — instantaneous amplitude
+    time : ndarray — time array [s]
+
+    Returns
+    -------
+    dict with keys: peak_amplitude, peak_time, arrival_time,
+    half_width_half_max, integrated_energy.
+    """
+    envelope = np.asarray(envelope, dtype=float).ravel()
+    time = np.asarray(time, dtype=float).ravel()
+
+    peak_idx = int(np.argmax(envelope))
+    peak_amp = float(envelope[peak_idx])
+    peak_time = float(time[peak_idx])
+
+    threshold = 0.1 * peak_amp
+    leading = np.where(envelope[:peak_idx] >= threshold)[0]
+    if len(leading) > 0:
+        arrival_time = float(time[leading[0]])
+    else:
+        arrival_time = float(time[0])
+
+    half_threshold = 0.5 * peak_amp
+    half_leading = np.where(envelope[:peak_idx] >= half_threshold)[0]
+    hwhm = float(peak_time - time[half_leading[0]]) if len(half_leading) > 0 else None
+
+    energy = float(np.trapz(envelope**2, time))
+
+    return {
+        "peak_amplitude": peak_amp,
+        "peak_time": peak_time,
+        "arrival_time": arrival_time,
+        "half_width_half_max": hwhm,
+        "integrated_energy": energy,
+    }
+
+
+# ===========================================================================
+#  PHASE 3: NONLINEAR INTERACTION DIAGNOSTICS (BISPECTRUM)
+# ===========================================================================
+
+def compute_bicoherence(signal, fs, nperseg=256, noverlap=None):
+    """Compute squared bicoherence b²(f1, f2) ∈ [0, 1].
+
+    The bicoherence measures quadratic phase coupling between frequency
+    triads (f1, f2, f1+f2).  Values near 1 indicate strong nonlinear
+    coupling; values near 0 indicate independent modes.
+
+    Parameters
+    ----------
+    signal : ndarray, shape (L,)
+    fs : float
+        Sampling frequency [Hz].
+    nperseg : int, default 256
+        Segment length for averaging.
+    noverlap : int, optional
+        Overlap in samples. Defaults to nperseg // 2.
+
+    Returns
+    -------
+    freq : ndarray, shape (n_freq,) — frequency bins [Hz]
+    bicoh : ndarray, shape (n_freq, n_freq) — upper-triangular b² matrix
+    """
+    try:
+        from scipy import signal as scipy_signal
+    except ImportError:
+        raise ImportError("scipy.signal is required for compute_bicoherence")
+
+    signal = np.asarray(signal, dtype=float).ravel()
+    if noverlap is None:
+        noverlap = nperseg // 2
+
+    nstep = nperseg - noverlap
+    if nstep <= 0:
+        nstep = 1
+
+    window = np.hanning(nperseg)
+
+    n_segments = max(1, (len(signal) - nperseg) // nstep + 1)
+    n_freq = nperseg // 2 + 1
+
+    X = np.zeros((n_segments, nperseg), dtype=complex)
+    for i in range(n_segments):
+        start = i * nstep
+        if start + nperseg > len(signal):
+            break
+        seg = signal[start:start + nperseg] * window
+        X[i] = np.fft.fft(seg)
+    n_segments = np.sum(np.any(X != 0, axis=1))
+
+    X = X[:n_segments, :n_freq]
+
+    bicoh = np.zeros((n_freq, n_freq), dtype=float)
+    eps = 1e-30
+
+    for f1 in range(1, n_freq - 1):
+        for f2 in range(f1, n_freq):
+            f3 = f1 + f2
+            if f3 >= n_freq:
+                continue
+            B = np.mean(X[:, f1] * X[:, f2] * np.conj(X[:, f3]), axis=0)
+            denom = np.mean(np.abs(X[:, f1] * X[:, f2]) ** 2, axis=0) * \
+                    np.mean(np.abs(X[:, f3]) ** 2, axis=0)
+            bicoh[f1, f2] = np.abs(B) ** 2 / (denom + eps)
+
+    freq = np.fft.fftfreq(nperseg, 1.0 / fs)[:n_freq]
+    return freq, bicoh
+
+
+def extract_triad_bicoherence(freq, bicoh_matrix, target_freqs):
+    """Extract bicoherence values at specific frequency triads.
+
+    Parameters
+    ----------
+    freq : ndarray — frequency bins [Hz]
+    bicoh_matrix : ndarray, (n_freq, n_freq) — b²(f1, f2)
+    target_freqs : list of float
+        Frequencies to evaluate [Hz].  For each pair (fi, fj) with
+        fi+fj <= freq.max(), the triad bicoherence is reported.
+
+    Returns
+    -------
+    dict — keys like 'b²(1.00e+07, 1.00e+07)', values are b² ∈ [0,1].
+    """
+    result = {}
+    for fi in target_freqs:
+        fi_idx = int(np.argmin(np.abs(freq - fi)))
+        for fj in target_freqs:
+            fj_idx = int(np.argmin(np.abs(freq - fj)))
+            fk = fi + fj
+            if fk > freq[-1]:
+                continue
+            if fj_idx >= fi_idx:
+                b_val = float(bicoh_matrix[fi_idx, fj_idx])
+            else:
+                b_val = float(bicoh_matrix[fj_idx, fi_idx])
+            label = f"b²({fi:.3e}, {fj:.3e})"
+            result[label] = b_val
+    return result
