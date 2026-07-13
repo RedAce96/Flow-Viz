@@ -1674,22 +1674,34 @@ def plot_harmonic_reconstruction(time, measured, reconstructed, residual,
                                   output_path=None, figsize=(14, 10),
                                   mean_background=None,
                                   recon_method=None,
-                                  recon_freq=None):
-    """4-panel figure: measured, overlay, per-harmonic contributions, residual.
+                                  recon_freq=None,
+                                  window_start=None,
+                                  window_end=None,
+                                  windowed_signal=None,
+                                  window_time=None):
+    """4-panel figure showing full signal (with optional window highlight),
+    reconstruction overlay, per-frequency contributions, and residual.
+
+    When *window_start* and *window_end* are provided, panel 1 shades the
+    selected disturbance interval and overlays the extracted windowed signal
+    for visual validation of the window boundaries.
 
     Parameters
     ----------
     time : ndarray — time array [s]
     measured : ndarray — measured (full) signal
-    reconstructed : ndarray — summed harmonic reconstruction (mean-shifted)
+    reconstructed : ndarray — summed reconstruction (mean-shifted)
     residual : ndarray — zero-mean residual
-    harmonic_signals : dict — per-harmonic signals from ``reconstruct_from_harmonics``
-    probe_label : str, default '' — label for titles
+    harmonic_signals : dict — per-frequency signals
+    probe_label : str, default ''
     output_path : str, optional
     figsize : tuple, default (14, 10)
-    mean_background : float, optional — DC level subtracted before reconstruction
-    recon_method : str, optional — "harmonics" or "band"
-    recon_freq : float, optional — fundamental frequency [Hz]
+    mean_background : float, optional
+    recon_method : str, optional
+    recon_freq : float, optional
+    window_start, window_end : float, optional — disturbance window bounds [s]
+    windowed_signal : ndarray, optional — the extracted window segment
+    window_time : ndarray, optional — time coordinates for the window segment
 
     Returns
     -------
@@ -1705,24 +1717,59 @@ def plot_harmonic_reconstruction(time, measured, reconstructed, residual,
         meta_parts.append(f"f₀={recon_freq:.3e} Hz")
     if mean_background is not None:
         meta_parts.append(f"mean={mean_background:.2f}")
+    has_window = window_start is not None and window_end is not None
+    if has_window:
+        meta_parts.append(f"window=[{window_start:.3e},{window_end:.3e}]s")
+        meta_parts.append(f"Δt={window_end - window_start:.3e}s")
     meta_str = "  |  ".join(meta_parts) if meta_parts else ""
 
-    # Panel 1: Measured
-    axes[0].plot(time, measured, "k-", linewidth=0.8, label="Measured")
+    # ---------------------------------------------------------------
+    # Panel 1: Full measured signal with window highlight
+    # ---------------------------------------------------------------
+    axes[0].plot(time, measured, "k-", linewidth=0.8, label="Measured (full)")
     if mean_background is not None:
         axes[0].axhline(mean_background, color="gray", linestyle=":",
                         linewidth=0.7, label=f"Background mean = {mean_background:.1f}")
+
+    if has_window:
+        # Shade the disturbance interval
+        axes[0].axvspan(window_start, window_end, alpha=0.12, color="C1",
+                        label=f"Window [{window_start:.3e}, {window_end:.3e}] s")
+
+    if has_window and windowed_signal is not None and window_time is not None:
+        # Overlay the extracted window segment
+        axes[0].plot(time, measured, "k-", linewidth=0.8, alpha=0.3)
+        win_t = np.asarray(window_time).ravel()
+        win_s = windowed_signal.ravel()
+        if len(win_t) == len(win_s):
+            axes[0].plot(win_t, win_s, "r-", linewidth=1.2,
+                         label="Windowed signal")
+
     axes[0].set_ylabel("Signal", fontsize=11)
     title0 = f"Measured signal — {probe_label}"
     if meta_str:
         title0 += f"\n{meta_str}"
     axes[0].set_title(title0, fontsize=11)
     axes[0].grid(True, alpha=0.3)
-    axes[0].legend(fontsize=8, loc="upper right")
+    axes[0].legend(fontsize=7, loc="upper right")
 
+    # ---------------------------------------------------------------
     # Panel 2: Overlay measured + reconstruction
+    # ---------------------------------------------------------------
     axes[1].plot(time, measured, "k-", linewidth=0.5, alpha=0.5, label="Measured")
-    axes[1].plot(time, reconstructed, "r-", linewidth=1.2, label="Reconstructed")
+
+    if has_window:
+        # Reconstruction arrays contain only the selected window, so use the
+        # exact sliced time coordinates rather than masking the full record.
+        recon_time = np.asarray(window_time).ravel() if window_time is not None else np.array([])
+        recon_vals = reconstructed.ravel()
+        if len(recon_time) == len(recon_vals):
+            axes[1].plot(recon_time, recon_vals, "r-", linewidth=1.2,
+                         label="Reconstructed")
+    else:
+        axes[1].plot(time, reconstructed, "r-", linewidth=1.2,
+                     label="Reconstructed")
+
     axes[1].set_ylabel("Signal", fontsize=11)
     rms_err = np.sqrt(np.mean(residual**2))
     rel_rms = rms_err / np.sqrt(np.mean((measured - np.mean(measured))**2)) if np.std(measured) > 0 else 0
@@ -1730,27 +1777,180 @@ def plot_harmonic_reconstruction(time, measured, reconstructed, residual,
     axes[1].grid(True, alpha=0.3)
     axes[1].legend(fontsize=9, loc="upper right")
 
-    # Panel 3: Per-harmonic contributions (offset for clarity)
+    # ---------------------------------------------------------------
+    # Panel 3: Per-frequency contributions (offset for clarity)
+    # ---------------------------------------------------------------
     offset = 0.0
     colors = ["C0", "C1", "C2", "C3", "C4", "C5", "C6", "C7"]
+    component_time = (np.asarray(window_time).ravel()
+                      if has_window and window_time is not None else time)
     for i, (label, sig) in enumerate(sorted(harmonic_signals.items())):
         sig_off = sig - offset
-        axes[2].plot(time, sig_off, color=colors[i % len(colors)],
-                     linewidth=0.8, label=label)
+        if len(component_time) == len(sig_off):
+            axes[2].plot(component_time, sig_off, color=colors[i % len(colors)],
+                         linewidth=0.8, label=label)
         offset += max(np.abs(sig)) * 1.5
     axes[2].set_ylabel("Signal (offset)", fontsize=11)
-    axes[2].set_title("Per-harmonic contributions", fontsize=12)
+    axes[2].set_title("Per-frequency contributions", fontsize=12)
     axes[2].grid(True, alpha=0.3)
     axes[2].legend(fontsize=8, loc="upper right", ncol=2)
 
+    # ---------------------------------------------------------------
     # Panel 4: Residual
-    axes[3].plot(time, residual, "b-", linewidth=0.8, label="Residual")
+    # ---------------------------------------------------------------
+    residual_time = (np.asarray(window_time).ravel()
+                     if has_window and window_time is not None else time)
+    if len(residual_time) == len(residual):
+        axes[3].plot(residual_time, residual, "b-", linewidth=0.8, label="Residual")
     axes[3].axhline(0, color="gray", linestyle=":", linewidth=0.5)
     axes[3].set_xlabel("Time [s]", fontsize=11)
     axes[3].set_ylabel("Residual", fontsize=11)
     axes[3].set_title(f"Residual (zero-mean basis)  |  RMS = {rms_err:.3f}", fontsize=12)
     axes[3].grid(True, alpha=0.3)
     axes[3].legend(fontsize=9, loc="upper right")
+
+    plt.tight_layout()
+    if output_path is not None:
+        plt.savefig(output_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+# -------------------------------------------------------------------
+#  Disturbance window diagnostics plot
+# -------------------------------------------------------------------
+
+def plot_disturbance_window_diagnostics(time, signal, detection_metric,
+                                         baseline, noise_scale,
+                                         onset_threshold, offset_threshold,
+                                         metric_baseline=None,
+                                         metric_noise_scale=None,
+                                         onset_time=None, offset_time=None,
+                                         peak_time=None,
+                                         start_time=None, end_time=None,
+                                         probe_label="",
+                                         output_path=None, figsize=(12, 8)):
+    """Diagnostic figure for the disturbance window detector.
+
+    Three vertically stacked panels:
+        1. Raw signal with onset/offset markers and window shading.
+        2. Detection metric with baseline, onset/offset thresholds, and
+           shaded window.
+        3. Zoom-in on the detection onset region.
+
+    Parameters
+    ----------
+    time : ndarray — time array [s]
+    signal : ndarray — probe signal
+    detection_metric : ndarray — smoothed energy metric
+    baseline : float — pre-event median
+    noise_scale : float — pre-event noise scale
+    onset_threshold : float — threshold for onset
+    offset_threshold : float — threshold for offset (hysteresis)
+    metric_baseline, metric_noise_scale : float, optional — pre-event
+        statistics in the units of ``detection_metric``
+    onset_time, offset_time : float or None — detected boundaries [s]
+    peak_time : float or None — selected packet's energy peak [s]
+    start_time, end_time : float or None — final window [s]
+    probe_label : str
+    output_path : str, optional
+    figsize : tuple, default (12, 8)
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    fig, axes = plt.subplots(3, 1, figsize=figsize, sharex=True)
+
+    has_window = start_time is not None and end_time is not None
+    has_onset = onset_time is not None
+    has_offset = offset_time is not None
+    has_peak = peak_time is not None
+
+    metric_baseline = baseline if metric_baseline is None else metric_baseline
+    metric_noise_scale = noise_scale if metric_noise_scale is None else metric_noise_scale
+    meta = f"metric baseline={metric_baseline:.3e}, noise={metric_noise_scale:.3e}"
+    if has_onset:
+        meta += f"  onset={onset_threshold:.3e}"
+    if has_offset:
+        meta += f"  offset={offset_threshold:.3e}"
+
+    # --- Panel 1: Raw signal ---
+    axes[0].plot(time, signal, "k-", linewidth=0.8)
+    axes[0].axhline(baseline, color="gray", linestyle=":", linewidth=0.7,
+                    label=f"Baseline = {baseline:.3e}")
+
+    if has_window:
+        axes[0].axvspan(start_time, end_time, alpha=0.12, color="C1",
+                        label=f"Window [{start_time:.3e}, {end_time:.3e}] s")
+    if has_onset:
+        axes[0].axvline(onset_time, color="C1", linestyle="--", linewidth=1.0,
+                        label=f"Onset = {onset_time:.3e} s")
+    if has_offset:
+        axes[0].axvline(offset_time, color="C2", linestyle="--", linewidth=1.0,
+                        label=f"Offset = {offset_time:.3e} s")
+    if has_peak:
+        axes[0].axvline(peak_time, color="C3", linestyle=":", linewidth=1.2,
+                        label=f"Selected peak = {peak_time:.3e} s")
+
+    axes[0].set_ylabel("Signal", fontsize=11)
+    axes[0].set_title(f"Disturbance window detector — {probe_label}", fontsize=12)
+    axes[0].grid(True, alpha=0.3)
+    axes[0].legend(fontsize=8, loc="upper right")
+
+    # --- Panel 2: Detection metric ---
+    axes[1].semilogy(time, detection_metric, "b-", linewidth=0.8,
+                     label="Metric")
+    axes[1].axhline(metric_baseline, color="gray", linestyle=":", linewidth=0.7,
+                    label=f"Metric baseline = {metric_baseline:.3e}")
+    axes[1].axhline(onset_threshold, color="C1", linestyle="--", linewidth=0.8,
+                    label=f"Onset threshold = {onset_threshold:.3e}")
+    axes[1].axhline(offset_threshold, color="C2", linestyle="--", linewidth=0.8,
+                    label=f"Offset threshold = {offset_threshold:.3e}")
+
+    if has_window:
+        axes[1].axvspan(start_time, end_time, alpha=0.10, color="C1")
+    if has_onset:
+        axes[1].axvline(onset_time, color="C1", linestyle=":", linewidth=0.8)
+    if has_offset:
+        axes[1].axvline(offset_time, color="C2", linestyle=":", linewidth=0.8)
+    if has_peak:
+        axes[1].axvline(peak_time, color="C3", linestyle=":", linewidth=1.0)
+
+    axes[1].set_ylabel("Detection metric", fontsize=11)
+    axes[1].set_title(f"Detection metric — {meta}", fontsize=11)
+    axes[1].grid(True, alpha=0.3)
+    axes[1].legend(fontsize=8, loc="upper right")
+
+    # --- Panel 3: Zoom on onset ---
+    if has_onset:
+        zoom_pad = max(5e-5, (time[-1] - time[0]) * 0.02)
+        zoom_start = onset_time - 5 * zoom_pad
+        zoom_end = onset_time + 5 * zoom_pad
+        zoom_mask = (time >= zoom_start) & (time <= zoom_end)
+        if np.any(zoom_mask):
+            axes[2].plot(time[zoom_mask], signal[zoom_mask], "k-",
+                         linewidth=0.8, label="Signal")
+            axes[2].plot(time[zoom_mask], detection_metric[zoom_mask],
+                         "b-", linewidth=0.8, alpha=0.7, label="Metric")
+            axes[2].axhline(onset_threshold, color="C1", linestyle="--",
+                            linewidth=0.8, label=f"Onset = {onset_threshold:.3e}")
+            axes[2].axhline(offset_threshold, color="C2", linestyle="--",
+                            linewidth=0.8, alpha=0.5)
+            axes[2].axvline(onset_time, color="C1", linestyle=":", linewidth=1.0,
+                            label=f"t_onset = {onset_time:.3e} s")
+            if has_window:
+                axes[2].axvspan(start_time, end_time, alpha=0.10, color="C1")
+            axes[2].set_xlabel("Time [s]", fontsize=11)
+            axes[2].set_ylabel("Signal / Metric", fontsize=11)
+            axes[2].set_title("Onset zoom", fontsize=11)
+            axes[2].grid(True, alpha=0.3)
+            axes[2].legend(fontsize=8, loc="upper right")
+    else:
+        axes[2].text(0.5, 0.5, "No onset detected",
+                     transform=axes[2].transAxes, ha="center", va="center",
+                     fontsize=12, color="gray", style="italic")
+        axes[2].set_xlabel("Time [s]", fontsize=11)
 
     plt.tight_layout()
     if output_path is not None:
@@ -1797,9 +1997,9 @@ def plot_energy_budget_vs_x(probe_x, energy_budgets, output_path=None,
 
     # Top: stacked area — fractions
     ax1.fill_between(probe_x, 0, E_recon, color="C0", alpha=0.6,
-                     label="Reconstruction (harmonics)")
+                     label="Reconstruction")
     ax1.fill_between(probe_x, E_recon, E_recon + E_resid, color="C1", alpha=0.6,
-                     label="Residual (broadband)")
+                     label="Residual")
     ax1.set_ylabel("Energy fraction", fontsize=11)
     title1 = "Energy budget vs x — reconstruction vs residual"
     if f0 is not None:

@@ -2794,6 +2794,117 @@ def reconstruct_from_band(signal_matrix, dt, f_low, f_high):
     return reconstructed, bin_mask
 
 
+def reconstruct_from_top_frequencies(signal_matrix, dt, n_peaks=15,
+                                     freq_range=None, min_peak_distance_hz=None):
+    """Reconstruct signal from the N largest-amplitude frequency bins.
+
+    Picks the top *n_peaks* amplitude peaks from the one-sided FFT spectrum
+    for *each* signal column independently (per-probe), then takes the union
+    across all columns so that every probe's dominant frequencies are
+    included.  The time-domain reconstruction is built from those bins and
+    their conjugate-negative counterparts.
+
+    Parameters
+    ----------
+    signal_matrix : ndarray, shape (L, n_signals)
+        Input time series.  If 1-D, reshaped to (L, 1).
+    dt : float
+        Sampling interval [s].
+    n_peaks : int, default 15
+        Number of peaks to select *per signal* (fewer if the spectrum has
+        fewer bins).
+    freq_range : tuple (f_min, f_max) or None, optional
+        Frequency range [Hz] to restrict peak search.
+    min_peak_distance_hz : float or None, optional
+        Minimum separation between selected peaks [Hz].
+        ``None`` auto-computes as ``max(3 * Fs/L, 1000.0)``.
+
+    Returns
+    -------
+    reconstructed_total : ndarray, shape (L, n_signals)
+        Sum of all selected peak reconstructions.
+    component_signals : dict of ndarray
+        Keys like ``"123.4 kHz"``, each shape (L, n_signals).
+    peak_bins : list of int
+        Positive-frequency bin indices selected.
+    """
+    signal_matrix = np.asarray(signal_matrix, dtype=float)
+    if signal_matrix.ndim == 1:
+        signal_matrix = signal_matrix.reshape(-1, 1)
+    L, n_signals = signal_matrix.shape
+    Fs = 1.0 / dt
+    df = Fs / L
+
+    if min_peak_distance_hz is None:
+        min_peak_distance_hz = max(3.0 * df, 1000.0)
+
+    # Full two-sided FFT
+    Y_full = np.fft.fft(signal_matrix, axis=0)
+    freq = np.fft.fftfreq(L, dt)
+
+    # One-sided positive frequencies (exclude DC)
+    half = L // 2 + 1
+    freq_pos = freq[:half]
+    Y_pos = Y_full[:half, :]
+
+    # Build candidate mask (common frequency range restriction)
+    mask_pos = np.ones(half, dtype=bool)
+    mask_pos[0] = False  # exclude DC
+    if freq_range is not None:
+        f_min, f_max = freq_range
+        mask_pos &= (freq_pos >= f_min) & (freq_pos <= f_max)
+    candidate_indices = np.where(mask_pos)[0]
+
+    # --- Per-probe peak selection ---
+    # For each column, independently pick the top N peaks, then take the
+    # union so that every probe's dominant frequencies are represented.
+    selected_set = set()
+    for col in range(n_signals):
+        amp_col = np.abs(Y_pos[:, col])
+        remaining = list(candidate_indices)
+        n_local = min(n_peaks, len(remaining))
+        for _ in range(n_local):
+            if not remaining:
+                break
+            amps = np.array([amp_col[i] for i in remaining])
+            best = remaining[int(np.argmax(amps))]
+            selected_set.add(best)
+            f_best = freq_pos[best]
+            remaining = [i for i in remaining
+                         if abs(freq_pos[i] - f_best) >= min_peak_distance_hz]
+
+    selected = sorted(selected_set)
+
+    # Build two-sided mask
+    total_mask = np.zeros(L, dtype=bool)
+    for idx in selected:
+        total_mask[idx] = True
+        neg = L - idx if idx > 0 else 0
+        if neg < L and neg != idx:
+            total_mask[neg] = True
+
+    reconstructed_total = reconstruct_from_bins(Y_full, total_mask)
+
+    # Individual component signals with human-readable labels
+    component_signals = {}
+    for idx in selected:
+        fval = freq_pos[idx]
+        if fval >= 1e6:
+            lbl = f"{fval / 1e6:.2f} MHz"
+        elif fval >= 1e3:
+            lbl = f"{fval / 1e3:.2f} kHz"
+        else:
+            lbl = f"{fval:.2f} Hz"
+        mask = np.zeros(L, dtype=bool)
+        mask[idx] = True
+        neg = L - idx
+        if neg < L and neg != idx:
+            mask[neg] = True
+        component_signals[lbl] = reconstruct_from_bins(Y_full, mask)
+
+    return reconstructed_total, component_signals, selected
+
+
 def compute_energy_budget(signal_measured, signal_reconstructed, harmonic_signals):
     """Compute energy fractions for fundamental, harmonics, and residual.
 
@@ -2878,6 +2989,457 @@ def compute_residual_stats(measured, reconstructed):
         "skewness": skew,
         "kurtosis": kurt,
     }
+
+
+# ===========================================================================
+#  DISTURBANCE WINDOW DETECTION (Phase 1b)
+# ===========================================================================
+
+def detect_disturbance_window(signal, time, laser_start_time=None,
+                               baseline_margin=0.001,
+                               pre_event_fraction=0.02,
+                               onset_sigma=5.0, offset_sigma=2.0,
+                               onset_peak_fraction=None,
+                               offset_peak_fraction=None,
+                               packet_selection="first_threshold",
+                               min_active_duration=50e-6,
+                               min_quiet_duration=100e-6,
+                               pad_before=20e-6, pad_after=50e-6,
+                               min_samples=256, max_samples=50000,
+                               detector_mode="energy"):
+    """Detect the disturbance time window in a probe signal using a
+    broadband energy detector with hysteresis thresholds.
+
+    Designed for laser-pulse / shock-tunnel experiments where a finite
+    wavepacket (shock + oscillatory tail) appears after a known trigger
+    time.  Returns the onset and offset indices and times, plus diagnostic
+    values, so the calling code can reconstruct only the active interval.
+
+    The detector algorithm:
+
+    1. Estimate baseline statistics from a pre-event interval (samples
+       before *laser_start_time - baseline_margin*, or the earliest
+       *pre_event_fraction* of the record if no laser time is given).
+    2. Compute a broadband energy metric: smoothed absolute signal or
+       smoothed squared signal.
+    3. Estimate baseline statistics on that same metric, then detect *onset*
+       when it exceeds ``metric_baseline + onset_sigma * metric_noise_scale`` for at least
+       *min_active_duration*.
+    4. Detect *offset* when the metric drops below
+       ``baseline + offset_sigma * noise_scale`` for at least
+       *min_quiet_duration* (hysteresis).
+    5. Apply *pad_before* and *pad_after* (clamped to record bounds).
+    6. Enforce *min_samples* / *max_samples* limits.
+
+    Parameters
+    ----------
+    signal : ndarray, shape (L,)
+        Raw probe signal (not necessarily zero-mean).
+    time : ndarray, shape (L,)
+        Time array [s], assumed uniformly spaced and monotonically
+        increasing.
+    laser_start_time : float or None, optional
+        Expected event time [s].  Used only as a lower bound — the
+        detector does not search for onset before this time minus
+        *baseline_margin*.  If None, the baseline is estimated from
+        the initial fraction of the record.
+    baseline_margin : float, default 0.001
+        Time [s] subtracted from *laser_start_time* to define the
+        pre-event baseline window.  Ignored if *laser_start_time* is
+        None.
+    pre_event_fraction : float, default 0.02
+        Fallback fraction of the total record used for baseline
+        estimation when *laser_start_time* is None.
+    onset_sigma : float, default 5.0
+        Threshold multiplier above baseline noise for onset detection.
+    onset_peak_fraction : float or None, optional
+        When ``packet_selection='dominant_peak'``, onset is additionally
+        constrained to this fraction of the selected packet's peak metric
+        above its metric baseline.
+    offset_sigma : float, default 2.0
+        Threshold multiplier above baseline noise for offset detection
+        (lower than *onset_sigma* to provide hysteresis).
+    offset_peak_fraction : float or None, optional
+        When set, the offset threshold is additionally constrained to be at
+        least this fraction of the detected pulse's peak metric above its
+        metric baseline.  This gives each probe a tail cutoff relative to its
+        own pulse strength.  ``None`` preserves baseline-noise-only offset
+        detection.
+    packet_selection : {'first_threshold', 'dominant_peak'}
+        ``'first_threshold'`` preserves the legacy behaviour.
+        ``'dominant_peak'`` identifies the strongest packet after the trigger
+        and bounds that packet, preventing an earlier weak precursor from
+        masking a later, larger arrival.
+    min_active_duration : float, default 50e-6
+        Minimum time [s] the metric must stay above the onset threshold
+        before declaring onset (avoids noise spikes).
+    min_quiet_duration : float, default 100e-6
+        Minimum time [s] the metric must stay below the offset threshold
+        before declaring offset (avoids premature end).
+    pad_before : float, default 20e-6
+        Time [s] added before the detected onset to include pre-shock
+        baseline context.
+    pad_after : float, default 50e-6
+        Time [s] added after detected offset to capture late decay.
+    min_samples : int, default 256
+        Minimum number of samples required in the window.  If the
+        detected window is shorter, the detector returns a fallback
+        status.
+    max_samples : int, default 50000
+        Maximum number of samples allowed in the window.  If the
+        detected window exceeds this, it is truncated.
+    detector_mode : str, default 'energy'
+        Detection metric.  ``'energy'`` uses the smoothed squared
+        signal; ``'abs'`` uses the smoothed absolute value.
+
+    Returns
+    -------
+    dict with keys:
+        status : str
+            ``'valid'``, ``'fallback'``, or ``'invalid'``.
+        start_idx, end_idx : int
+            Sample indices into *time* / *signal*.
+        start_time, end_time : float
+            Corresponding times [s].
+        duration : float
+            Window duration ``end_time - start_time`` [s].
+        n_samples : int
+            Number of samples in the window.
+        baseline : float
+            Median of the pre-event signal.
+        noise_scale : float
+            MAD (or RMS) of the pre-event signal.
+        onset_threshold : float
+            Metric baseline + onset_sigma * metric noise scale.
+        offset_threshold : float
+            Baseline + offset_sigma * noise_scale.
+        onset_time, offset_time : float
+            Detected onset / offset times (before padding) [s].
+        onset_idx, offset_idx : int
+            Detected onset / offset indices (before padding).
+        laser_lower_bound : float or None
+            Lower bound used for the search [s].
+        fallback_reason : str or None
+            Reason for fallback/invalid status.
+        metric : ndarray
+            The detection metric array (useful for diagnostic plots).
+        metric_baseline, metric_noise_scale : float
+            Pre-event statistics in the units of ``metric``.
+        pulse_peak_metric : float or None
+            Peak detection metric after the detected onset.
+        pulse_peak_time : float or None
+            Time of the selected packet's peak metric.
+        metric_time : ndarray
+            Time array matching *metric* (same as *time*).
+    """
+    # --- Input validation ---
+    signal = np.asarray(signal, dtype=float).ravel()
+    time = np.asarray(time, dtype=float).ravel()
+    L = len(signal)
+    if len(time) != L:
+        raise ValueError(f"signal ({L}) and time ({len(time)}) must have the same length")
+
+    dt = np.median(np.diff(time))
+    if not np.isfinite(dt) or dt <= 0:
+        raise ValueError("time must be monotonically increasing with positive dt")
+
+    # Default result (invalid)
+    result = {
+        "status": "invalid",
+        "start_idx": 0, "end_idx": L - 1,
+        "start_time": time[0], "end_time": time[-1],
+        "duration": time[-1] - time[0],
+        "n_samples": L,
+        "baseline": 0.0, "noise_scale": 0.0,
+        "metric_baseline": 0.0, "metric_noise_scale": 0.0,
+        "pulse_peak_metric": None, "pulse_peak_time": None,
+        "baseline_source": None,
+        "onset_threshold": 0.0, "offset_threshold": 0.0,
+        "onset_time": None, "offset_time": None,
+        "onset_idx": None, "offset_idx": None,
+        "laser_lower_bound": laser_start_time,
+        "fallback_reason": None, "metric": None, "metric_time": None,
+    }
+
+    # --- Determine pre-event baseline window ---
+    pre_event_available = False
+    if laser_start_time is not None:
+        baseline_end_time = laser_start_time - baseline_margin
+        pre_event_available = baseline_end_time > time[0]
+    else:
+        baseline_end_time = time[0] + pre_event_fraction * (time[-1] - time[0])
+        pre_event_available = True
+
+    if pre_event_available:
+        baseline_start_idx = 0
+        baseline_end_idx = int(np.searchsorted(time, baseline_end_time))
+    else:
+        # The record can begin after the laser has fired (e.g. the early
+        # probes).  In that case its initial samples are not a baseline: use
+        # the quietest short block anywhere in the record instead.
+        baseline_width = min(L, max(32, int(pre_event_fraction * L)))
+        starts = np.arange(0, max(1, L - baseline_width + 1),
+                           max(1, baseline_width // 8), dtype=int)
+        if starts[-1] != L - baseline_width:
+            starts = np.append(starts, L - baseline_width)
+        sums = np.concatenate(([0.0], np.cumsum(signal, dtype=float)))
+        sums_sq = np.concatenate(([0.0], np.cumsum(signal ** 2, dtype=float)))
+        means = (sums[starts + baseline_width] - sums[starts]) / baseline_width
+        variances = ((sums_sq[starts + baseline_width] - sums_sq[starts]) /
+                     baseline_width - means ** 2)
+        baseline_start_idx = int(starts[np.argmin(np.maximum(variances, 0.0))])
+        baseline_end_idx = baseline_start_idx + baseline_width
+
+    baseline_end_idx = min(baseline_end_idx, L)
+    baseline_start_idx = max(0, min(baseline_start_idx, baseline_end_idx - 1))
+    baseline_source = "pre_event" if pre_event_available else "quietest_block"
+    pre_event = signal[baseline_start_idx:baseline_end_idx]
+    if len(pre_event) < 2:
+        # Fallback — use the first few samples
+        pre_event = signal[:max(2, min(10, L // 10))]
+        if len(pre_event) < 2:
+            pre_event = signal[:2]
+
+    baseline = float(np.median(pre_event))
+    noise_scale = float(np.median(np.abs(pre_event - baseline)))
+    if noise_scale < 1e-30:
+        noise_scale = float(np.std(pre_event))
+    if noise_scale < 1e-30:
+        noise_scale = 1e-30
+
+    # --- Compute broadband energy metric ---
+    signal_c = signal - baseline  # remove baseline offset
+
+    if detector_mode == "energy":
+        metric_raw = signal_c ** 2
+    else:  # "abs"
+        metric_raw = np.abs(signal_c)
+
+    # Smooth the metric with a moving average.  ``np.convolve`` uses a direct
+    # O(L * win_len) algorithm here; at 100,000 samples/probe that made the
+    # detector take several hours for 2,000 probes.  The cumulative-sum form
+    # below has identical ``mode='same'`` zero-padded semantics in O(L).
+    win_len = max(3, int(L * 0.01))
+    same_start = (win_len - 1) // 2
+    pad_left = win_len - 1 - same_start
+    pad_right = same_start
+    padded_metric = np.pad(metric_raw, (pad_left, pad_right), mode="constant")
+    cumulative = np.concatenate(([0.0], np.cumsum(padded_metric, dtype=float)))
+    metric = (cumulative[win_len:] - cumulative[:-win_len]) / win_len
+    metric_time = time
+
+    # Thresholds must use statistics in the same units as the detection
+    # metric.  The old code compared a squared-signal metric to the raw
+    # signal baseline, which made the detector miss clear pulses (notably
+    # probe 499) and trigger the arbitrary max-sample fallback window.
+    metric_pre_event = metric[baseline_start_idx:baseline_end_idx]
+    metric_baseline = float(np.median(metric_pre_event))
+    metric_noise_scale = float(np.median(np.abs(metric_pre_event - metric_baseline)))
+    if metric_noise_scale < 1e-30:
+        metric_noise_scale = float(np.std(metric_pre_event))
+    if metric_noise_scale < 1e-30:
+        metric_noise_scale = 1e-30
+
+    onset_threshold = metric_baseline + onset_sigma * metric_noise_scale
+    offset_threshold = metric_baseline + offset_sigma * metric_noise_scale
+
+    # --- Find the selected packet's onset ---
+    # Only search after the laser lower bound.
+    if laser_start_time is not None:
+        search_start_idx = max(0, int(np.searchsorted(time, laser_start_time - baseline_margin)))
+    else:
+        search_start_idx = baseline_end_idx
+
+    if packet_selection not in ("first_threshold", "dominant_peak"):
+        raise ValueError("packet_selection must be 'first_threshold' or 'dominant_peak'")
+
+    def _run_starts(mask, run_length):
+        """Return starts of true runs at least ``run_length`` samples long."""
+        if run_length > len(mask):
+            return np.empty(0, dtype=int)
+        cumulative_mask = np.concatenate(([0], np.cumsum(mask, dtype=np.int64)))
+        return np.flatnonzero(
+            cumulative_mask[run_length:] - cumulative_mask[:-run_length] == run_length)
+
+    onset_idx_val = None
+    peak_idx_val = None
+    pulse_peak_metric = None
+    n_active_min = max(1, int(min_active_duration / dt))
+    n_quiet_min = max(1, int(min_quiet_duration / dt))
+
+    if packet_selection == "dominant_peak":
+        peak_idx_val = search_start_idx + int(np.argmax(metric[search_start_idx:]))
+        pulse_peak_metric = float(metric[peak_idx_val])
+        if onset_peak_fraction is not None:
+            if onset_peak_fraction <= 0.0 or onset_peak_fraction >= 1.0:
+                raise ValueError("onset_peak_fraction must lie between 0 and 1")
+            peak_relative_onset = metric_baseline + onset_peak_fraction * (
+                pulse_peak_metric - metric_baseline)
+            onset_threshold = max(onset_threshold, peak_relative_onset)
+
+        # Walk backward from the dominant peak to the end of the last quiet
+        # interval.  That bounds this packet rather than a preceding weak one.
+        quiet_starts = _run_starts(metric < onset_threshold, n_quiet_min)
+        quiet_starts = quiet_starts[quiet_starts + n_quiet_min <= peak_idx_val]
+        if quiet_starts.size:
+            onset_idx_val = int(quiet_starts[-1] + n_quiet_min)
+        else:
+            onset_idx_val = search_start_idx
+    else:
+        i = search_start_idx
+        while i < L:
+            if metric[i] > onset_threshold:
+                # Check if it stays above for min_active_duration
+                j = i
+                while j < L and j - i < n_active_min:
+                    if metric[j] <= onset_threshold:
+                        i = j + 1
+                        break
+                    j += 1
+                if j - i >= n_active_min:
+                    onset_idx_val = i
+                    break
+            i += 1
+
+    # --- Find offset ---
+    offset_idx_val = None
+
+    if onset_idx_val is not None:
+        if pulse_peak_metric is None:
+            peak_idx_val = onset_idx_val + int(np.argmax(metric[onset_idx_val:]))
+            pulse_peak_metric = float(metric[peak_idx_val])
+        if offset_peak_fraction is not None:
+            if offset_peak_fraction <= 0.0:
+                raise ValueError("offset_peak_fraction must be positive or None")
+            peak_relative_threshold = metric_baseline + offset_peak_fraction * (
+                pulse_peak_metric - metric_baseline)
+            # Keep the noise-based threshold as a floor so a weak pulse is
+            # never tracked below the measured background fluctuation level.
+            offset_threshold = max(offset_threshold, peak_relative_threshold)
+        i = peak_idx_val + 1 if packet_selection == "dominant_peak" else onset_idx_val + 1
+        while i < L:
+            if metric[i] < offset_threshold:
+                # Check if it stays below for min_quiet_duration
+                j = i
+                while j < L and j - i < n_quiet_min:
+                    if metric[j] >= offset_threshold:
+                        i = j + 1
+                        break
+                    j += 1
+                if j - i >= n_quiet_min:
+                    offset_idx_val = i
+                    break
+            i += 1
+
+    # --- Handle fallback for offset ---
+    fallback_reason = None
+    if onset_idx_val is None:
+        fallback_reason = "onset_not_detected"
+        onset_idx_val = baseline_end_idx
+        offset_idx_val = L - 1
+    elif offset_idx_val is None:
+        fallback_reason = "offset_not_detected"
+        offset_idx_val = L - 1
+
+    # --- Apply padding ---
+    pad_before_samples = max(0, int(pad_before / dt))
+    pad_after_samples = max(0, int(pad_after / dt))
+
+    start_idx = max(0, onset_idx_val - pad_before_samples)
+    end_idx = min(L - 1, offset_idx_val + pad_after_samples)
+
+    # --- Enforce min / max samples ---
+    n_samples = end_idx - start_idx + 1
+    if n_samples < min_samples:
+        if start_idx > 0:
+            extra = min_samples - n_samples
+            start_idx = max(0, start_idx - extra)
+        if end_idx - start_idx + 1 < min_samples and end_idx < L - 1:
+            extra = min_samples - (end_idx - start_idx + 1)
+            end_idx = min(L - 1, end_idx + extra)
+        n_samples = end_idx - start_idx + 1
+        if n_samples < min_samples:
+            fallback_reason = "window_too_short"
+
+    if n_samples > max_samples:
+        # Truncate symmetrically
+        excess = n_samples - max_samples
+        start_idx += excess // 2
+        end_idx -= (excess - excess // 2)
+        if start_idx >= end_idx:
+            start_idx = max(0, end_idx - max_samples)
+        n_samples = max_samples
+
+    # --- Determine final status ---
+    status = "valid"
+    if fallback_reason is not None:
+        if onset_idx_val == baseline_end_idx and offset_idx_val == L - 1:
+            status = "fallback"
+        else:
+            status = "valid (partial fallback)"
+
+    # Build result
+    onset_time_val = float(time[onset_idx_val]) if onset_idx_val is not None else None
+    offset_time_val = float(time[offset_idx_val]) if offset_idx_val is not None else None
+
+    result.update({
+        "status": status,
+        "start_idx": start_idx,
+        "end_idx": end_idx,
+        "start_time": float(time[start_idx]),
+        "end_time": float(time[end_idx]),
+        "duration": float(time[end_idx] - time[start_idx]),
+        "n_samples": n_samples,
+        "baseline": baseline,
+        "noise_scale": noise_scale,
+        "metric_baseline": metric_baseline,
+        "metric_noise_scale": metric_noise_scale,
+        "pulse_peak_metric": pulse_peak_metric,
+        "pulse_peak_time": float(time[peak_idx_val]) if peak_idx_val is not None else None,
+        "baseline_source": baseline_source,
+        "onset_threshold": onset_threshold,
+        "offset_threshold": offset_threshold,
+        "onset_time": onset_time_val,
+        "offset_time": offset_time_val,
+        "onset_idx": onset_idx_val,
+        "offset_idx": offset_idx_val,
+        "laser_lower_bound": laser_start_time,
+        "fallback_reason": fallback_reason,
+        "metric": metric,
+        "metric_time": metric_time,
+    })
+    return result
+
+
+def extract_probe_window(signal, time, start_idx, end_idx):
+    """Extract a contiguous window from a signal and time array.
+
+    Parameters
+    ----------
+    signal : ndarray, shape (L,)
+    time : ndarray, shape (L,)
+    start_idx : int
+        Starting index (inclusive).
+    end_idx : int
+        Ending index (inclusive).
+
+    Returns
+    -------
+    window_signal : ndarray
+    window_time : ndarray
+    n_samples : int
+    """
+    signal = np.asarray(signal, dtype=float).ravel()
+    time = np.asarray(time, dtype=float).ravel()
+    L = len(signal)
+
+    start_idx = max(0, min(start_idx, L - 1))
+    end_idx = max(start_idx, min(end_idx, L - 1))
+
+    n_samples = end_idx - start_idx + 1
+    window_signal = signal[start_idx:end_idx + 1].copy()
+    window_time = time[start_idx:end_idx + 1].copy()
+    return window_signal, window_time, n_samples
 
 
 # ===========================================================================

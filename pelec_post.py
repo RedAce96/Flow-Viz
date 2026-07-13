@@ -70,8 +70,8 @@ CONFIG = {
 
     # --- Snapshot range ---
     # Set to None to process all discovered plotfiles.
-    "snapshot_start": 282000,
-    "snapshot_end": 300000,
+    "snapshot_start": 212000,
+    "snapshot_end": 213000,
     "snapshot_step": 1000,
 
     # --- Field aliases ---
@@ -81,7 +81,7 @@ CONFIG = {
     "field_aliases": None,
 
     # --- Workflow toggles ---
-    "make_contour_plots": True,
+    "make_contour_plots": False,
     "make_line_profiles": False,
     "make_streamlines": False,
     "make_surface_analysis": False,
@@ -90,19 +90,19 @@ CONFIG = {
     "make_probe_plots": False,   # set True only if you need time-history plots (requires ASCII conversion)
     "make_fft_probes": True,      # set True to run FFT / stability analysis on probe data
     "make_pprime_contour": False,
-    "make_stability_diagnostics": True,
+    "make_stability_diagnostics": False,
 
 
     # --- Contour plot settings ---
     # List of canonical field names to plot.  Any field present in the
     # dataset (including derived fields) can be used.
     "contour_fields": [
-        "pressure",
+        "density",
     ],
     "contour_cmap": "turbo",             # Colormap for all contour plots
-    "contour_norm": "log",               # Color scaling: "linear", "log", "symlog", or a matplotlib Normalize object
+    "contour_norm": "linear",               # Color scaling: "linear", "log", "symlog", or a matplotlib Normalize object
     "contour_vlims": {                       # Per-field color limits [vmin, vmax]
-        "pressure": [0, 1000],
+        "density": [0, 1.0],
     },
     "contour_xlim": [-0.001,0.2],                    # [xmin, xmax] or None for full domain
     "contour_ylim": None,                    # [ymin, ymax] or None for full domain
@@ -191,10 +191,12 @@ CONFIG = {
     "fft_window": "hann",            # "hann" | "hamming" | "blackman" | "rect" | "none"
     "fft_window_compensation": True,  # Scale FFT amplitudes to preserve magnitude
     "fft_plot_last_probe": False,
-    "fft_plot_probe_indices": [0, 249, 499, 749, 999],
-    "fft_plot_contour": False,  # can OOM with 2000 probes; use True with fft_max_probes <= ~200
-    "fft_contour_normalize": False,  # True can create bright artifacts where the reference probe has a node
-    "fft_contour_ref_probe": "first",
+    "fft_plot_probe_indices": [0, 249, 499, 749, 999, 1249],
+    "fft_plot_contour": True,  # can OOM with 2000 probes; use True with fft_max_probes <= ~200
+    "fft_contour_normalize": True,  # True can create bright artifacts where the reference probe has a node
+    "fft_contour_ref_probe": 499,
+    "fft_contour_scale": "linear",  # "linear" gives 0-to-max amplitude; "db" gives the legacy dB plot
+    "fft_contour_vmax": 400,  # None -> use the maximum plotted amplitude
 
     # --- FFT advanced analysis ---
     "fft_harmonic_freq": 10.0e6,
@@ -220,12 +222,53 @@ CONFIG = {
     "stability_num_gpi_profiles": 5,
 
     # --- Phase 1: Disturbance signal reconstruction ---
-    # Reconstruct time-domain disturbance from FFT harmonics or a frequency
-    # band.  Requires make_fft_probes=True.
+    # Reconstruct time-domain disturbance from FFT harmonics, a frequency
+    # band, or the top-N amplitude frequency peaks.
+    # Requires make_fft_probes=True.
     "make_disturbance_reconstruction": True,
-    "reconstruction_method": "harmonics",   # "harmonics" | "band"
-    "reconstruction_band": [1.0e6, 50.0e6], # for band-limited method [Hz]
-    "reconstruction_num_harmonics": 5,
+    # None reuses fft_plot_probe_indices.  This keeps the expensive window
+    # detection and reconstruction aligned with the probes selected for plots.
+    # Set an explicit list only when reconstruction should use a different set.
+    "reconstruction_probe_indices": None,
+    "reconstruction_method": "top_frequencies",  # "harmonics" | "band" | "top_frequencies"
+    "reconstruction_band": [1.0e6, 50.0e6],        # for method="band" [Hz]
+    "reconstruction_num_harmonics": 5,             # for method="harmonics"
+    "reconstruction_n_peaks": 15,                  # for method="top_frequencies"
+    "reconstruction_peak_min_distance_hz": None,   # None -> auto (max(3*df, 1 kHz))
+    "reconstruction_peak_freq_range": None,         # [f_min, f_max] or None
+    # --- Disturbance window detection (Phase 1b) ---
+    # Restrict reconstruction to the active disturbance interval
+    # (shock front + oscillatory tail) instead of the full probe record.
+    #   "common_detected" : detect per-probe, then form one common window
+    #   "per_probe"       : each probe uses its own window
+    #   "fixed"           : use reconstruction_window_start/end seconds
+    #   "full"            : legacy — no windowing
+    "reconstruction_window_mode": "per_probe",
+    "reconstruction_window_detector": "energy",
+    # Select the strongest detected packet in each probe rather than the
+    # first threshold crossing; important once the packet arrival is delayed.
+    "reconstruction_packet_selection": "dominant_peak",  # "dominant_peak" | "first_threshold"
+    "reconstruction_window_start": None,       # for mode="fixed" [s]
+    "reconstruction_window_end": None,         # for mode="fixed" [s]
+    "reconstruction_baseline_margin": 0.001,   # pre-event baseline end [s]
+    "reconstruction_pre_event_fraction": 0.02, # fallback baseline fraction
+    "reconstruction_onset_sigma": 5.0,         # onset threshold multiplier
+    # A 10% entry level keeps separated amplitude lobes of one packet
+    # connected while rejecting the baseline/noise floor.
+    "reconstruction_onset_peak_fraction": 0.10, # onset level relative to that probe's peak energy
+    "reconstruction_offset_sigma": 2.0,        # offset threshold (hysteresis)
+    # A per-probe pulse-tail cutoff relative to that probe's peak detector
+    # energy.  None uses only the baseline-noise offset threshold.
+    "reconstruction_offset_peak_fraction": 1.0e-3,
+    "reconstruction_min_active_duration": 50e-6,   # min time above onset [s]
+    "reconstruction_min_quiet_duration": 5e-6,     # min time below offset [s]
+    "reconstruction_window_pad_before": 20e-6,     # padding before onset [s]
+    "reconstruction_window_pad_after": 50e-6,      # padding after offset [s]
+    "reconstruction_common_onset_percentile": 10.0,  # robust common start [%]
+    "reconstruction_common_offset_percentile": 90.0, # robust common end [%]
+    "reconstruction_min_samples": 256,          # min samples in window
+    "reconstruction_max_samples": 100000,       # max samples in window
+    "reconstruction_save_window_diagnostics": True,
 
     # --- Phase 2: Transient analysis (STFT / Hilbert envelope) ---
     # Time-frequency analysis for laser-pulse wavepacket tracking.
@@ -1096,6 +1139,21 @@ def _process_fft_probes(config):
         elif config.get("fft_plot_last_probe", False):
             plot_indices = [n_valid - 1]
 
+        # Reconstruction can be restricted independently, but by default it
+        # follows the probes selected for the FFT time-history plots.  The
+        # previous implementation reconstructed all n_valid probes even
+        # though it only wrote figures for plot_indices.
+        reconstruction_indices_cfg = config.get("reconstruction_probe_indices")
+        if reconstruction_indices_cfg is None:
+            reconstruction_indices_cfg = probe_indices
+        if reconstruction_indices_cfg:
+            recon_probe_indices = sorted(set(
+                max(0, min(idx if idx >= 0 else n_valid + idx, n_valid - 1))
+                for idx in reconstruction_indices_cfg
+            ))
+        else:
+            recon_probe_indices = []
+
         if len(plot_indices) > 0:
             pos_indices = sorted(set(
                 max(0, min(idx if idx >= 0 else n_valid + idx, n_valid - 1))
@@ -1141,24 +1199,45 @@ def _process_fft_probes(config):
                 probe_x_sorted = np.array(probe_x)[idx_sorted]
                 P1_sorted = P1[:, idx_sorted]
                 eps = 1e-20
-                if contour_normalize:
-                    ref_idx = 0 if contour_ref == "first" else (
-                        -1 if contour_ref == "last" else int(contour_ref))
-                    P1_ref = P1_sorted[:, ref_idx]
-                    P1_ref_safe = np.where(P1_ref < eps, eps, P1_ref)
-                    P1_dB = 20.0 * np.log10(P1_sorted / P1_ref_safe[:, np.newaxis] + eps)
-                    cbar_label = "Amplitude factor [dB]"
+                contour_scale = config.get("fft_contour_scale", "linear").lower()
+                if contour_scale == "linear":
+                    # Use the physical nonnegative FFT amplitude directly.
+                    # This gives the requested color range [0, max].
+                    P1_plot = np.maximum(P1_sorted, 0.0)
+                    cbar_label = "Amplitude"
+                    plot_vmin = 0.0
+                    plot_vmax = config.get("fft_contour_vmax")
                 else:
-                    P1_dB = 10.0 * np.log10(P1_sorted + eps)
-                    cbar_label = "Amplitude [dB]"
+                    if contour_normalize:
+                        ref_idx = 0 if contour_ref == "first" else (
+                            -1 if contour_ref == "last" else int(contour_ref))
+                        P1_ref = P1_sorted[:, ref_idx]
+                        P1_ref_safe = np.where(P1_ref < eps, eps, P1_ref)
+                        P1_plot = 20.0 * np.log10(
+                            P1_sorted / P1_ref_safe[:, np.newaxis] + eps)
+                        cbar_label = "Amplitude factor [dB]"
+                    else:
+                        P1_plot = 10.0 * np.log10(P1_sorted + eps)
+                        cbar_label = "Amplitude [dB]"
+                    plot_vmin = None
+                    plot_vmax = None
                 first_signal = 1
                 idx_f = slice(first_signal, n_freq)
                 freq_sub = freq[idx_f]
-                P1_dB_sub = P1_dB[idx_f, :]
+                P1_plot_sub = P1_plot[idx_f, :]
                 if len(freq_sub) > 1:
+                    if contour_scale == "linear" and plot_vmax is None:
+                        plot_vmax = float(np.nanmax(P1_plot_sub))
+                    if contour_scale == "linear" and (
+                            not np.isfinite(plot_vmax) or plot_vmax <= 0.0):
+                        plot_vmax = 1.0
                     fig, ax = plt.subplots(figsize=(12, 6))
                     XX, YY = np.meshgrid(probe_x_sorted, freq_sub)
-                    ax.pcolormesh(XX, YY, P1_dB_sub, shading="auto", cmap="inferno", rasterized=True)
+                    ax.pcolormesh(
+                        XX, YY, P1_plot_sub,
+                        shading="auto", cmap="inferno", rasterized=True,
+                        vmin=plot_vmin, vmax=plot_vmax,
+                    )
                     cb = fig.colorbar(ax.collections[0], ax=ax, pad=0.02, shrink=0.6)
                     cb.set_label(cbar_label, fontsize=11)
                     ax.set_xlabel("Probe X position [cm]", fontsize=12)
@@ -1254,77 +1333,269 @@ def _process_fft_probes(config):
                 _ts(f"  [W] Growth curves plot failed: {exc}")
 
         # ------------------------------------------------------------------
-        # Phase 1: Disturbance signal reconstruction (harmonic / band-limited)
+        # Phase 1: Disturbance signal reconstruction (windowed)
         # ------------------------------------------------------------------
-        if config.get("make_disturbance_reconstruction", False):
+        if config.get("make_disturbance_reconstruction", False) and not recon_probe_indices:
+            _ts("  [W] Disturbance reconstruction skipped: no reconstruction probes selected")
+        elif config.get("make_disturbance_reconstruction", False):
             _ts("  Running disturbance signal reconstruction ...")
             try:
                 recon_method = config.get("reconstruction_method", "harmonics")
                 num_harm = config.get("reconstruction_num_harmonics", 5)
-                recon_freq = harmonic_freq  # reuse harmonic_freq from config
+                recon_freq = harmonic_freq
                 recon_band = config.get("reconstruction_band", [1.0e6, 50.0e6])
                 recon_output_dir = output_dir / "Reconstruction"
                 recon_output_dir.mkdir(parents=True, exist_ok=True)
 
-                # Use the raw signal, but mean-subtract so the disturbance is
-                # isolated from the large DC background (~8000 vs ~2000 amp).
-                raw = raw_matrix  # saved by _preprocess_probe_signal
+                raw = raw_matrix  # full-record raw signal
                 dt_use_local = dt_actual
+                plot_time = time_uniform if resample else probe_data[0]["time"][:L]
 
+                # ============================================================
+                # Stage 1: Disturbance window detection
+                # ============================================================
+                window_mode = config.get("reconstruction_window_mode", "per_probe")
+                do_window = window_mode not in (None, "full")
+                window_info_by_probe = {}
+                common_start_idx = 0
+                common_end_idx = L - 1
+
+                if do_window:
+                    laser_t = config.get("laser_start_time", None)
+                    baseline_margin = config.get("reconstruction_baseline_margin", 0.001)
+                    pre_frac = config.get("reconstruction_pre_event_fraction", 0.02)
+                    onset_sig = config.get("reconstruction_onset_sigma", 5.0)
+                    onset_peak_frac = config.get("reconstruction_onset_peak_fraction")
+                    offset_sig = config.get("reconstruction_offset_sigma", 2.0)
+                    offset_peak_frac = config.get("reconstruction_offset_peak_fraction")
+                    packet_selection = config.get("reconstruction_packet_selection", "dominant_peak")
+                    min_active = config.get("reconstruction_min_active_duration", 50e-6)
+                    min_quiet = config.get("reconstruction_min_quiet_duration", 100e-6)
+                    pad_bef = config.get("reconstruction_window_pad_before", 20e-6)
+                    pad_aft = config.get("reconstruction_window_pad_after", 50e-6)
+                    min_samp = config.get("reconstruction_min_samples", 256)
+                    max_samp = config.get("reconstruction_max_samples", 50000)
+                    det_mode = config.get("reconstruction_window_detector", "energy")
+
+                    for ip in recon_probe_indices:
+                        sig_raw = raw[:, ip]
+                        win = fdb.detect_disturbance_window(
+                            sig_raw, plot_time,
+                            laser_start_time=laser_t,
+                            baseline_margin=baseline_margin,
+                            pre_event_fraction=pre_frac,
+                            onset_sigma=onset_sig,
+                            onset_peak_fraction=onset_peak_frac,
+                            offset_sigma=offset_sig,
+                            offset_peak_fraction=offset_peak_frac,
+                            packet_selection=packet_selection,
+                            min_active_duration=min_active,
+                            min_quiet_duration=min_quiet,
+                            pad_before=pad_bef,
+                            pad_after=pad_aft,
+                            min_samples=min_samp,
+                            max_samples=max_samp,
+                            detector_mode=det_mode,
+                        )
+                        window_info_by_probe[ip] = win
+
+                    # Aggregate for common_detected mode
+                    if window_mode == "common_detected":
+                        valid_onsets = [w["onset_time"] for w in window_info_by_probe.values()
+                                        if w["status"] != "invalid" and w["onset_time"] is not None]
+                        valid_offsets = [w["offset_time"] for w in window_info_by_probe.values()
+                                         if w["status"] != "invalid" and w["offset_time"] is not None]
+                        if valid_onsets and valid_offsets:
+                            onset_pct = config.get("reconstruction_common_onset_percentile", 10.0)
+                            offset_pct = config.get("reconstruction_common_offset_percentile", 90.0)
+                            common_start_time = float(np.percentile(valid_onsets, onset_pct))
+                            common_end_time = float(np.percentile(valid_offsets, offset_pct))
+                        else:
+                            common_start_time = plot_time[0]
+                            common_end_time = plot_time[-1]
+                        common_start_idx = max(0, int(np.searchsorted(plot_time, common_start_time)))
+                        common_end_idx = min(L - 1, int(np.searchsorted(plot_time, common_end_time)))
+                        if common_end_idx <= common_start_idx:
+                            common_end_idx = min(L - 1, common_start_idx + min_samp)
+                    elif window_mode == "fixed":
+                        common_start_time = config.get("reconstruction_window_start", plot_time[0])
+                        common_end_time = config.get("reconstruction_window_end", plot_time[-1])
+                        common_start_idx = max(0, int(np.searchsorted(plot_time, common_start_time)))
+                        common_end_idx = min(L - 1, int(np.searchsorted(plot_time, common_end_time)))
+                        if common_end_idx <= common_start_idx:
+                            common_end_idx = min(L - 1, common_start_idx + min_samp)
+
+                    # Save window diagnostics
+                    if config.get("reconstruction_save_window_diagnostics", True):
+                        try:
+                            diag_out = recon_output_dir / "disturbance_windows.csv"
+                            with open(str(diag_out), "w") as fh:
+                                fh.write("probe_idx,x_cm,status,onset_time,offset_time,"
+                                         "window_start,window_end,duration,n_samples,"
+                                         "baseline,noise_scale,peak_time,baseline_source,"
+                                         "fallback_reason\n")
+                                for ip in recon_probe_indices:
+                                    p = probe_data[ip]
+                                    w = window_info_by_probe[ip]
+                                    fh.write(f"{ip},{p['x']:.6f},{w['status']},"
+                                             f"{w['onset_time']},{w['offset_time']},"
+                                             f"{w['start_time']},{w['end_time']},"
+                                             f"{w['duration']},{w['n_samples']},"
+                                             f"{w['baseline']:.6e},{w['noise_scale']:.6e},"
+                                             f"{w.get('pulse_peak_time')},{w.get('baseline_source')},"
+                                             f"{w['fallback_reason'] or 'None'}\n")
+                            _ts(f"  Saved window diagnostics: {diag_out}")
+                        except Exception as exc:
+                            _ts(f"  [W] Window diagnostics save failed: {exc}")
+                else:
+                    _ts("  Window mode='full' — using complete probe record")
+
+                # ============================================================
+                # Stage 2: Reconstruct on (possibly windowed) signals
+                # ============================================================
                 energy_budgets = []
                 residual_stats = []
                 recon_probe_x = []
+                recon_window_info = {}
 
-                for ip in range(n_valid):
+                for ip in recon_probe_indices:
                     sig_raw = raw[:, ip]
-                    sig_mean = float(np.nanmean(sig_raw))
-                    sig = sig_raw - sig_mean   # zero-mean disturbance signal
                     p = probe_data[ip]
                     recon_probe_x.append(p["x"])
 
+                    # Extract windowed signal
+                    if window_mode == "common_detected":
+                        ws, wt, nw = fdb.extract_probe_window(
+                            sig_raw, plot_time, common_start_idx, common_end_idx)
+                        w_start_t = wt[0] if len(wt) > 0 else None
+                        w_end_t = wt[-1] if len(wt) > 0 else None
+                    elif window_mode == "per_probe":
+                        if ip in window_info_by_probe:
+                            wi = window_info_by_probe[ip]
+                            ws, wt, nw = fdb.extract_probe_window(
+                                sig_raw, plot_time, wi["start_idx"], wi["end_idx"])
+                            w_start_t = wt[0] if len(wt) > 0 else None
+                            w_end_t = wt[-1] if len(wt) > 0 else None
+                        else:
+                            ws, wt, nw = sig_raw.copy(), plot_time.copy(), L
+                            w_start_t, w_end_t = None, None
+                    elif window_mode == "fixed":
+                        ws, wt, nw = fdb.extract_probe_window(
+                            sig_raw, plot_time, common_start_idx, common_end_idx)
+                        w_start_t = wt[0] if len(wt) > 0 else None
+                        w_end_t = wt[-1] if len(wt) > 0 else None
+                    else:  # "full" mode
+                        ws, wt, nw = sig_raw.copy(), plot_time.copy(), L
+                        w_start_t, w_end_t = None, None
+
+                    # Fallback if window is too short
+                    min_samp = config.get("reconstruction_min_samples", 256)
+                    if nw < min_samp:
+                        _ts(f"  [W] Probe {ip}: window too short ({nw} < {min_samp} samples), "
+                            f"using full record")
+                        ws, wt, nw = sig_raw.copy(), plot_time.copy(), L
+                        w_start_t, w_end_t = None, None
+
+                    recon_window_info[ip] = {
+                        "start_time": w_start_t, "end_time": w_end_t,
+                        "n_samples": nw, "windowed_signal": ws.ravel(),
+                        "window_time": wt.ravel(),
+                    }
+
+                    # Mean-subtract the windowed signal
+                    sig_mean = float(np.nanmean(ws))
+                    sig = ws - sig_mean
+
                     if recon_method == "harmonics":
-                        recon_total, harm_sigs, used_bins = fdb.reconstruct_from_harmonics(
+                        recon_total, comp_sigs, used_bins = fdb.reconstruct_from_harmonics(
                             sig, dt_use_local, recon_freq, num_harm,
                         )
-                    else:  # "band"
+                    elif recon_method == "band":
                         recon_total, used_bins = fdb.reconstruct_from_band(
                             sig, dt_use_local, recon_band[0], recon_band[1],
                         )
-                        harm_sigs = {"band": recon_total.ravel()}
+                        comp_sigs = {"band": recon_total.ravel()}
+                    elif recon_method == "top_frequencies":
+                        recon_total, comp_sigs, used_bins = fdb.reconstruct_from_top_frequencies(
+                            sig, dt_use_local,
+                            n_peaks=config.get("reconstruction_n_peaks", 15),
+                            freq_range=config.get("reconstruction_peak_freq_range"),
+                            min_peak_distance_hz=config.get("reconstruction_peak_min_distance_hz"),
+                        )
+                    else:
+                        raise ValueError(f"Unknown reconstruction_method: {recon_method}")
 
                     recon_total = recon_total.ravel()
-                    for key in harm_sigs:
-                        harm_sigs[key] = harm_sigs[key].ravel()
+                    for key in comp_sigs:
+                        comp_sigs[key] = comp_sigs[key].ravel()
 
                     residual = sig.ravel() - recon_total
-                    eb = fdb.compute_energy_budget(sig.ravel(), recon_total, harm_sigs)
+                    eb = fdb.compute_energy_budget(sig.ravel(), recon_total, comp_sigs)
                     rs = fdb.compute_residual_stats(sig.ravel(), recon_total)
-                    # Add metadata for richer diagnostics
                     eb["mean_background"] = sig_mean
                     eb["reconstruction_method"] = recon_method
                     eb["fundamental_freq"] = recon_freq
-                    eb["used_harmonic_bins"] = used_bins
+                    eb["used_harmonic_bins"] = used_bins if recon_method != "top_frequencies" else []
                     energy_budgets.append(eb)
                     residual_stats.append(rs)
 
-                    # Plot for selected probes (with mean-shifted back for context)
-                    plot_probes = config.get("fft_plot_probe_indices", [0, 49, 99])
-                    if ip in plot_probes:
-                        label = f"Probe {ip} — x={p['x']:.3f} cm"
-                        out_path = recon_output_dir / f"{probe_prefix}_recon_probe{ip:03d}.png"
-                        plot_time = time_uniform if resample else probe_data[0]["time"][:L]
-                        pdb.plot_harmonic_reconstruction(
-                            plot_time,
-                            sig_raw.ravel(),            # full signal (with mean)
-                            recon_total + sig_mean,     # reconstruction shifted to match
-                            residual,                   # residual on zero-mean basis
-                            harm_sigs,
-                            probe_label=label,
-                            output_path=str(out_path),
-                            mean_background=sig_mean,
-                            recon_method=recon_method,
-                            recon_freq=recon_freq,
-                        )
+                    label = f"Probe {ip} — x={p['x']:.3f} cm"
+                    out_path = recon_output_dir / f"{probe_prefix}_recon_probe{ip:03d}.png"
+                    wi = recon_window_info[ip]
+                    pdb.plot_harmonic_reconstruction(
+                        plot_time,
+                        sig_raw.ravel(),            # full signal (with mean)
+                        recon_total + sig_mean,     # reconstruction shifted to match
+                        residual,                   # residual on zero-mean basis
+                        comp_sigs,
+                        probe_label=label,
+                        output_path=str(out_path),
+                        mean_background=sig_mean,
+                        recon_method=recon_method,
+                        recon_freq=recon_freq,
+                        window_start=wi["start_time"],
+                        window_end=wi["end_time"],
+                        windowed_signal=wi["windowed_signal"],
+                        window_time=wi["window_time"],
+                    )
+
+                # ------------------------------------------------------------------
+                # Window diagnostic plots (for selected probes)
+                # ------------------------------------------------------------------
+                if do_window and config.get("reconstruction_save_window_diagnostics", True):
+                    try:
+                        diag_probes = recon_probe_indices
+                        diag_dir = recon_output_dir / "WindowDiagnostics"
+                        diag_dir.mkdir(parents=True, exist_ok=True)
+                        for ip in diag_probes:
+                            w = window_info_by_probe.get(ip)
+                            if w is None:
+                                continue
+                            if w.get("metric") is None:
+                                continue
+                            d_out = diag_dir / f"{probe_prefix}_window_diag_probe{ip:03d}.png"
+                            p = probe_data[ip]
+                            pdb.plot_disturbance_window_diagnostics(
+                                plot_time,
+                                raw[:, ip].ravel(),
+                                w["metric"],
+                                baseline=w["baseline"],
+                                noise_scale=w["noise_scale"],
+                                onset_threshold=w["onset_threshold"],
+                                offset_threshold=w["offset_threshold"],
+                                metric_baseline=w.get("metric_baseline"),
+                                metric_noise_scale=w.get("metric_noise_scale"),
+                                onset_time=w["onset_time"],
+                                offset_time=w["offset_time"],
+                                peak_time=w.get("pulse_peak_time"),
+                                start_time=w["start_time"],
+                                end_time=w["end_time"],
+                                probe_label=f"Probe {ip} (x={p['x']:.3f} cm)",
+                                output_path=str(d_out),
+                            )
+                        _ts(f"  Saved window diagnostic plots ({len(diag_probes)} probes)")
+                    except Exception as exc:
+                        _ts(f"  [W] Window diagnostic plots failed: {exc}")
 
                 # Energy budget vs x
                 pdb.plot_energy_budget_vs_x(
@@ -1336,7 +1607,7 @@ def _process_fft_probes(config):
                     recon_probe_x, residual_stats,
                     output_path=str(recon_output_dir / f"{probe_prefix}_residual_stats_vs_x.png"),
                 )
-                _ts(f"  Disturbance reconstruction complete — {n_valid} probes processed")
+                _ts(f"  Disturbance reconstruction complete — {len(recon_probe_indices)} probes processed")
             except Exception as exc:
                 _ts(f"  [W] Disturbance reconstruction failed: {exc}")
 
