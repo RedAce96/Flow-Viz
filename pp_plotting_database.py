@@ -28,7 +28,126 @@ import pp_functions_database as fdb_mod
 
 
 # ---------------------------------------------------------------------------
-# 0.  COLOURMAP HELPERS
+# 0.  PUBLICATION STYLE AND LABELS
+# ---------------------------------------------------------------------------
+
+_FIELD_TITLES = {
+    "density": "Density", "pressure": "Pressure",
+    "temperature": "Temperature", "x_velocity": "Streamwise velocity",
+    "y_velocity": "Wall-normal velocity",
+    "velocity_magnitude": "Velocity magnitude", "mach_number": "Mach number",
+    "vorticity": "Vorticity", "vorticity_magnitude": "Vorticity magnitude",
+    "schlieren": "Numerical schlieren", "C_p": "Pressure coefficient",
+    "C_f": "Skin-friction coefficient",
+    "delta_99": r"Boundary-layer thickness $\delta_{99}$",
+}
+
+_FIELD_LABELS = {
+    "density": r"$\rho$ [kg m$^{-3}$]", "pressure": r"$p$ [Pa]",
+    "temperature": r"$T$ [K]", "x_velocity": r"$u$ [m s$^{-1}$]",
+    "y_velocity": r"$v$ [m s$^{-1}$]",
+    "velocity_magnitude": r"$|\mathbf{u}|$ [m s$^{-1}$]",
+    "mach_number": r"$M$", "vorticity": r"$\omega_z$ [s$^{-1}$]",
+    "vorticity_magnitude": r"$|\omega|$ [s$^{-1}$]", "C_p": r"$C_p$",
+    "C_f": r"$C_f$", "delta_99": r"$\delta_{99}$ [m]",
+}
+
+
+def configure_plot_style(overrides=None):
+    """Apply one restrained, publication-oriented style to all figures."""
+    style = {
+        "font.family": "DejaVu Sans", "font.size": 10,
+        "axes.titlesize": 12, "axes.labelsize": 11, "axes.linewidth": 0.8,
+        "xtick.labelsize": 9, "ytick.labelsize": 9,
+        "xtick.direction": "in", "ytick.direction": "in",
+        "xtick.top": True, "ytick.right": True,
+        "legend.fontsize": 9, "legend.framealpha": 0.9,
+        "lines.linewidth": 1.6, "savefig.dpi": 300,
+        "savefig.bbox": "tight", "figure.dpi": 120,
+    }
+    if overrides:
+        style.update(overrides)
+    plt.rcParams.update(style)
+
+
+def field_title(field_key):
+    """Return a human-readable title for a canonical field name."""
+    return _FIELD_TITLES.get(field_key, str(field_key).replace("_", " ").title())
+
+
+def field_label(field_key):
+    """Return a symbol-and-unit label for an MKS canonical field."""
+    return _FIELD_LABELS.get(field_key, field_title(field_key))
+
+
+def format_flow_time(time_seconds, reference_time=None, origin=0.0):
+    """Format physical flow time, or nondimensional time when a scale is set."""
+    if time_seconds is None or not np.isfinite(time_seconds):
+        return ""
+    elapsed = float(time_seconds) - float(origin)
+    if reference_time is not None:
+        reference_time = float(reference_time)
+        if reference_time <= 0:
+            raise ValueError("reference_time must be positive")
+        return rf"$t^* = {elapsed / reference_time:.4g}$"
+    if abs(elapsed) >= 1.0:
+        return rf"$t = {elapsed:.4g}$ s"
+    if abs(elapsed) >= 1.0e-3:
+        return rf"$t = {elapsed * 1.0e3:.4g}$ ms"
+    if abs(elapsed) >= 1.0e-6:
+        return rf"$t = {elapsed * 1.0e6:.4g}$ $\mu$s"
+    return rf"$t = {elapsed:.4e}$ s"
+
+
+def streamwise_domain_length(dataset):
+    """Return the full streamwise domain length represented by a dataset."""
+    explicit = dataset.get("domain_length_x")
+    if explicit is not None and np.isfinite(explicit) and explicit > 0:
+        return float(explicit)
+    x = np.asarray(dataset.get("x", []), dtype=float)
+    if x.size < 2:
+        raise ValueError("At least two streamwise coordinates are required")
+    dx = float(np.nanmedian(np.diff(x)))
+    return float(np.nanmax(x) - np.nanmin(x) + abs(dx))
+
+
+def format_dataset_time(dataset, mode="physical", freestream_velocity=None,
+                        reference_time=None, origin=0.0):
+    """Format dataset time in physical, reference, or flow-through units."""
+    time_seconds = dataset.get("time")
+    if mode == "flow_through":
+        if freestream_velocity is None or float(freestream_velocity) <= 0:
+            raise ValueError("A positive freestream_velocity is required")
+        t_flow_through = streamwise_domain_length(dataset) / float(freestream_velocity)
+        value = (float(time_seconds) - float(origin)) / t_flow_through
+        return rf"$t/t_{{\mathrm{{FT}}}} = {value:.4g}$"
+    if mode not in ("physical", "reference"):
+        raise ValueError(f"Unknown time display mode: {mode}")
+    return format_flow_time(
+        time_seconds,
+        reference_time=reference_time if mode == "reference" else None,
+        origin=origin,
+    )
+
+
+def dataset_title(dataset, subject, reference_time=None, time_origin=0.0,
+                  time_mode="physical", freestream_velocity=None):
+    """Build a scientific title from a subject and the dataset flow time."""
+    time_text = format_dataset_time(
+        dataset,
+        mode=time_mode,
+        freestream_velocity=freestream_velocity,
+        reference_time=reference_time,
+        origin=time_origin,
+    )
+    return f"{field_title(subject)} — {time_text}" if time_text else field_title(subject)
+
+
+configure_plot_style()
+
+
+# ---------------------------------------------------------------------------
+# 1.  COLOURMAP HELPERS
 # ---------------------------------------------------------------------------
 
 def get_custom_colormaps():
@@ -109,7 +228,7 @@ def resolve_cmap(cmap):
 
 def plot_contour(dataset, field_key, output_path=None, figsize=(14, 4),
                  cmap="viridis", vmin=None, vmax=None, title=None,
-                 xlabel="x [m]", ylabel="y [m]", colorbar_label=None,
+                 xlabel=r"$x$ [m]", ylabel=r"$y$ [m]", colorbar_label=None,
                  xlim=None, ylim=None, ax=None, rasterized=True,
                  norm="linear"):
     """Plot a single 2-D field as a pcolormesh contour.
@@ -147,8 +266,13 @@ def plot_contour(dataset, field_key, output_path=None, figsize=(14, 4),
         fig, ax = plt.subplots(figsize=figsize)
         created_figure = True
 
-    xx, yy = np.meshgrid(dataset["x"], dataset["y"], indexing="ij")
+    x = np.asarray(dataset["x"], dtype=float)
+    y = np.asarray(dataset["y"], dtype=float)
     field = np.asarray(dataset["fields"][field_key], dtype=float)
+    if field.shape != (x.size, y.size):
+        raise ValueError(
+            f"Field shape {field.shape} does not match grid ({x.size}, {y.size})"
+        )
 
     if vmin is None:
         vmin = np.nanpercentile(field, 1)
@@ -171,7 +295,7 @@ def plot_contour(dataset, field_key, output_path=None, figsize=(14, 4),
         p_norm = norm
 
     p = ax.pcolormesh(
-        xx, yy, field,
+        x, y, field.T,
         cmap=cmap,
         shading="auto",
         norm=p_norm,
@@ -179,13 +303,12 @@ def plot_contour(dataset, field_key, output_path=None, figsize=(14, 4),
         vmax=vmax if p_norm is None else None,
         rasterized=rasterized,
     )
-    cb = ax.figure.colorbar(p, ax=ax, pad=0.02, shrink=0.4)
-    cb.set_label(colorbar_label if colorbar_label is not None else field_key, fontsize=12)
+    cb = ax.figure.colorbar(p, ax=ax, pad=0.02, shrink=0.9)
+    cb.set_label(colorbar_label if colorbar_label is not None else field_label(field_key))
 
-    ax.set_xlabel(xlabel, fontsize=12)
-    ax.set_ylabel(ylabel, fontsize=12)
-    if title is not None:
-        ax.set_title(title, fontsize=14)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_title(dataset_title(dataset, field_key) if title is None else title)
     if xlim is not None:
         ax.set_xlim(xlim)
     if ylim is not None:
@@ -206,10 +329,11 @@ def plot_contour(dataset, field_key, output_path=None, figsize=(14, 4),
 # 2.  LINE / PROFILE PLOTS
 # ---------------------------------------------------------------------------
 
-def plot_line_profiles(profiles, field_label=None, xlabel="y [m]",
+def plot_line_profiles(profiles, field_label=None, xlabel=r"$y$ [m]",
                        title=None, output_path=None, ax=None,
                        x_key="y", linewidth=2.0, linestyle="-",
-                       swap_axes=False):
+                       swap_axes=False, coordinate_normalization=None,
+                       annotate_boundary_layer=True, coordinate_limits=None):
     """Plot one or more 1-D line profiles on a shared axis.
 
     Parameters
@@ -231,6 +355,13 @@ def plot_line_profiles(profiles, field_label=None, xlabel="y [m]",
     swap_axes : bool, default False
         If True, plot ``values`` on the x-axis and ``x_key`` on the
         y-axis, and swap the axis labels accordingly.
+    coordinate_normalization : str, optional
+        Profile key containing a length scale. For example,
+        ``"boundary_layer_height"`` plots ``y / delta_99``.
+    annotate_boundary_layer : bool, default True
+        Mark the supplied boundary-layer height on dimensional profiles.
+    coordinate_limits : tuple, optional
+        Limits for the profile coordinate (y-axis with ``swap_axes=True``).
 
     Returns
     -------
@@ -246,10 +377,17 @@ def plot_line_profiles(profiles, field_label=None, xlabel="y [m]",
 
     for profile in profiles:
         label = profile.get("label", profile.get("field_key", "Profile"))
+        coordinate = np.asarray(profile[x_key], dtype=float)
+        if coordinate_normalization is not None:
+            coordinate_scale = profile.get(coordinate_normalization)
+            if (coordinate_scale is not None
+                    and np.isfinite(coordinate_scale)
+                    and coordinate_scale > 0):
+                coordinate = coordinate / float(coordinate_scale)
         if swap_axes:
             ax.plot(
                 profile["values"],
-                profile[x_key],
+                coordinate,
                 linewidth=linewidth,
                 linestyle=profile.get("linestyle", linestyle),
                 color=profile.get("color", None),
@@ -257,7 +395,7 @@ def plot_line_profiles(profiles, field_label=None, xlabel="y [m]",
             )
         else:
             ax.plot(
-                profile[x_key],
+                coordinate,
                 profile["values"],
                 linewidth=linewidth,
                 linestyle=profile.get("linestyle", linestyle),
@@ -267,7 +405,7 @@ def plot_line_profiles(profiles, field_label=None, xlabel="y [m]",
 
         # Boundary-layer height marker (if supplied by the caller)
         bl_height = profile.get("boundary_layer_height")
-        if bl_height is not None:
+        if annotate_boundary_layer and bl_height is not None:
             y_arr = np.asarray(profile[x_key], dtype=float)
             val_arr = np.asarray(profile["values"], dtype=float)
             if len(y_arr) >= 2:
@@ -290,16 +428,31 @@ def plot_line_profiles(profiles, field_label=None, xlabel="y [m]",
                 )
 
     if field_label is None:
-        field_label = profiles[0].get("field_key", "Field")
+        key = profiles[0].get("field_key", "Field")
+        field_label = _FIELD_LABELS.get(key, field_title(key))
 
     if swap_axes:
-        ax.set_xlabel(field_label, fontsize=12)
-        ax.set_ylabel(xlabel, fontsize=12)
+        ax.set_xlabel(field_label)
+        ax.set_ylabel(xlabel)
     else:
-        ax.set_xlabel(xlabel, fontsize=12)
-        ax.set_ylabel(field_label, fontsize=12)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(field_label)
     if title is not None:
-        ax.set_title(title, fontsize=14)
+        ax.set_title(title)
+
+    if coordinate_normalization is not None:
+        if swap_axes:
+            ax.axhline(1.0, color="0.35", linestyle=":", linewidth=1.0,
+                       label=r"$y/\delta_{99}=1$")
+        else:
+            ax.axvline(1.0, color="0.35", linestyle=":", linewidth=1.0,
+                       label=r"$y/\delta_{99}=1$")
+
+    if coordinate_limits is not None:
+        if swap_axes:
+            ax.set_ylim(coordinate_limits)
+        else:
+            ax.set_xlim(coordinate_limits)
 
     if any(p.get("label") for p in profiles):
         ax.legend()
@@ -1412,7 +1565,7 @@ def plot_probe_timeseries(probe_data, output_dir,
 # ---------------------------------------------------------------------------
 
 def plot_stability_summary(data, output_path=None, figsize=(18, 14)):
-    """4-panel figure summarising second Mack mode stability diagnostics.
+    """4-panel figure summarising heuristic stability-screening diagnostics.
 
     Panel layout
     ------------
@@ -1447,10 +1600,10 @@ def plot_stability_summary(data, output_path=None, figsize=(18, 14)):
 
         if np.any(valid_om):
             ax1.semilogy(x_f[valid_om], f_om[valid_om], "b-",
-                         linewidth=1.5, label=r"$f \; (\\omega^*=0.3)$")
+                         linewidth=1.5, label=r"$f \; (\omega^*=0.3)$")
         if np.any(valid_ac):
             ax1.semilogy(x_f[valid_ac], f_ac[valid_ac], "r--",
-                         linewidth=1.5, label=r"$f \; (\\lambda/2 = \\delta_{99})$")
+                         linewidth=1.5, label=r"$f \; (\lambda/2 = \delta_{99})$")
 
         f_band = data.get("freq_band", [100e3, 1.0e6])
         ax1.axhspan(f_band[0], f_band[1], alpha=0.08, color="gray",
@@ -1462,8 +1615,10 @@ def plot_stability_summary(data, output_path=None, figsize=(18, 14)):
 
     ax1.set_xlabel("x [m]", fontsize=12)
     ax1.set_ylabel("Frequency [Hz]", fontsize=12)
-    ax1.set_title("Panel 1: Second Mack Mode Frequency Estimate", fontsize=13)
-    ax1.legend(fontsize=8, loc="best")
+    ax1.set_title("Panel 1: Heuristic second-mode frequency scales", fontsize=13)
+    handles, labels = ax1.get_legend_handles_labels()
+    if handles:
+        ax1.legend(handles, labels, fontsize=8, loc="best")
     ax1.grid(True, alpha=0.3)
 
     # -- Panel 2: Phase speed
@@ -1472,9 +1627,36 @@ def plot_stability_summary(data, output_path=None, figsize=(18, 14)):
     if len(x_cp) > 0:
         cp = ps.get("c_p", [])
         valid_cp = np.isfinite(cp)
+        cp_raw = np.asarray(ps.get("c_p_raw", []), dtype=float)
+        if cp_raw.shape == np.asarray(cp).shape:
+            invalid_cp = np.isfinite(cp_raw) & ~valid_cp
+            if np.any(invalid_cp):
+                ax2.scatter(
+                    np.asarray(x_cp)[invalid_cp], cp_raw[invalid_cp],
+                    color="0.75", s=4, alpha=0.45,
+                    label="Rejected by coherence gate",
+                )
         if np.any(valid_cp):
-            ax2.plot(x_cp[valid_cp], cp[valid_cp], "o-", markersize=4,
-                     linewidth=1.2, label=r"$c_p = \omega/\\alpha_r$")
+            valid_x = np.asarray(x_cp)[valid_cp]
+            valid_speed = np.asarray(cp)[valid_cp]
+            ax2.scatter(
+                valid_x, valid_speed, s=5, alpha=0.30,
+                label=r"adjacent-pair $c_p = \omega/\alpha_r$",
+            )
+            # A binned median exposes the branch-level trend without joining
+            # phase-wrap outliers with misleading vertical line segments.
+            edges = np.linspace(np.min(valid_x), np.max(valid_x), 81)
+            bin_id = np.digitize(valid_x, edges) - 1
+            median_x, median_speed = [], []
+            for index in range(len(edges) - 1):
+                in_bin = bin_id == index
+                if np.any(in_bin):
+                    median_x.append(np.median(valid_x[in_bin]))
+                    median_speed.append(np.median(valid_speed[in_bin]))
+            ax2.plot(
+                median_x, median_speed, color="C0", linewidth=1.8,
+                label="spatial-bin median",
+            )
 
         cpf = ps.get("c_p_fast", [])
         cps = ps.get("c_p_slow", [])
@@ -1483,17 +1665,39 @@ def plot_stability_summary(data, output_path=None, figsize=(18, 14)):
                      label=r"$c_{p,fast} = a_e + u_e$")
         if len(cps) > 0:
             ax2.plot(x_cp, cps, "b--", linewidth=1.0,
-                     label=r"$c_{p,slow} = a_e - u_e$")
+                     label=r"$c_{p,slow} = u_e - a_e$")
 
         if not np.any(valid_cp):
             ax2.text(0.5, 0.5, "Need complex FFT data\nfor phase calculation",
                      transform=ax2.transAxes, ha="center", va="center",
                      fontsize=11, color="gray", style="italic")
 
+        reference_values = np.concatenate((
+            np.asarray(cpf, dtype=float).ravel(),
+            np.asarray(cps, dtype=float).ravel(),
+        ))
+        reference_values = reference_values[np.isfinite(reference_values)]
+        if reference_values.size:
+            upper = max(1.25 * np.max(reference_values), 1.0)
+            lower = min(0.0, 1.25 * np.min(reference_values))
+            ax2.set_ylim(lower, upper)
+        coherence = np.asarray(ps.get("coherence_squared", []), dtype=float)
+        if coherence.size:
+            threshold = ps.get("coherence_threshold", np.nan)
+            ax2.text(
+                0.02, 0.03,
+                rf"retained {np.sum(coherence >= threshold)}/{coherence.size}; "
+                rf"$\gamma^2 \geq {threshold:.2f}$",
+                transform=ax2.transAxes, fontsize=8,
+                bbox=dict(facecolor="white", alpha=0.8, edgecolor="0.8"),
+            )
+
     ax2.set_xlabel("x [m]", fontsize=12)
     ax2.set_ylabel("Phase speed [m/s]", fontsize=12)
     ax2.set_title("Panel 2: Phase Speed at Target Frequency", fontsize=13)
-    ax2.legend(fontsize=8, loc="best")
+    handles, labels = ax2.get_legend_handles_labels()
+    if handles:
+        ax2.legend(handles, labels, fontsize=8, loc="best")
     ax2.grid(True, alpha=0.3)
 
     # -- Panel 3: Growth rate
@@ -1507,9 +1711,20 @@ def plot_stability_summary(data, output_path=None, figsize=(18, 14)):
             color1 = "tab:blue"
             ax3_twin = ax3.twinx()
             l1 = ax3.plot(x_g[valid_ai], ai[valid_ai], "o-", markersize=4,
-                          linewidth=1.2, color=color1, label=r"$\\alpha_i$ [m$^{-1}$]")
+                          linewidth=1.2, color=color1, label=r"$\alpha_i$ [m$^{-1}$]")
+            ci95 = np.asarray(gd.get("alpha_i_ci95", []), dtype=float)
+            if ci95.shape == np.asarray(ai).shape:
+                valid_ci = valid_ai & np.isfinite(ci95)
+                if np.any(valid_ci):
+                    ax3.fill_between(
+                        np.asarray(x_g)[valid_ci],
+                        np.asarray(ai)[valid_ci] - ci95[valid_ci],
+                        np.asarray(ai)[valid_ci] + ci95[valid_ci],
+                        color=color1, alpha=0.18, linewidth=0,
+                        label="local-fit 95% CI",
+                    )
             ax3.axhline(y=0, color="gray", linestyle=":", linewidth=0.8)
-            ax3.set_ylabel(r"$\\alpha_i$ [m$^{-1}$]", fontsize=12, color=color1)
+            ax3.set_ylabel(r"$\alpha_i$ [m$^{-1}$]", fontsize=12, color=color1)
             ax3.tick_params(axis="y", labelcolor=color1)
 
             aid = gd.get("alpha_i_delta", [])
@@ -1518,16 +1733,16 @@ def plot_stability_summary(data, output_path=None, figsize=(18, 14)):
                 color2 = "tab:red"
                 l2 = ax3_twin.plot(x_g[valid_aid], aid[valid_aid], "s--",
                                    markersize=4, linewidth=1.0, color=color2,
-                                   label=r"$\\alpha_i \\delta_{99}$")
-                ax3_twin.set_ylabel(r"$\\alpha_i \\delta_{99}$", fontsize=12,
+                                   label=r"$\alpha_i \delta_{99}$")
+                ax3_twin.set_ylabel(r"$\alpha_i \delta_{99}$", fontsize=12,
                                     color=color2)
                 ax3_twin.tick_params(axis="y", labelcolor=color2)
 
             lines = l1
-            labels = [r"$\\alpha_i$ [m$^{-1}$]"]
+            labels = [r"$\alpha_i$ [m$^{-1}$]"]
             if np.any(valid_aid):
                 lines = l1 + l2
-                labels = [r"$\\alpha_i$ [m$^{-1}$]", r"$\\alpha_i \\delta_{99}$"]
+                labels = [r"$\alpha_i$ [m$^{-1}$]", r"$\alpha_i \delta_{99}$"]
             ax3.legend(lines, labels, fontsize=8, loc="best")
 
     ax3.set_xlabel("x [m]", fontsize=12)
@@ -1538,6 +1753,7 @@ def plot_stability_summary(data, output_path=None, figsize=(18, 14)):
     gpi_list = data.get("gpi_profiles", [])
     bl_list = data.get("bl_profiles", [])
     colors = plt.cm.inferno(np.linspace(0.3, 0.9, max(len(gpi_list), 1)))
+    plotted_gpi = False
 
     for i, gpi in enumerate(gpi_list):
         yp = gpi.get("y_profile", [])
@@ -1551,6 +1767,7 @@ def plot_stability_summary(data, output_path=None, figsize=(18, 14)):
         F_norm = Fp / (np.nanmax(np.abs(Fp)) + 1e-20)
         ax4.plot(F_norm, yp, color=color, linewidth=1.2,
                  label=f"x = {x_pos:.3f} m")
+        plotted_gpi = True
 
         y_gpi = gpi.get("y_gpi", np.nan)
         stable = gpi.get("unstable", False)
@@ -1562,13 +1779,21 @@ def plot_stability_summary(data, output_path=None, figsize=(18, 14)):
                      label=f"GPI" if i == 0 else "")
 
     ax4.axvline(x=0, color="gray", linestyle=":", linewidth=0.8)
-    ax4.set_xlabel(r"$F(y) = d(\\rho \, du/dy)/dy$  (normalized)", fontsize=12)
+    ax4.set_xlabel(r"$F(y) = d(\rho \, du/dy)/dy$  (normalized)", fontsize=12)
     ax4.set_ylabel("y [m]", fontsize=12)
     ax4.set_title("Panel 4: GPI Criterion", fontsize=13)
-    ax4.legend(fontsize=8, loc="best")
+    if not plotted_gpi:
+        ax4.text(
+            0.5, 0.5, "No valid density profiles for GPI evaluation",
+            transform=ax4.transAxes, ha="center", va="center",
+            color="0.4", style="italic",
+        )
+    handles, labels = ax4.get_legend_handles_labels()
+    if handles:
+        ax4.legend(handles, labels, fontsize=8, loc="best")
     ax4.grid(True, alpha=0.3)
 
-    plt.suptitle("Stability Diagnostics — Second Mack Mode Analysis",
+    plt.suptitle("Stability screening — heuristic scales, not an LST eigensolution",
                  fontsize=15, fontweight="bold")
     plt.tight_layout(rect=[0, 0, 1, 0.97])
 
@@ -1576,6 +1801,127 @@ def plot_stability_summary(data, output_path=None, figsize=(18, 14)):
         plt.savefig(output_path, dpi=200, bbox_inches="tight")
         plt.close(fig)
 
+    return fig
+
+
+def plot_pair_coherence(pair_results, output_path=None, fmax=None,
+                        figsize=(11, 8)):
+    """Plot Welch coherence and cross-spectral phase for probe pairs."""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize, sharex=True)
+    for item in pair_results:
+        result = item["result"]
+        freq = np.asarray(result["frequency_hz"])
+        mask = freq > 0
+        if fmax is not None:
+            mask &= freq <= float(fmax)
+        label = item.get("label", "probe pair")
+        ax1.semilogx(freq[mask], result["coherence_squared"][mask], label=label)
+        ax2.semilogx(freq[mask], result["cross_phase_rad"][mask], label=label)
+    ax1.set_ylabel(r"Coherence $\gamma^2$")
+    ax1.set_ylim(0.0, 1.02)
+    ax1.set_title("Welch magnitude-squared coherence")
+    ax2.set_xlabel("Frequency [Hz]")
+    ax2.set_ylabel("Cross-spectral phase [rad]")
+    ax2.set_title(r"Phase convention: $\arg\{X_1^*X_2\}$")
+    for ax in (ax1, ax2):
+        ax.grid(True, which="both", alpha=0.3)
+    if pair_results:
+        ax1.legend(fontsize=8, ncol=2)
+    fig.tight_layout()
+    if output_path is not None:
+        fig.savefig(output_path, dpi=250, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_common_mode_validation(time, model, probe_x, output_path=None,
+                                example_column=0, figsize=(12, 8)):
+    """Plot held-out error and one common-frequency model prediction."""
+    time = np.asarray(time)
+    n_train = int(model["n_train"])
+    train_error = np.asarray(model["train_relative_rms"])
+    validation_error = np.asarray(model["validation_relative_rms"])
+    probe_x = np.asarray(probe_x)
+    example_column = int(np.clip(example_column, 0, len(probe_x) - 1))
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize)
+    ax1.plot(probe_x, train_error, "o-", label="Training")
+    ax1.plot(probe_x, validation_error, "s--", label="Held-out")
+    ax1.set_xlabel("Probe x [cm]")
+    ax1.set_ylabel("Relative RMS error")
+    ax1.set_title("Shared-frequency model: in-sample vs held-out error")
+    ax1.grid(True, alpha=0.3)
+    ax1.legend()
+
+    validation_time = time[n_train:]
+    observed = np.asarray(model["validation_observed"])[:, example_column]
+    predicted = np.asarray(model["validation_prediction"])[:, example_column]
+    ax2.plot(validation_time, observed, color="0.25", label="Measured disturbance")
+    ax2.plot(validation_time, predicted, color="C3", label="Training-fit prediction")
+    ax2.set_xlabel("Flow time [s]")
+    ax2.set_ylabel("Zero-mean signal")
+    ax2.set_title(
+        f"Held-out prediction at x={probe_x[example_column]:.3f} cm; "
+        f"relative RMS={validation_error[example_column]:.3f}"
+    )
+    ax2.grid(True, alpha=0.3)
+    ax2.legend()
+    fig.tight_layout()
+    if output_path is not None:
+        fig.savefig(output_path, dpi=250, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_modal_summary(pod_result, spod_result, dmd_result, output_path=None,
+                       figsize=(15, 4.8)):
+    """Plot compact POD, SPOD, and DMD diagnostics from probe snapshots."""
+    fig, axes = plt.subplots(1, 3, figsize=figsize)
+    pod_energy = np.asarray(pod_result["energy_fraction"])
+    mode_number = np.arange(1, pod_energy.size + 1)
+    axes[0].bar(mode_number, pod_energy, alpha=0.65, label="Per mode")
+    axes[0].plot(mode_number, np.cumsum(pod_energy), "ko-", label="Cumulative")
+    axes[0].set_xlabel("POD mode")
+    axes[0].set_ylabel("Fraction of total fluctuation energy")
+    axes[0].set_ylim(0.0, 1.02)
+    axes[0].set_title("POD energy")
+    axes[0].legend(fontsize=8)
+
+    frequency = np.asarray(spod_result["frequency_hz"])
+    eigenvalues = np.asarray(spod_result["eigenvalues"])
+    positive = frequency > 0
+    for mode in range(eigenvalues.shape[1]):
+        axes[1].semilogy(
+            frequency[positive], eigenvalues[positive, mode],
+            label=f"Mode {mode + 1}",
+        )
+    axes[1].set_xlabel("Frequency [Hz]")
+    axes[1].set_ylabel("SPOD eigenvalue")
+    axes[1].set_title("SPOD spectrum")
+    axes[1].grid(True, which="both", alpha=0.3)
+    axes[1].legend(fontsize=8)
+
+    eigen = np.asarray(dmd_result["eigenvalues"])
+    theta = np.linspace(0.0, 2.0 * np.pi, 300)
+    axes[2].plot(np.cos(theta), np.sin(theta), "k--", alpha=0.5,
+                 label="Unit circle")
+    scatter = axes[2].scatter(
+        eigen.real, eigen.imag,
+        c=np.abs(np.asarray(dmd_result["frequency_hz"])),
+        cmap="viridis", edgecolor="k", linewidth=0.4,
+    )
+    fig.colorbar(scatter, ax=axes[2], label="|Frequency| [Hz]")
+    axes[2].axhline(0, color="0.7", linewidth=0.7)
+    axes[2].axvline(0, color="0.7", linewidth=0.7)
+    axes[2].set_aspect("equal", adjustable="box")
+    axes[2].set_xlabel(r"Re$(\lambda)$")
+    axes[2].set_ylabel(r"Im$(\lambda)$")
+    axes[2].set_title("DMD eigenvalues")
+    axes[2].legend(fontsize=8)
+    fig.suptitle("Probe-line modal screening (descriptive; not LST)")
+    fig.tight_layout()
+    if output_path is not None:
+        fig.savefig(output_path, dpi=250, bbox_inches="tight")
+        plt.close(fig)
     return fig
 
 
@@ -1673,6 +2019,7 @@ def plot_harmonic_reconstruction(time, measured, reconstructed, residual,
                                   harmonic_signals, probe_label="",
                                   output_path=None, figsize=(14, 10),
                                   mean_background=None,
+                                  relative_rms=None,
                                   recon_method=None,
                                   recon_freq=None,
                                   window_start=None,
@@ -1697,6 +2044,8 @@ def plot_harmonic_reconstruction(time, measured, reconstructed, residual,
     output_path : str, optional
     figsize : tuple, default (14, 10)
     mean_background : float, optional
+    relative_rms : float, optional
+        Precomputed residual RMS normalized on the same reconstruction window.
     recon_method : str, optional
     recon_freq : float, optional
     window_start, window_end : float, optional — disturbance window bounds [s]
@@ -1772,7 +2121,16 @@ def plot_harmonic_reconstruction(time, measured, reconstructed, residual,
 
     axes[1].set_ylabel("Signal", fontsize=11)
     rms_err = np.sqrt(np.mean(residual**2))
-    rel_rms = rms_err / np.sqrt(np.mean((measured - np.mean(measured))**2)) if np.std(measured) > 0 else 0
+    if relative_rms is None:
+        if has_window and windowed_signal is not None:
+            metric_signal = np.asarray(windowed_signal, dtype=float).ravel()
+        else:
+            metric_signal = np.asarray(measured, dtype=float).ravel()
+        metric_signal = metric_signal - np.mean(metric_signal)
+        metric_rms = np.sqrt(np.mean(metric_signal**2))
+        rel_rms = rms_err / metric_rms if metric_rms > 0 else 0.0
+    else:
+        rel_rms = float(relative_rms)
     axes[1].set_title(f"Measured vs reconstruction  |  rel. RMS = {rel_rms:.3f}", fontsize=12)
     axes[1].grid(True, alpha=0.3)
     axes[1].legend(fontsize=9, loc="upper right")
@@ -1793,7 +2151,8 @@ def plot_harmonic_reconstruction(time, measured, reconstructed, residual,
     axes[2].set_ylabel("Signal (offset)", fontsize=11)
     axes[2].set_title("Per-frequency contributions", fontsize=12)
     axes[2].grid(True, alpha=0.3)
-    axes[2].legend(fontsize=8, loc="upper right", ncol=2)
+    if harmonic_signals:
+        axes[2].legend(fontsize=8, loc="upper right", ncol=2)
 
     # ---------------------------------------------------------------
     # Panel 4: Residual
@@ -2157,7 +2516,8 @@ def plot_harmonic_recon_comparison(time_uniform, signal_matrix, probe_data,
 # ===========================================================================
 
 def plot_spectrogram(time, signal, fs, output_path=None, fmax=None,
-                     title="Spectrogram", figsize=(12, 5)):
+                     title="Spectrogram", figsize=(12, 5), nperseg=256,
+                     noverlap=None):
     """Plot STFT spectrogram of a probe signal.
 
     Parameters
@@ -2169,6 +2529,8 @@ def plot_spectrogram(time, signal, fs, output_path=None, fmax=None,
     fmax : float, optional — frequency limit for y-axis
     title : str, default "Spectrogram"
     figsize : tuple, default (12, 5)
+    nperseg, noverlap : int, optional
+        STFT segment length and overlap passed to the spectral estimator.
 
     Returns
     -------
@@ -2180,15 +2542,21 @@ def plot_spectrogram(time, signal, fs, output_path=None, fmax=None,
         raise ImportError("scipy.signal required for plot_spectrogram")
 
     signal = np.asarray(signal, dtype=float).ravel()
-    f, t, Sxx_dB = fdb_mod.compute_spectrogram(signal, fs)
+    time = np.asarray(time, dtype=float).ravel()
+    if len(time) != len(signal):
+        raise ValueError("time and signal must have the same length")
+    f, t_relative, Sxx_dB = fdb_mod.compute_spectrogram(
+        signal, fs, nperseg=nperseg, noverlap=noverlap
+    )
+    t = t_relative + float(time[0])
 
     fig, ax = plt.subplots(figsize=figsize)
     im = ax.pcolormesh(t, f, Sxx_dB, shading="auto", cmap="inferno",
                        rasterized=True)
     cb = fig.colorbar(im, ax=ax, pad=0.02, shrink=0.85)
-    cb.set_label("Magnitude [dB]", fontsize=10)
+    cb.set_label(r"PSD [dB re signal$^2$/Hz]", fontsize=10)
 
-    ax.set_xlabel("Time [s]", fontsize=11)
+    ax.set_xlabel("Flow time [s]", fontsize=11)
     ax.set_ylabel("Frequency [Hz]", fontsize=11)
     ax.set_title(title, fontsize=12)
     if fmax is not None:
@@ -2204,7 +2572,9 @@ def plot_spectrogram(time, signal, fs, output_path=None, fmax=None,
 
 def plot_envelope_with_signal(time, signal_raw, signal_filtered, envelope,
                                packet_stats, output_path=None,
-                               title="Envelope analysis", figsize=(12, 8)):
+                               title="Envelope analysis", figsize=(12, 8),
+                               instantaneous_frequency=None,
+                               frequency_band=None):
     """3-panel: raw+filtered, envelope, instantaneous frequency.
 
     Parameters
@@ -2214,6 +2584,11 @@ def plot_envelope_with_signal(time, signal_raw, signal_filtered, envelope,
     signal_filtered : ndarray — bandpass-filtered signal
     envelope : ndarray — Hilbert envelope
     packet_stats : dict — from ``extract_packet_stats``
+    instantaneous_frequency : ndarray, optional
+        Hilbert instantaneous frequency [Hz]. Values where the envelope is
+        below 5% of its peak are hidden because phase is poorly conditioned.
+    frequency_band : tuple, optional
+        Expected frequency band [Hz], used to set the third-panel limits.
     output_path : str, optional
     title : str
     figsize : tuple, default (12, 8)
@@ -2248,9 +2623,22 @@ def plot_envelope_with_signal(time, signal_raw, signal_filtered, envelope,
     ax.grid(True, alpha=0.3)
 
     ax = axes[2]
-    ax.plot(time, signal_filtered, "r-", linewidth=0.5, alpha=0.3)
+    if instantaneous_frequency is not None:
+        inst_freq = np.asarray(instantaneous_frequency, dtype=float).ravel()
+        if len(inst_freq) != len(time):
+            raise ValueError("instantaneous_frequency must match time length")
+        reliable = envelope >= 0.05 * np.nanmax(envelope)
+        ax.plot(time, np.where(reliable, inst_freq / 1.0e6, np.nan),
+                color="C2", linewidth=0.9)
+        ax.set_ylabel("Instantaneous\nfrequency [MHz]", fontsize=11)
+        if frequency_band is not None:
+            ax.set_ylim(float(frequency_band[0]) / 1.0e6,
+                        float(frequency_band[1]) / 1.0e6)
+    else:
+        ax.text(0.5, 0.5, "Instantaneous frequency not supplied",
+                transform=ax.transAxes, ha="center", va="center")
+        ax.set_ylabel("Frequency", fontsize=11)
     ax.set_xlabel("Time [s]", fontsize=11)
-    ax.set_ylabel("Filtered signal", fontsize=11)
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
@@ -2361,7 +2749,8 @@ def plot_bicoherence_map(freq, bicoh_matrix, output_path=None, fmax=None,
 
 
 def plot_bicoherence_vs_x(probe_x, triad_bicoh_list, output_path=None,
-                           figsize=(12, 5)):
+                           figsize=(12, 5), reference_threshold=None,
+                           reference_label="Reference threshold"):
     """Plot bicoherence at key triads vs streamwise position.
 
     Parameters
@@ -2370,6 +2759,9 @@ def plot_bicoherence_vs_x(probe_x, triad_bicoh_list, output_path=None,
     triad_bicoh_list : list of dict — one per probe from ``extract_triad_bicoherence``
     output_path : str, optional
     figsize : tuple, default (12, 5)
+    reference_threshold : float, optional
+        Optional externally justified threshold. It is deliberately not
+        labelled as statistical significance by this plotting routine.
 
     Returns
     -------
@@ -2394,7 +2786,9 @@ def plot_bicoherence_vs_x(probe_x, triad_bicoh_list, output_path=None,
         ax.plot(probe_x[valid], vals[valid], "o-", markersize=3, linewidth=0.8,
                 color=colors[li], label=label)
 
-    ax.axhline(0.95, color="gray", linestyle=":", alpha=0.5, label="0.95 sig.")
+    if reference_threshold is not None:
+        ax.axhline(float(reference_threshold), color="gray", linestyle=":",
+                   alpha=0.6, label=reference_label)
     ax.set_xlabel("x [cm]", fontsize=12)
     ax.set_ylabel(r"$b^2$", fontsize=12)
     ax.set_title("Triad bicoherence vs streamwise position", fontsize=13)

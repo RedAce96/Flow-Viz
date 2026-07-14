@@ -10,8 +10,13 @@
 #    - You should NOT need to edit the functions in the *_database.py files.
 # =============================================================================
 
+import argparse
 import glob
+import gc
+import importlib.metadata
+import json
 import os
+import platform
 import re
 import struct
 import subprocess
@@ -21,11 +26,23 @@ import datetime
 from multiprocessing import Pool
 from pathlib import Path
 
+# Keep plotting/font caches writable for direct login-node validation runs as
+# well as Slurm jobs. Respect explicit user settings when they are provided.
+_cache_root = Path(os.environ.get("TMPDIR", "/tmp")) / (
+    f"pelec-post-{os.environ.get('USER', 'user')}"
+)
+os.environ.setdefault("MPLCONFIGDIR", str(_cache_root / "matplotlib"))
+os.environ.setdefault("XDG_CACHE_HOME", str(_cache_root / "xdg"))
+Path(os.environ["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
+Path(os.environ["XDG_CACHE_HOME"]).mkdir(parents=True, exist_ok=True)
+
 import numpy as np
 import matplotlib.pyplot as plt
 
 # Import our modular databases
 import pp_functions_database as fdb
+import pp_config
+import pp_modal_database as mdb
 import pp_plotting_database as pdb
 
 
@@ -56,6 +73,159 @@ def _section(n: int, total: int, label: str) -> None:
     """Print a section header like  [1/4]  Discovering plotfiles ..."""
     _ts(f"[{n}/{total}] {label} {'─' * max(1, 50 - len(label))}")
 
+
+def _plot_title(dataset, subject, config):
+    """Return a consistent title containing configured time coordinates."""
+    return pdb.dataset_title(
+        dataset,
+        subject,
+        reference_time=config.get("plot_time_reference"),
+        time_origin=config.get("plot_time_origin", 0.0),
+        time_mode=config.get("plot_time_mode", "flow_through"),
+        freestream_velocity=config.get(
+            "plot_flow_through_u_inf", config.get("surface_u_inf")
+        ),
+    )
+
+
+def _plot_time_label(dataset, config):
+    """Return the configured time coordinate without a field-name prefix."""
+    return pdb.format_dataset_time(
+        dataset,
+        mode=config.get("plot_time_mode", "flow_through"),
+        freestream_velocity=config.get(
+            "plot_flow_through_u_inf", config.get("surface_u_inf")
+        ),
+        reference_time=config.get("plot_time_reference"),
+        origin=config.get("plot_time_origin", 0.0),
+    )
+
+
+def _required_plotfile_fields(config):
+    """Return the smallest safe base-field set for enabled snapshot plots.
+
+    ``None`` deliberately requests the complete default set when a workflow
+    needs derived fields, geometry detection, or arbitrary streamline fields.
+    """
+    if config.get("make_surface_analysis") or config.get("make_streamlines"):
+        return None
+
+    direct_fields = {
+        "density", "pressure", "temperature",
+        "x_velocity", "y_velocity", "z_velocity",
+    }
+    requested = set()
+    if config.get("make_contour_plots"):
+        requested.update(config.get("contour_fields", []))
+    if config.get("make_line_profiles"):
+        requested.update(config.get("line_fields", []))
+        requested.add("x_velocity")  # delta_99 coordinate
+        if config.get("line_blasius_compressible_overlay"):
+            requested.update(("density", "temperature"))
+    if config.get("make_pprime_contour"):
+        requested.add(config.get("pprime_field", "pressure"))
+
+    if not requested or not requested.issubset(direct_fields):
+        return None
+    return sorted(requested)
+
+
+def _json_safe(value):
+    """Convert configuration/provenance values to JSON-safe objects."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    return repr(value)
+
+
+def _package_version(name):
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def _git_provenance():
+    repo = Path(__file__).resolve().parent
+    result = {"commit": None, "dirty": None}
+    try:
+        result["commit"] = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo,
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        result["dirty"] = bool(subprocess.run(
+            ["git", "status", "--porcelain"], cwd=repo,
+            check=True, capture_output=True, text=True,
+        ).stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return result
+
+
+def _write_run_manifest(output_dir, config, status, plotfiles=None,
+                        failures=None, started_at=None, command=None,
+                        slurm_context=None, run_notes=None):
+    """Write an atomic provenance and run-status manifest."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    inputs = []
+    for path in plotfiles or []:
+        item = {"path": str(Path(path).resolve())}
+        try:
+            stat = Path(path).stat()
+            item.update({"mtime": stat.st_mtime, "size_bytes": stat.st_size})
+        except OSError:
+            item["missing"] = True
+        inputs.append(item)
+    outputs = []
+    if status != "running":
+        outputs = sorted(
+            str(path.relative_to(output_dir))
+            for path in output_dir.rglob("*")
+            if path.is_file() and path.name != "run_manifest.json"
+        )
+    manifest = {
+        "schema_version": 1,
+        "status": status,
+        "started_at": started_at,
+        "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "command": command if command is not None else [sys.executable, *sys.argv],
+        "host": platform.node(),
+        "platform": platform.platform(),
+        "python": platform.python_version(),
+        "packages": {
+            name: _package_version(name)
+            for name in ("numpy", "scipy", "matplotlib", "yt")
+        },
+        "git": _git_provenance(),
+        "slurm": slurm_context if slurm_context is not None else {
+            key: os.environ.get(key)
+            for key in (
+                "SLURM_JOB_ID", "SLURM_JOB_NAME", "SLURM_NODELIST",
+                "SLURM_CPUS_PER_TASK", "SLURM_MEM_PER_NODE",
+            )
+        },
+        "config": _json_safe(config),
+        "inputs": inputs,
+        "outputs": outputs,
+        "failures": _json_safe(failures or []),
+        "run_notes": _json_safe(run_notes or []),
+    }
+    destination = output_dir / "run_manifest.json"
+    temporary = output_dir / ".run_manifest.json.tmp"
+    with temporary.open("w", encoding="utf-8") as stream:
+        json.dump(manifest, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+    os.replace(temporary, destination)
+    return destination
+
 # ---------------------------------------------------------------------------
 #  USER CONFIGURATION
 # ---------------------------------------------------------------------------
@@ -66,12 +236,14 @@ CONFIG = {
     # --- Data source ---
     "data_source": "../TS-Driver/FP-Extended-Domain/pltFile",   # Directory with plotfiles
     "plot_prefix": "pltFlatPlatePost",                         # Plotfile directory prefix
-    "output_dir": "../TS-Driver/FP-Extended-Domain/1-Plot-Outputs/Contours/Pres",                    # Where results go
+    # Dedicated review folder: preserves older output families while showing
+    # the corrected figure formats and analysis products from this workflow.
+    "output_dir": "../TS-Driver/FP-Extended-Domain/1-Plot-Outputs/Analysis-Review",
 
     # --- Snapshot range ---
     # Set to None to process all discovered plotfiles.
-    "snapshot_start": 212000,
-    "snapshot_end": 213000,
+    "snapshot_start": 350000,
+    "snapshot_end": 380000,
     "snapshot_step": 1000,
 
     # --- Field aliases ---
@@ -81,16 +253,16 @@ CONFIG = {
     "field_aliases": None,
 
     # --- Workflow toggles ---
-    "make_contour_plots": False,
-    "make_line_profiles": False,
+    "make_contour_plots": True,   # flow-through-time contour titles
+    "make_line_profiles": True,   # y/delta_99 boundary-layer profiles
     "make_streamlines": False,
     "make_surface_analysis": False,
     "make_group_plots": False,
 
     "make_probe_plots": False,   # set True only if you need time-history plots (requires ASCII conversion)
     "make_fft_probes": True,      # set True to run FFT / stability analysis on probe data
-    "make_pprime_contour": False,
-    "make_stability_diagnostics": False,
+    "make_pprime_contour": True,       # symmetric perturbation contours
+    "make_stability_diagnostics": True, # corrected phase-speed references
 
 
     # --- Contour plot settings ---
@@ -99,18 +271,26 @@ CONFIG = {
     "contour_fields": [
         "density",
     ],
-    "contour_cmap": "turbo",             # Colormap for all contour plots
+    "contour_cmap": "viridis",           # Perceptually uniform scalar-field map
     "contour_norm": "linear",               # Color scaling: "linear", "log", "symlog", or a matplotlib Normalize object
     "contour_vlims": {                       # Per-field color limits [vmin, vmax]
-        "density": [0, 1.0],
+        "density": [None, None],             # robust 1st--99th percentile autoscale
     },
-    "contour_xlim": [-0.001,0.2],                    # [xmin, xmax] or None for full domain
+    "contour_xlim": [-0.001, 0.4],           # full 0.4 m plate
     "contour_ylim": None,                    # [ymin, ymax] or None for full domain
+    # Time shown in figures. Flow-through time is t_FT = L_x / U_inf, where
+    # L_x is the full AMReX domain length (independent of contour x-limits).
+    "plot_time_mode": "flow_through",       # "flow_through" | "physical" | "reference"
+    "plot_flow_through_u_inf": 1726.0,      # U_inf [m/s]
+    "plot_time_reference": None,
+    "plot_time_origin": 0.0,
 
     # --- Line profile settings ---
     "line_x_stations": [0.05, 0.3],                  # x-locations to extract profiles [m]
     "line_fields": ["x_velocity", "temperature"],
     "line_ylim": [0, 0.005],                              # [ymin, ymax] or None for full domain height
+    "line_normalize_by_delta99": True,                    # plot y/delta_99 instead of y [m]
+    "line_normalized_coordinate_limits": [0.0, 2.0],      # focus on BL + near-edge region
 
     # --- Blasius reference overlay (for line profiles) ---
     "line_blasius_overlay": True,
@@ -154,8 +334,10 @@ CONFIG = {
     "surface_Cp": 1004.0,                # specific heat [J/(kg.K)]
 
     # --- Force analysis settings ---
-    "make_force_analysis": True,
-    "make_spacetime_plots": True,
+    # Surface-dependent products remain disabled because this review run does
+    # not enable surface analysis.
+    "make_force_analysis": False,
+    "make_spacetime_plots": False,
     "make_force_animation": False,
     "reference_area": None,              # auto = plate length * 1 m span
 
@@ -190,6 +372,7 @@ CONFIG = {
     "fft_mean_subtraction": "mean",   # "mean" | "linear" | "none" — remove DC before FFT
     "fft_window": "hann",            # "hann" | "hamming" | "blackman" | "rect" | "none"
     "fft_window_compensation": True,  # Scale FFT amplitudes to preserve magnitude
+    "fft_batch_size": 32,             # Probe columns per vectorized FFT batch
     "fft_plot_last_probe": False,
     "fft_plot_probe_indices": [0, 249, 499, 749, 999, 1249],
     "fft_plot_contour": True,  # can OOM with 2000 probes; use True with fft_max_probes <= ~200
@@ -207,19 +390,46 @@ CONFIG = {
     "fft_plot_spectral_slope": True,
     "fft_growth_freqs": [5.0e6, 10.0e6, 30.0e6, 100.0e6, 200.0e6],
     "fft_plot_growth_curves": True,
+    # Welch coherence is evaluated on adjacent probe pairs near the selected
+    # plotting stations. None builds [(i, i+1), ...] automatically.
+    "make_coherence_analysis": True,
+    "coherence_probe_pairs": None,
+    "coherence_nperseg": 16384,
+    "coherence_noverlap": 0.5,
+    "coherence_fmax": 50.0e6,
+    # Modal screening on selected probe stations. These decompositions are
+    # explicitly descriptive and are not substituted for LST eigenmodes.
+    "make_modal_analysis": True,
+    "modal_probe_indices": None,  # None -> selected FFT/reconstruction probes
+    "modal_n_modes": 4,
+    "modal_spod_nperseg": 4096,
+    "modal_spod_noverlap": 0.5,
+    "modal_spod_frequency_stride": 2,
+    "modal_spod_fmax": 50.0e6,
 
     # --- Pressure perturbation (p') contour ---
     "pprime_baseline_plotfile": "pltFlatPlateFlow210000",
+    "base_flow_definition": (
+        "Independent pre-laser instantaneous plotfile; replace with a "
+        "verified steady/Favre/ensemble base before making LST attribution"
+    ),
     "pprime_field": "pressure",
     "pprime_cmap": "RdBu_r",
     "pprime_vlims": [-500, 500],
 
     # --- Stability diagnostics (2nd Mack mode) ---
-    "stability_baseline_plotfile": "pltFlatPlatePost210000",
+    # Existing pre-event/base-flow plotfile; use an independently verified
+    # steady base here when a more appropriate baseline becomes available.
+    "stability_baseline_plotfile": "pltFlatPlateFlow210000",
     "stability_target_freq": None,
     "stability_freq_band": [100e3, 1.0e6],
     "stability_growth_window_size": None,
     "stability_num_gpi_profiles": 5,
+    "stability_coherence_nperseg": 16384,
+    "stability_coherence_noverlap": 0.5,
+    "stability_min_coherence": 0.5,
+    # Downstream wave convention: exp(i*(omega*t - alpha*x)).
+    "stability_phase_convention": "omega_t_minus_alpha_x",
 
     # --- Phase 1: Disturbance signal reconstruction ---
     # Reconstruct time-domain disturbance from FFT harmonics, a frequency
@@ -235,6 +445,7 @@ CONFIG = {
     "reconstruction_num_harmonics": 5,             # for method="harmonics"
     "reconstruction_n_peaks": 15,                  # for method="top_frequencies"
     "reconstruction_peak_min_distance_hz": None,   # None -> auto (max(3*df, 1 kHz))
+    "reconstruction_peak_min_prominence": None,    # FFT-magnitude prominence; None -> no cutoff
     "reconstruction_peak_freq_range": None,         # [f_min, f_max] or None
     # --- Disturbance window detection (Phase 1b) ---
     # Restrict reconstruction to the active disturbance interval
@@ -269,26 +480,296 @@ CONFIG = {
     "reconstruction_min_samples": 256,          # min samples in window
     "reconstruction_max_samples": 100000,       # max samples in window
     "reconstruction_save_window_diagnostics": True,
+    # Shared frequencies are selected on a training interval, then their
+    # fitted amplitudes/phases are extrapolated to held-out data. This guards
+    # against interpreting same-window Fourier fit as predictive linear modes.
+    "reconstruction_common_mode_validation": True,
+    "reconstruction_common_n_modes": 10,
+    "reconstruction_common_train_fraction": 0.6,
+    "reconstruction_common_freq_range": [1.0e5, 50.0e6],
 
     # --- Phase 2: Transient analysis (STFT / Hilbert envelope) ---
     # Time-frequency analysis for laser-pulse wavepacket tracking.
     "make_transient_analysis": True,
-    "transient_band": [5.0e6, 50.0e6],      # band for envelope extraction [Hz]
-    "transient_stft_nperseg": 256,
+    "transient_band": [1.0e5, 1.0e6],       # includes heuristic/observed low-MHz modes
+    "transient_stft_nperseg": 16384,
     "transient_stft_noverlap": 0.75,
     "transient_plot_probe_indices": [0, 49, 99, 249, 499],
+    "transient_probe_stride": 4,
 
     # --- Phase 3: Nonlinear interaction diagnostics (bispectrum) ---
     # Quadratic phase-coupling detection via bicoherence.
     "make_nonlinear_diagnostics": True,
-    "nonlinear_nperseg": 256,               # segment length for bispectrum
+    "nonlinear_nperseg": 16384,             # resolves O(0.1 MHz) content
     "nonlinear_noverlap": 0.5,              # overlap fraction
     "nonlinear_plot_probe_indices": [0, 49, 99, 249, 499],
-    "nonlinear_significance_level": 0.95,
+    "nonlinear_target_freqs": None,          # None -> strongest independent peaks
+    "nonlinear_target_band": [1.0e5, 50.0e6],
+    "nonlinear_num_target_modes": 5,
+    "nonlinear_fmax": 50.0e6,               # limits full-map cost
+    "nonlinear_probe_stride": 4,             # spatial sampling for triad trend
+    # No significance line is drawn without a validated null/surrogate model.
+    "nonlinear_reference_threshold": None,
 
     # --- Logging ---
     "debug_mode": True,
 }
+
+
+def run_validation_case(output_dir="validation_outputs"):
+    """Run a fast synthetic case with known spectral and propagation answers.
+
+    This test does not read AMReX plotfiles or production probe binaries. It
+    writes four figures that exercise the corrected phase convention,
+    same-window reconstruction metric, absolute-time PSD spectrogram,
+    instantaneous frequency, and bicoherence calculation.
+
+    Run from the project directory with::
+
+        python pelec_post.py --validation-case
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    _hr("Synthetic analysis validation")
+    _ts(f"Writing validation products to: {output_dir.resolve()}")
+
+    # ------------------------------------------------------------------
+    # 1. A known downstream wave: exp(i*(omega*t-alpha*x)).
+    # ------------------------------------------------------------------
+    phase_frequency = 5.0e6
+    expected_phase_speed = 800.0
+    probe_x = np.arange(8, dtype=float) * 20.0e-6
+    alpha = 2.0 * np.pi * phase_frequency / expected_phase_speed
+    phase_fft = np.exp(-1j * alpha * probe_x)[None, :]
+    phase_result = fdb.compute_phase_speed_from_probes(
+        probe_x,
+        np.array([phase_frequency]),
+        phase_fft,
+        phase_frequency,
+        u_edge=np.full(len(probe_x), 1000.0),
+        T_edge=np.full(len(probe_x), 300.0),
+        phase_convention="omega_t_minus_alpha_x",
+    )
+    measured_phase_speed = float(np.nanmedian(phase_result["c_p"]))
+    expected_slow_speed = 1000.0 - np.sqrt(1.4 * 287.05 * 300.0)
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.plot(phase_result["x_mid"] * 1.0e3, phase_result["c_p"], "o-",
+            label="Recovered downstream wave")
+    ax.axhline(expected_phase_speed, color="k", linestyle="--",
+               label="Imposed 800 m/s")
+    ax.plot(phase_result["x_mid"] * 1.0e3,
+            phase_result["c_p_slow"], color="C2", linestyle=":",
+            label=r"Slow acoustic reference $U_e-a_e$")
+    ax.set_xlabel(r"$x$ [mm]")
+    ax.set_ylabel(r"$c_p$ [m s$^{-1}$]")
+    ax.set_title(r"Phase convention validation: $e^{i(\omega t-\alpha x)}$")
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    fig.savefig(output_dir / "01_phase_speed_validation.png")
+    plt.close(fig)
+
+    # ------------------------------------------------------------------
+    # 2. A finite-duration two-frequency packet for reconstruction/STFT.
+    # ------------------------------------------------------------------
+    fs = 100.0e6
+    n_samples = 8192
+    t_relative = np.arange(n_samples, dtype=float) / fs
+    time = 5.0e-3 + t_relative
+    active = slice(1024, 7168)
+    window_time = time[active]
+    packet_coordinate = np.linspace(0.0, 1.0, active.stop - active.start)
+    packet_envelope = np.sin(np.pi * packet_coordinate) ** 2
+    packet = packet_envelope * (
+        1.0 * np.cos(2.0 * np.pi * 5.0e6 * t_relative[active] + 0.2)
+        + 0.45 * np.cos(2.0 * np.pi * 12.0e6 * t_relative[active] - 0.4)
+    )
+    measured = np.full(n_samples, 100.0)
+    measured[active] += packet
+    windowed_signal = measured[active]
+    mean_background = float(np.mean(windowed_signal))
+    disturbance = windowed_signal - mean_background
+    reconstructed, band_mask = fdb.reconstruct_from_band(
+        disturbance, 1.0 / fs, 4.0e6, 10.0e6
+    )
+    reconstructed = reconstructed.ravel()
+    residual = disturbance - reconstructed
+    residual_stats = fdb.compute_residual_stats(disturbance, reconstructed)
+    pdb.plot_harmonic_reconstruction(
+        time,
+        measured,
+        reconstructed + mean_background,
+        residual,
+        {"4--10 MHz band": reconstructed},
+        probe_label="Synthetic finite-duration packet",
+        output_path=str(output_dir / "02_reconstruction_validation.png"),
+        mean_background=mean_background,
+        relative_rms=residual_stats["rms_residual_rel"],
+        recon_method="band",
+        window_start=float(window_time[0]),
+        window_end=float(window_time[-1]),
+        windowed_signal=windowed_signal,
+        window_time=window_time,
+    )
+
+    nperseg = 512
+    noverlap = 384
+    pdb.plot_spectrogram(
+        time,
+        measured - np.mean(measured),
+        fs,
+        output_path=str(output_dir / "03_psd_spectrogram_validation.png"),
+        fmax=20.0e6,
+        title="PSD spectrogram validation (absolute flow time)",
+        nperseg=nperseg,
+        noverlap=noverlap,
+    )
+    envelope, _, inst_freq, filtered = fdb.bandpass_hilbert_envelope(
+        measured - np.mean(measured), fs, 4.0e6, 7.0e6, order=4
+    )
+    packet_stats = fdb.extract_packet_stats(envelope, time)
+    pdb.plot_envelope_with_signal(
+        time,
+        measured - np.mean(measured),
+        filtered,
+        envelope,
+        packet_stats,
+        output_path=str(output_dir / "04_envelope_frequency_validation.png"),
+        title="Hilbert envelope and instantaneous frequency validation",
+        instantaneous_frequency=inst_freq,
+        frequency_band=(4.0e6, 7.0e6),
+    )
+
+    # ------------------------------------------------------------------
+    # 3. A deliberately phase-coupled triad for bicoherence.
+    # ------------------------------------------------------------------
+    rng = np.random.default_rng(20260713)
+    f1, f2 = 5.0e6, 8.0e6
+    coupled = (
+        np.cos(2.0 * np.pi * f1 * t_relative + 0.2)
+        + np.cos(2.0 * np.pi * f2 * t_relative - 0.4)
+        + 0.5 * np.cos(2.0 * np.pi * (f1 + f2) * t_relative - 0.2)
+        + 0.25 * rng.standard_normal(n_samples)
+    )
+    bicoh_freq, bicoh = fdb.compute_bicoherence(
+        coupled, fs, nperseg=500, noverlap=250
+    )
+    i1 = int(np.argmin(np.abs(bicoh_freq - f1)))
+    i2 = int(np.argmin(np.abs(bicoh_freq - f2)))
+    coupled_b2 = float(bicoh[min(i1, i2), max(i1, i2)])
+    pdb.plot_bicoherence_map(
+        bicoh_freq,
+        bicoh,
+        output_path=str(output_dir / "05_bicoherence_validation.png"),
+        fmax=20.0e6,
+        title=(r"Known coupled triad: 5 + 8 = 13 MHz; "
+               rf"$b^2={coupled_b2:.3f}$"),
+    )
+
+    # ------------------------------------------------------------------
+    # 4. Coherence and held-out common-frequency prediction.
+    # ------------------------------------------------------------------
+    common_x = np.linspace(0.0, 0.03, 6)
+    common_f1 = 205.0 * fs / (n_samples // 2)
+    common_f2 = 492.0 * fs / (n_samples // 2)
+    common_signals = np.column_stack([
+        np.cos(2.0 * np.pi * common_f1 * t_relative - 0.25 * station)
+        + 0.4 * np.cos(2.0 * np.pi * common_f2 * t_relative + 0.1 * station)
+        for station in range(len(common_x))
+    ])
+    coherence = fdb.compute_pair_coherence(
+        common_signals[:, 0], common_signals[:, 1], fs,
+        nperseg=1024, noverlap=512,
+    )
+    pdb.plot_pair_coherence(
+        [{
+            "indices": (0, 1), "label": "synthetic adjacent pair",
+            "result": coherence,
+        }],
+        output_path=str(output_dir / "06_coherence_validation.png"),
+        fmax=20.0e6,
+    )
+    common_model = fdb.fit_common_frequency_model(
+        common_signals, 1.0 / fs, n_modes=2, train_fraction=0.5,
+        freq_range=(1.0e6, 20.0e6),
+    )
+    pdb.plot_common_mode_validation(
+        time, common_model, common_x * 100.0,
+        output_path=str(output_dir / "07_common_mode_holdout_validation.png"),
+    )
+    common_validation_rms = float(np.max(
+        common_model["validation_relative_rms"]
+    ))
+
+    # ------------------------------------------------------------------
+    # 5. POD/SPOD/DMD on a known traveling wave.
+    # ------------------------------------------------------------------
+    modal_x = np.linspace(0.0, 0.04, 8, endpoint=False)
+    modal_values = np.cos(
+        2.0 * np.pi * 5.0e6 * t_relative[:, None]
+        - 2.0 * np.pi * modal_x[None, :] / 0.04
+    )
+    modal_dataset = mdb.SnapshotMatrix(
+        time, modal_values, modal_x[:, None], variable="synthetic pressure"
+    )
+    pod_validation = mdb.compute_pod(modal_dataset, n_modes=3)
+    spod_grid = np.fft.rfftfreq(512, 1.0 / fs)
+    spod_selected = np.flatnonzero(spod_grid <= 20.0e6)[::4]
+    spod_validation = mdb.compute_spod(
+        modal_dataset, nperseg=512, noverlap=256, n_modes=2,
+        frequency_indices=spod_selected,
+    )
+    dmd_validation = mdb.compute_dmd(modal_dataset, n_modes=2)
+    pdb.plot_modal_summary(
+        pod_validation, spod_validation, dmd_validation,
+        output_path=str(output_dir / "08_modal_validation.png"),
+    )
+    recovered_dmd_frequency = float(np.nanmedian(
+        np.abs(dmd_validation["frequency_hz"])
+    ))
+
+    # Machine-readable values make the visual case suitable for regression.
+    np.savez(
+        output_dir / "validation_results.npz",
+        expected_phase_speed=expected_phase_speed,
+        measured_phase_speed=measured_phase_speed,
+        expected_slow_speed=expected_slow_speed,
+        measured_slow_speed=np.nanmedian(phase_result["c_p_slow"]),
+        reconstruction_relative_rms=residual_stats["rms_residual_rel"],
+        bicoherence_coupled_triad=coupled_b2,
+        stft_nperseg=nperseg,
+        stft_noverlap=noverlap,
+        reconstruction_band_mask=band_mask,
+        coherence_frequency_hz=coherence["frequency_hz"],
+        coherence_squared=coherence["coherence_squared"],
+        common_selected_frequency_hz=common_model["selected_frequency_hz"],
+        common_validation_relative_rms=common_model["validation_relative_rms"],
+        pod_energy_fraction=pod_validation["energy_fraction"],
+        recovered_dmd_frequency_hz=recovered_dmd_frequency,
+    )
+
+    if not np.isclose(measured_phase_speed, expected_phase_speed, rtol=1.0e-10):
+        raise RuntimeError("Phase-speed validation failed")
+    if not np.isclose(np.nanmedian(phase_result["c_p_slow"]),
+                      expected_slow_speed, rtol=1.0e-10):
+        raise RuntimeError("Slow-acoustic-reference validation failed")
+    if coupled_b2 < 0.8:
+        raise RuntimeError("Coupled-triad bicoherence validation failed")
+    if common_validation_rms > 1.0e-8:
+        raise RuntimeError("Held-out common-frequency validation failed")
+    if not np.isclose(recovered_dmd_frequency, 5.0e6, rtol=1.0e-3):
+        raise RuntimeError("DMD frequency validation failed")
+
+    _ts(f"Phase speed: expected {expected_phase_speed:.3f}, "
+        f"recovered {measured_phase_speed:.3f} m/s")
+    _ts(f"Slow acoustic reference: {expected_slow_speed:.3f} m/s")
+    _ts(f"Same-window reconstruction relative RMS: "
+        f"{residual_stats['rms_residual_rel']:.4f}")
+    _ts(f"Known coupled-triad bicoherence: {coupled_b2:.4f}")
+    _ts(f"Common-mode held-out max relative RMS: {common_validation_rms:.3e}")
+    _ts(f"DMD frequency: expected 5.000e6, recovered {recovered_dmd_frequency:.6e} Hz")
+    _ts("Validation PASSED")
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +792,7 @@ def _process_single_contour(args):
             pdb.plot_contour(
                 dataset, field_key,
                 output_path=str(out),
-                title=f"{field_key} — {label}",
+                title=_plot_title(dataset, field_key, config),
                 cmap=pdb.resolve_cmap(config.get("contour_cmap", "viridis")),
                 norm=config.get("contour_norm", "linear"),
                 vmin=vlims[0],
@@ -337,11 +818,10 @@ def _process_single_line(args):
             try:
                 compare_ds = fdb.load_pelec_plotfile(
                     compare_plotfile,
-                    field_names=None,
+                    field_names=_required_plotfile_fields(config),
                     alias_map=config.get("field_aliases"),
                     convert_to_mks=True,
                 )
-                fdb.compute_derived_fields(compare_ds)
             except Exception as exc:
                 fdb._log_error(f"Comparison plotfile load failed: {compare_plotfile}", exc)
                 compare_ds = None
@@ -378,6 +858,30 @@ def _process_single_line(args):
                     )
                     bl_heights[x_loc] = None
 
+        compare_bl_heights = {}
+        if compare_ds is not None and "x_velocity" in compare_ds["fields"]:
+            for x_loc in config["line_x_stations"]:
+                try:
+                    u_prof = fdb.extract_line(compare_ds, x_loc, "x_velocity")
+                    if line_ylim is not None and len(u_prof["y"]) > 1:
+                        y_min, y_max = line_ylim
+                        mask = (u_prof["y"] >= y_min) & (u_prof["y"] <= y_max)
+                        u_prof["y"] = u_prof["y"][mask]
+                        u_prof["values"] = u_prof["values"][mask]
+                    u_inf_ref = bl_cfg.get("u_inf")
+                    if u_inf_ref is None:
+                        u_inf_ref = float(np.nanmax(np.abs(u_prof["values"])))
+                    d99, _, _, _ = fdb.calculate_BL_thicknesses(
+                        u_prof["y"],
+                        np.clip(np.abs(u_prof["values"]) / float(u_inf_ref), 0.0, 1.5),
+                    )
+                    compare_bl_heights[x_loc] = float(d99)
+                except Exception as exc:
+                    fdb._log_error(
+                        f"Comparison boundary-layer height at x={x_loc:.3f}", exc
+                    )
+                    compare_bl_heights[x_loc] = None
+
         for field_key in config["line_fields"]:
             if field_key not in dataset["fields"]:
                 continue
@@ -393,7 +897,7 @@ def _process_single_line(args):
                         mask = (prof["y"] >= y_min) & (prof["y"] <= y_max)
                         prof["y"] = prof["y"][mask]
                         prof["values"] = prof["values"][mask]
-                    prof["label"] = f"x={x_loc:.3f}"
+                    prof["label"] = rf"Simulation, $x={x_loc:.3f}$ m"
                     prof["boundary_layer_height"] = bl_heights.get(x_loc)
                     profiles.append(prof)
 
@@ -429,6 +933,8 @@ def _process_single_line(args):
                                         fdb._log_error(
                                             f"Blasius boundary-layer height at x={x_loc:.3f}", exc
                                         )
+                                ref[field_key]["label"] = rf"Blasius, $x={x_loc:.3f}$ m"
+                                ref[field_key].setdefault("boundary_layer_height", bl_heights.get(x_loc))
                                 profiles.append(ref[field_key])
 
                     # Compressible Blasius-style transform overlay for x_velocity.
@@ -480,10 +986,13 @@ def _process_single_line(args):
                                 mask = (cprof["y"] >= y_min) & (cprof["y"] <= y_max)
                                 cprof["y"] = cprof["y"][mask]
                                 cprof["values"] = cprof["values"][mask]
-                            cprof["label"] = config.get("line_compare_label", "Comparison")
+                            cprof["label"] = (
+                                rf"{config.get('line_compare_label', 'Comparison')}, "
+                                rf"$x={x_loc:.3f}$ m"
+                            )
                             cprof["color"] = config.get("line_compare_color", "C2")
                             cprof["linestyle"] = config.get("line_compare_linestyle", ":")
-                            cprof["boundary_layer_height"] = bl_heights.get(x_loc)
+                            cprof["boundary_layer_height"] = compare_bl_heights.get(x_loc)
                             compare_profiles.append(cprof)
                         except Exception as exc:
                             fdb._log_error(f"Comparison line extraction at x={x_loc:.3f}", exc)
@@ -495,11 +1004,21 @@ def _process_single_line(args):
 
             if profiles:
                 out = output_dir / f"{label}_{field_key}_profiles.png"
+                normalize_y = config.get("line_normalize_by_delta99", False)
                 pdb.plot_line_profiles(
                     profiles,
                     output_path=str(out),
-                    title=f"{field_key} — {label}",
+                    title=_plot_title(dataset, field_key, config),
                     swap_axes=True,
+                    xlabel=(r"$y/\delta_{99}$" if normalize_y else r"$y$ [m]"),
+                    coordinate_normalization=(
+                        "boundary_layer_height" if normalize_y else None
+                    ),
+                    annotate_boundary_layer=not normalize_y,
+                    coordinate_limits=(
+                        config.get("line_normalized_coordinate_limits")
+                        if normalize_y else None
+                    ),
                 )
 
             if compressible_profiles:
@@ -509,7 +1028,10 @@ def _process_single_line(args):
                     field_label=r"U/U_e",
                     xlabel=r"Transformed coordinate $\eta_{vd}$",
                     output_path=str(out),
-                    title=f"{field_key} — compressible Blasius transform — {label}",
+                    title=(
+                        f"Compressible Blasius transform — "
+                        + _plot_time_label(dataset, config)
+                    ),
                     x_key="eta",
                     swap_axes=False,
                 )
@@ -536,7 +1058,10 @@ def _process_single_streamline(args):
         pdb.plot_streamlines(
             [sl],
             output_path=str(out),
-            title=f"Streamlines — {label}",
+            title=(
+                "Streamlines — "
+                + _plot_time_label(dataset, config)
+            ),
         )
         return (label, True, None)
     except Exception as exc:
@@ -567,7 +1092,7 @@ def _process_single_surface(args):
             geo_out = output_dir / f"geometry_{label}.png"
             pdb.plot_surface_geometry(
                 surfaces, dataset,
-                snapshot=label,
+                snapshot=_plot_time_label(dataset, config),
                 output_path=str(geo_out),
             )
 
@@ -591,7 +1116,7 @@ def _process_single_surface(args):
         prop_out = output_dir / f"properties_{label}.png"
         pdb.plot_surface_properties(
             surface_data,
-            snapshot=label,
+            snapshot=_plot_time_label(dataset, config),
             output_path=str(prop_out),
         )
 
@@ -625,7 +1150,7 @@ def _process_single_surface(args):
 
 def _process_pprime_contour(args):
     """Worker: plot p' = p_post - p_baseline contour for a single snapshot."""
-    dataset, config, baseline_fields = args
+    dataset, config, baseline_dataset = args
     try:
         output_dir = Path(config["output_dir"]) / "PPrime"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -634,17 +1159,17 @@ def _process_pprime_contour(args):
         field_key = config.get("pprime_field", "pressure")
         if field_key not in dataset["fields"]:
             return (label, False, f"Field '{field_key}' not in dataset")
-        if field_key not in baseline_fields:
+        if field_key not in baseline_dataset["fields"]:
             return (label, False, f"Field '{field_key}' not in baseline")
 
         p_post = dataset["fields"][field_key]
-        p_base = baseline_fields[field_key]
-
-        if p_post.shape != p_base.shape:
-            return (label, False,
-                    f"Shape mismatch: post {p_post.shape} vs baseline {p_base.shape}")
-
-        p_prime = p_post - p_base
+        p_base = baseline_dataset["fields"][field_key]
+        p_prime = fdb.subtract_rectilinear_baseline(
+            p_post, dataset["x"], dataset["y"],
+            p_base, baseline_dataset["x"], baseline_dataset["y"],
+            method=config.get("pprime_interpolation", "linear"),
+            chunk_size=config.get("pprime_interpolation_chunk_size", 128),
+        )
         pprime_ds = dict(dataset)
         pprime_ds["fields"] = {field_key: p_prime}
 
@@ -656,12 +1181,16 @@ def _process_pprime_contour(args):
         pdb.plot_contour(
             pprime_ds, field_key,
             output_path=str(out),
-            title=f"p' (pressure perturbation) — {label}",
+            title=(
+                "Pressure perturbation — "
+                + _plot_time_label(dataset, config)
+            ),
             cmap=pdb.resolve_cmap(cmap),
             norm="linear",
             vmin=vmin,
             vmax=vmax,
-            colorbar_label=f"Delta{field_key} [Pa]",
+            colorbar_label=r"$p'$ [Pa]" if field_key == "pressure"
+            else rf"$\Delta$ {pdb.field_label(field_key)}",
         )
         return (label, True, None)
     except Exception as exc:
@@ -812,11 +1341,9 @@ def _load_probe_data_from_binary(config, var_col, nt_skip=0, max_probes=None):
     x_field = 4
     y_field = 5
 
-    probe_ids = list(range(n_probes))
-    if max_probes is not None:
-        probe_ids = probe_ids[:max_probes]
+    n_load = n_probes if max_probes is None else min(int(max_probes), n_probes)
+    probe_ids = range(n_load)
 
-    n_load = len(probe_ids)
     time_buf = np.empty(n_timesteps, dtype=np.float64)
     signal_buf = np.empty((n_timesteps, n_load), dtype=np.float64)
     x_sample = np.empty(n_load, dtype=np.float64)
@@ -829,15 +1356,24 @@ def _load_probe_data_from_binary(config, var_col, nt_skip=0, max_probes=None):
         endian = file_endians[file_idx]
         f.seek(offset + 8, os.SEEK_SET)
         raw = f.read(record_payload)
-        data = struct.unpack(f'{endian}{n_probes * n_fields}d', raw)
+        if len(raw) != record_payload:
+            raise EOFError(
+                f"Short probe record in {bin_files[file_idx]} at byte {offset}"
+            )
+        # Interpret the complete probe-by-field record in compiled NumPy code.
+        # The previous nested Python loop executed once per timestep *and*
+        # probe (hundreds of millions of iterations for production cases).
+        data = np.frombuffer(
+            raw,
+            dtype=np.dtype(f"{endian}f8"),
+            count=n_probes * n_fields,
+        ).reshape(n_probes, n_fields)
         time_buf[it] = time
-        for j, ip in enumerate(probe_ids):
-            base = ip * n_fields
-            signal_buf[it, j] = data[base + field_idx]
-            if not x_sample_set[j]:
-                x_sample[j] = data[base + x_field]
-                y_sample[j] = data[base + y_field]
-                x_sample_set[j] = True
+        signal_buf[it, :] = data[:n_load, field_idx]
+        if it == 0:
+            x_sample[:] = data[:n_load, x_field]
+            y_sample[:] = data[:n_load, y_field]
+            x_sample_set[:] = True
 
     for f in file_handles:
         f.close()
@@ -853,11 +1389,21 @@ def _load_probe_data_from_binary(config, var_col, nt_skip=0, max_probes=None):
             "y": float(y_sample[j]),
             "x_req": float(probe_x_req[ip]),
             "y_req": float(probe_y_req[ip]),
-            "time": time_buf.copy(),
-            "signal": signal_buf[:, j].copy(),
+            # All probes share the same immutable time base; signal columns
+            # remain views backed by signal_buf. This avoids duplicating the
+            # multi-gigabyte production arrays once per returned probe.
+            "time": time_buf,
+            "signal": signal_buf[:, j],
             "dt": float(time_buf[1] - time_buf[0]) if time_buf.size >= 2 else 0.0,
             "filename": f"flow_probe_{ip:03d}.dat",
         })
+
+    if probe_data:
+        # Keep one explicit reference to the contiguous backing array.  This
+        # lets downstream workflows operate on column views rather than
+        # rebuilding another multi-gigabyte matrix from the individual dicts.
+        probe_data[0]["_shared_signal_matrix"] = signal_buf
+        probe_data[0]["_shared_uniform_time"] = True
 
     return probe_data
 
@@ -920,6 +1466,63 @@ def _find_nearest_freq_bin(freq, target):
     return idx, freq[idx]
 
 
+def _probe_matrix_on_common_time(probe_data, resample=True, target_dt=None):
+    """Return a common time base and matrix with the fewest possible copies.
+
+    Binary probe records already share a uniform contiguous matrix.  That
+    matrix is returned directly when no time-step change is requested.  ASCII
+    or genuinely asynchronous records are interpolated once.
+    """
+    if not probe_data:
+        raise ValueError("probe_data is empty")
+
+    first = probe_data[0]
+    native_time = np.asarray(first["time"], dtype=float)
+    shared = first.get("_shared_signal_matrix")
+    is_shared_uniform = bool(first.get("_shared_uniform_time", False))
+    if native_time.size < 2:
+        raise ValueError("At least two probe samples are required")
+    native_dt = float(np.median(np.diff(native_time)))
+
+    if shared is not None and is_shared_uniform:
+        shared = np.asarray(shared)
+        uniform = np.allclose(
+            np.diff(native_time), native_dt, rtol=1.0e-8,
+            atol=max(abs(native_dt) * 1.0e-10, 1.0e-15),
+        )
+        same_dt = target_dt is None or np.isclose(
+            float(target_dt), native_dt, rtol=1.0e-8,
+            atol=max(abs(native_dt) * 1.0e-10, 1.0e-15),
+        )
+        if not resample or (uniform and same_dt):
+            return native_time, shared[:, :len(probe_data)], native_dt, True
+
+    n_valid = len(probe_data)
+    if resample:
+        t_min = max(d["time"][0] for d in probe_data)
+        t_max = min(d["time"][-1] for d in probe_data)
+        dt_vals = [d["dt"] for d in probe_data if d.get("dt", 0.0) > 0]
+        dt_use = float(target_dt) if target_dt is not None else (
+            float(np.median(dt_vals)) if dt_vals else native_dt
+        )
+        # Include a common final sample when it lies on the uniform grid.
+        count = int(np.floor((t_max - t_min) / dt_use + 1.0e-9)) + 1
+        time_uniform = t_min + np.arange(count, dtype=float) * dt_use
+        matrix = np.empty((count, n_valid), dtype=float)
+        for ip, d in enumerate(probe_data):
+            matrix[:, ip] = np.interp(
+                time_uniform, d["time"], d["signal"],
+                left=d["signal"][0], right=d["signal"][-1],
+            )
+        return time_uniform, matrix, dt_use, False
+
+    length = min(d["time"].size for d in probe_data)
+    matrix = np.empty((length, n_valid), dtype=float)
+    for ip, d in enumerate(probe_data):
+        matrix[:, ip] = d["signal"][:length]
+    return native_time[:length], matrix, native_dt, False
+
+
 def _fit_loglog_slope(freq, P1, fmin, fmax):
     """Fit log10(P1) = slope * log10(freq) + intercept within [fmin, fmax]."""
     freq = np.asarray(freq)
@@ -937,7 +1540,8 @@ def _fit_loglog_slope(freq, P1, fmin, fmax):
     return slope, intercept, r_squared
 
 
-def _preprocess_probe_signal(signal_matrix, config, time_uniform=None):
+def _preprocess_probe_signal(signal_matrix, config, time_uniform=None,
+                             copy_raw=True, log_details=True):
     """Apply per-probe mean subtraction and windowing to the signal matrix.
 
     Operates in-place on *signal_matrix* and returns the window amplitude
@@ -962,7 +1566,7 @@ def _preprocess_probe_signal(signal_matrix, config, time_uniform=None):
     scale : float
         Amplitude scaling factor (1.0 if no compensation).
     raw_matrix : ndarray or None
-        Copy of the input before any modification, for plotting.
+        Copy of the input before any modification when ``copy_raw`` is true.
     """
     L, n_probes = signal_matrix.shape
     mean_mode = config.get("fft_mean_subtraction", "mean")
@@ -970,15 +1574,13 @@ def _preprocess_probe_signal(signal_matrix, config, time_uniform=None):
     do_comp = config.get("fft_window_compensation", True)
 
     # Save a copy of the raw (unprocessed) signal for dual-row time-trace plots
-    raw_matrix = signal_matrix.copy()
+    raw_matrix = signal_matrix.copy() if copy_raw else None
 
     # --- Per-probe mean subtraction / detrend ---
     if mean_mode == "none":
         pass
     elif mean_mode == "mean":
-        for ip in range(n_probes):
-            col = signal_matrix[:, ip]
-            signal_matrix[:, ip] = col - np.nanmean(col)
+        signal_matrix -= np.nanmean(signal_matrix, axis=0, keepdims=True)
     elif mean_mode == "linear":
         if time_uniform is None:
             time_uniform = np.arange(L, dtype=float)
@@ -1015,13 +1617,15 @@ def _preprocess_probe_signal(signal_matrix, config, time_uniform=None):
     else:
         scale = 1.0
 
-    if mean_mode != "none" or window_type not in ("none", "rect", "rectangular"):
+    if log_details and (
+            mean_mode != "none"
+            or window_type not in ("none", "rect", "rectangular")):
         _ts(f"  Preprocess: mean='{mean_mode}'  window='{window_type}'")
 
     return signal_matrix, scale, raw_matrix
 
 
-def _process_fft_probes(config):
+def _process_fft_probes(config, probe_data=None):
     """Worker: perform 1D FFT analysis on point-probe time series."""
     try:
         output_dir = Path(config["output_dir"]) / "FFT-Probes"
@@ -1051,9 +1655,10 @@ def _process_fft_probes(config):
         # Load probe time series.  Prefer direct binary read (fast, low
         # memory) when fft_use_binary is enabled; otherwise fall back to
         # per-probe ASCII .dat files.
-        probe_data = _load_probe_timeseries(
-            config, var_col, nt_skip=nt_skip, max_probes=max_probes
-        )
+        if probe_data is None:
+            probe_data = _load_probe_timeseries(
+                config, var_col, nt_skip=nt_skip, max_probes=max_probes
+            )
 
         if not probe_data:
             return (label, False, "No probe data could be loaded")
@@ -1063,47 +1668,32 @@ def _process_fft_probes(config):
         n_valid = len(probe_data)
         _ts(f"  Successfully loaded {n_valid} probes")
 
-        if resample:
-            t_min = max(d["time"][0] for d in probe_data)
-            t_max = min(d["time"][-1] for d in probe_data)
-            dt_vals = [d["dt"] for d in probe_data if d["dt"] > 0]
-            dt_use = target_dt if target_dt else (np.median(dt_vals) if dt_vals else 1.0)
-            time_uniform = np.arange(t_min, t_max, dt_use)
-            L = len(time_uniform)
-            signal_matrix = np.zeros((L, n_valid))
-            for ip, d in enumerate(probe_data):
-                signal_matrix[:, ip] = np.interp(
-                    time_uniform, d["time"], d["signal"],
-                    left=d["signal"][0], right=d["signal"][-1],
-                )
-            dt_actual = dt_use
-        else:
-            lengths = [d["time"].size for d in probe_data]
-            L = int(np.median(lengths))
-            signal_matrix = np.zeros((L, n_valid))
-            dt_actual = np.median([d["dt"] for d in probe_data if d["dt"] > 0])
-            if dt_actual == 0:
-                dt_actual = 1.0
-            for ip, d in enumerate(probe_data):
-                n = min(d["signal"].size, L)
-                signal_matrix[:n, ip] = d["signal"][:n]
+        time_uniform, raw_matrix, dt_actual, reused_shared = \
+            _probe_matrix_on_common_time(
+                probe_data, resample=resample, target_dt=target_dt
+            )
+        L = len(time_uniform)
+        # Preserve the unprocessed record for time traces/reconstruction and
+        # create only the one working copy required by the FFT.
+        signal_matrix = raw_matrix.copy()
+        if reused_shared:
+            _ts("  Reusing contiguous binary probe matrix (no interpolation copy)")
 
         # Apply mean subtraction and windowing
-        time_array_for_detrend = time_uniform if resample else None
-        signal_matrix, win_scale, raw_matrix = _preprocess_probe_signal(
-            signal_matrix, config, time_uniform=time_array_for_detrend,
+        signal_matrix, win_scale, _ = _preprocess_probe_signal(
+            signal_matrix, config, time_uniform=time_uniform, copy_raw=False,
         )
 
         Fs = 1.0 / dt_actual
         freq = Fs * np.arange(0, L // 2 + 1) / L
         n_freq = len(freq)
         P1 = np.zeros((n_freq, n_valid))
-        for ip in range(n_valid):
-            sig = signal_matrix[:, ip]
-            Y = np.fft.fft(sig)
-            P2 = np.abs(Y / L)
-            P1[:, ip] = P2[:n_freq] * win_scale
-            P1[1:-1, ip] = 2 * P1[1:-1, ip]
+        fft_batch_size = max(1, int(config.get("fft_batch_size", 32)))
+        for first in range(0, n_valid, fft_batch_size):
+            last = min(first + fft_batch_size, n_valid)
+            Y = np.fft.rfft(signal_matrix[:, first:last], axis=0)
+            P1[:, first:last] = np.abs(Y / L) * win_scale
+            P1[1:-1, first:last] *= 2.0
         _ts(f"  FFT complete — {n_freq} bins x {n_valid} probes")
 
         # Auto-detect dominant frequency from FFT spectrum (exclude DC)
@@ -1154,6 +1744,164 @@ def _process_fft_probes(config):
         else:
             recon_probe_indices = []
 
+        # Compact, reusable spectral output.  The full 2,000-probe spectrum
+        # can exceed a gigabyte, so retain all spatial amplitudes only at the
+        # configured growth frequencies and full spectra for selected probes.
+        export_indices = sorted(set(plot_indices + recon_probe_indices))
+        growth_bins = np.array([
+            _find_nearest_freq_bin(freq, value)[0] for value in growth_freqs
+        ], dtype=int) if growth_freqs else np.empty(0, dtype=int)
+        growth_actual = freq[growth_bins] if growth_bins.size else np.empty(0)
+        selected_spectra = (
+            P1[:, export_indices] if export_indices
+            else np.empty((len(freq), 0), dtype=float)
+        )
+        np.savez_compressed(
+            output_dir / "spectral_summary.npz",
+            frequency_hz=freq,
+            probe_x_cm=np.asarray(probe_x, dtype=float),
+            probe_y_cm=np.asarray(probe_y, dtype=float),
+            mean_amplitude=np.nanmean(P1, axis=1),
+            selected_probe_indices=np.asarray(export_indices, dtype=int),
+            selected_amplitude=selected_spectra,
+            growth_frequency_hz=growth_actual,
+            growth_amplitude=P1[growth_bins, :] if growth_bins.size
+            else np.empty((0, n_valid), dtype=float),
+            dominant_frequency_hz=np.array(harmonic_freq),
+            sample_interval_s=np.array(dt_actual),
+            window_amplitude_scale=np.array(win_scale),
+        )
+        _ts(f"  Saved reusable spectral data: {output_dir / 'spectral_summary.npz'}")
+
+        if config.get("make_coherence_analysis", False) and export_indices:
+            configured_pairs = config.get("coherence_probe_pairs")
+            if configured_pairs is None:
+                configured_pairs = [
+                    (idx, idx + 1) for idx in export_indices if idx + 1 < n_valid
+                ]
+            pair_results = []
+            nperseg_coh = int(config.get("coherence_nperseg", 16384))
+            overlap_coh = int(
+                config.get("coherence_noverlap", 0.5) * nperseg_coh
+            )
+            for first, second in configured_pairs:
+                first, second = int(first), int(second)
+                if not (0 <= first < n_valid and 0 <= second < n_valid):
+                    raise ValueError(
+                        f"Invalid coherence probe pair ({first}, {second})"
+                    )
+                result = fdb.compute_pair_coherence(
+                    raw_matrix[:, first], raw_matrix[:, second], Fs,
+                    nperseg=nperseg_coh, noverlap=overlap_coh,
+                )
+                pair_results.append({
+                    "indices": (first, second),
+                    "label": (
+                        f"{first}->{second} "
+                        f"({probe_x[first]:.3f}->{probe_x[second]:.3f} cm)"
+                    ),
+                    "result": result,
+                })
+            if pair_results:
+                coherence_values = np.column_stack([
+                    item["result"]["coherence_squared"] for item in pair_results
+                ])
+                phase_values = np.column_stack([
+                    item["result"]["cross_phase_rad"] for item in pair_results
+                ])
+                np.savez_compressed(
+                    output_dir / "pair_coherence.npz",
+                    frequency_hz=pair_results[0]["result"]["frequency_hz"],
+                    probe_pairs=np.asarray([
+                        item["indices"] for item in pair_results
+                    ], dtype=int),
+                    coherence_squared=coherence_values,
+                    cross_phase_rad=phase_values,
+                    nperseg=np.array(pair_results[0]["result"]["nperseg"]),
+                    noverlap=np.array(pair_results[0]["result"]["noverlap"]),
+                )
+                pdb.plot_pair_coherence(
+                    pair_results,
+                    output_path=str(output_dir / "pair_coherence.png"),
+                    fmax=config.get("coherence_fmax"),
+                )
+                _ts(f"  Saved Welch coherence for {len(pair_results)} probe pairs")
+
+        if config.get("make_modal_analysis", False):
+            modal_indices_cfg = config.get("modal_probe_indices")
+            modal_indices = export_indices if modal_indices_cfg is None else sorted(set(
+                int(value) for value in modal_indices_cfg
+            ))
+            if len(modal_indices) < 2:
+                raise ValueError("Modal analysis requires at least two probe stations")
+            if modal_indices[0] < 0 or modal_indices[-1] >= n_valid:
+                raise ValueError("modal_probe_indices contains an invalid index")
+            coordinates = np.column_stack((
+                np.asarray(probe_x)[modal_indices],
+                np.asarray(probe_y)[modal_indices],
+            ))
+            # All Fourier stages use the median dt when resampling is disabled.
+            # Give modal algorithms that explicit uniform coordinate rather
+            # than pretending the ppm-level native clock jitter is exact.
+            modal_time = time_uniform[0] + np.arange(L, dtype=float) * dt_actual
+            snapshots = mdb.SnapshotMatrix(
+                modal_time,
+                raw_matrix[:, modal_indices],
+                coordinates,
+                variable=var_labels.get(var_col, f"column_{var_col}"),
+            )
+            modal_count = min(
+                int(config.get("modal_n_modes", 4)), len(modal_indices)
+            )
+            pod_result = mdb.compute_pod(snapshots, n_modes=modal_count)
+            spod_nperseg = min(
+                int(config.get("modal_spod_nperseg", 4096)), L
+            )
+            spod_frequency = np.fft.rfftfreq(spod_nperseg, dt_actual)
+            spod_stride = max(
+                1, int(config.get("modal_spod_frequency_stride", 2))
+            )
+            spod_fmax = config.get("modal_spod_fmax")
+            spod_indices = np.arange(0, len(spod_frequency), spod_stride)
+            if spod_fmax is not None:
+                spod_indices = spod_indices[
+                    spod_frequency[spod_indices] <= float(spod_fmax)
+                ]
+            spod_result = mdb.compute_spod(
+                snapshots,
+                nperseg=spod_nperseg,
+                noverlap=int(
+                    config.get("modal_spod_noverlap", 0.5) * spod_nperseg
+                ),
+                n_modes=min(modal_count, 3),
+                frequency_indices=spod_indices,
+            )
+            dmd_result = mdb.compute_dmd(snapshots, n_modes=modal_count)
+            modal_dir = output_dir / "ModalAnalysis"
+            modal_dir.mkdir(parents=True, exist_ok=True)
+            np.savez_compressed(
+                modal_dir / "modal_results.npz",
+                probe_indices=np.asarray(modal_indices, dtype=int),
+                coordinates_cm=coordinates,
+                pod_modes=pod_result["modes"],
+                pod_energy_fraction=pod_result["energy_fraction"],
+                pod_temporal_coefficients=pod_result["temporal_coefficients"],
+                spod_frequency_hz=spod_result["frequency_hz"],
+                spod_eigenvalues=spod_result["eigenvalues"],
+                spod_modes=spod_result["modes"],
+                dmd_eigenvalues=dmd_result["eigenvalues"],
+                dmd_frequency_hz=dmd_result["frequency_hz"],
+                dmd_growth_rate_per_s=dmd_result["growth_rate_per_s"],
+                dmd_modes=dmd_result["modes"],
+            )
+            pdb.plot_modal_summary(
+                pod_result, spod_result, dmd_result,
+                output_path=str(modal_dir / "modal_summary.png"),
+            )
+            _ts(
+                f"  Saved POD/SPOD/DMD screening for {len(modal_indices)} probes"
+            )
+
         if len(plot_indices) > 0:
             pos_indices = sorted(set(
                 max(0, min(idx if idx >= 0 else n_valid + idx, n_valid - 1))
@@ -1197,13 +1945,14 @@ def _process_fft_probes(config):
             try:
                 idx_sorted = np.argsort(probe_x)
                 probe_x_sorted = np.array(probe_x)[idx_sorted]
-                P1_sorted = P1[:, idx_sorted]
+                identity_order = np.array_equal(idx_sorted, np.arange(n_valid))
+                P1_sorted = P1 if identity_order else P1[:, idx_sorted]
                 eps = 1e-20
                 contour_scale = config.get("fft_contour_scale", "linear").lower()
                 if contour_scale == "linear":
                     # Use the physical nonnegative FFT amplitude directly.
                     # This gives the requested color range [0, max].
-                    P1_plot = np.maximum(P1_sorted, 0.0)
+                    P1_plot = P1_sorted
                     cbar_label = "Amplitude"
                     plot_vmin = 0.0
                     plot_vmax = config.get("fft_contour_vmax")
@@ -1232,9 +1981,8 @@ def _process_fft_probes(config):
                             not np.isfinite(plot_vmax) or plot_vmax <= 0.0):
                         plot_vmax = 1.0
                     fig, ax = plt.subplots(figsize=(12, 6))
-                    XX, YY = np.meshgrid(probe_x_sorted, freq_sub)
                     ax.pcolormesh(
-                        XX, YY, P1_plot_sub,
+                        probe_x_sorted, freq_sub, P1_plot_sub,
                         shading="auto", cmap="inferno", rasterized=True,
                         vmin=plot_vmin, vmax=plot_vmax,
                     )
@@ -1349,7 +2097,7 @@ def _process_fft_probes(config):
 
                 raw = raw_matrix  # full-record raw signal
                 dt_use_local = dt_actual
-                plot_time = time_uniform if resample else probe_data[0]["time"][:L]
+                plot_time = time_uniform
 
                 # ============================================================
                 # Stage 1: Disturbance window detection
@@ -1521,6 +2269,9 @@ def _process_fft_probes(config):
                             n_peaks=config.get("reconstruction_n_peaks", 15),
                             freq_range=config.get("reconstruction_peak_freq_range"),
                             min_peak_distance_hz=config.get("reconstruction_peak_min_distance_hz"),
+                            min_peak_prominence=config.get(
+                                "reconstruction_peak_min_prominence"
+                            ),
                         )
                     else:
                         raise ValueError(f"Unknown reconstruction_method: {recon_method}")
@@ -1535,7 +2286,7 @@ def _process_fft_probes(config):
                     eb["mean_background"] = sig_mean
                     eb["reconstruction_method"] = recon_method
                     eb["fundamental_freq"] = recon_freq
-                    eb["used_harmonic_bins"] = used_bins if recon_method != "top_frequencies" else []
+                    eb["used_frequency_bins"] = used_bins
                     energy_budgets.append(eb)
                     residual_stats.append(rs)
 
@@ -1551,6 +2302,7 @@ def _process_fft_probes(config):
                         probe_label=label,
                         output_path=str(out_path),
                         mean_background=sig_mean,
+                        relative_rms=rs["rms_residual_rel"],
                         recon_method=recon_method,
                         recon_freq=recon_freq,
                         window_start=wi["start_time"],
@@ -1607,16 +2359,65 @@ def _process_fft_probes(config):
                     recon_probe_x, residual_stats,
                     output_path=str(recon_output_dir / f"{probe_prefix}_residual_stats_vs_x.png"),
                 )
+
+                if config.get("reconstruction_common_mode_validation", True):
+                    common_signals = raw[:, recon_probe_indices]
+                    common_model = fdb.fit_common_frequency_model(
+                        common_signals,
+                        dt_use_local,
+                        n_modes=config.get("reconstruction_common_n_modes", 10),
+                        train_fraction=config.get(
+                            "reconstruction_common_train_fraction", 0.6
+                        ),
+                        freq_range=config.get(
+                            "reconstruction_common_freq_range"
+                        ),
+                        min_peak_distance_hz=config.get(
+                            "reconstruction_peak_min_distance_hz"
+                        ),
+                    )
+                    common_path = recon_output_dir / "common_mode_validation.npz"
+                    np.savez_compressed(
+                        common_path,
+                        probe_indices=np.asarray(recon_probe_indices, dtype=int),
+                        probe_x_cm=np.asarray(recon_probe_x, dtype=float),
+                        selected_frequency_hz=common_model[
+                            "selected_frequency_hz"
+                        ],
+                        spectral_score=common_model["spectral_score"],
+                        n_train=np.array(common_model["n_train"]),
+                        train_relative_rms=common_model["train_relative_rms"],
+                        validation_relative_rms=common_model[
+                            "validation_relative_rms"
+                        ],
+                        validation_observed=common_model[
+                            "validation_observed"
+                        ],
+                        validation_prediction=common_model[
+                            "validation_prediction"
+                        ],
+                    )
+                    pdb.plot_common_mode_validation(
+                        plot_time, common_model, recon_probe_x,
+                        output_path=str(
+                            recon_output_dir / "common_mode_validation.png"
+                        ),
+                    )
+                    _ts(
+                        "  Common-mode held-out median relative RMS: "
+                        f"{np.nanmedian(common_model['validation_relative_rms']):.3f}"
+                    )
                 _ts(f"  Disturbance reconstruction complete — {len(recon_probe_indices)} probes processed")
             except Exception as exc:
                 _ts(f"  [W] Disturbance reconstruction failed: {exc}")
+                return (label, False, f"Disturbance reconstruction failed: {exc}")
 
         return (label, True, None)
     except Exception as exc:
         return (label, False, str(exc))
 
 
-def _process_stability_diagnostics(config):
+def _process_stability_diagnostics(config, probe_data=None):
     """Worker: run second Mack mode stability diagnostics."""
     try:
         output_dir = Path(config["output_dir"]) / "StabilityDiagnostics"
@@ -1699,68 +2500,109 @@ def _process_stability_diagnostics(config):
         else:
             _ts(f"  [SD] User target frequency: {target_freq:.3e} Hz")
 
+        # Extract all baseline-dependent edge quantities before releasing the
+        # large AMReX covering-grid fields.  Probe spectral work below needs
+        # the compact profiles only.
+        T_edge_vals = None
+        if "temperature" in baseline_ds["fields"]:
+            T_edge_vals = np.array([
+                bl.get("T_profile", np.array([300.0]))[-1]
+                if len(bl.get("T_profile", [])) > 0 else 300.0
+                for bl in bl_profiles
+            ], dtype=float)
+        del baseline_ds, surfaces
+
         # Probe loading + FFT
         var_col = config.get("fft_var_col", 4)
         nt_skip = config.get("fft_nt_skip", 0)
 
-        probe_data = _load_probe_timeseries(
-            config, var_col, nt_skip=nt_skip, max_probes=None
-        )
+        if probe_data is None:
+            probe_data = _load_probe_timeseries(
+                config, var_col, nt_skip=nt_skip, max_probes=None
+            )
         if not probe_data:
             return ("stability", False, "No probe data")
 
         probe_x_m = [d["x"] * 1e-2 for d in probe_data]
-        for d in probe_data:
-            d["x"] = d["x"] * 1e-2
-            if d["y"] is not None:
-                d["y"] = d["y"] * 1e-2
 
         n_valid = len(probe_data)
         if n_valid < 3:
             return ("stability", False, "Too few valid probes")
 
-        t_min = max(d["time"][0] for d in probe_data)
-        t_max = min(d["time"][-1] for d in probe_data)
-        dt_vals = [d["time"][1] - d["time"][0] for d in probe_data if len(d["time"]) >= 2]
-        dt_use = np.median(dt_vals) if dt_vals else 1.0
-        time_uniform = np.arange(t_min, t_max, dt_use)
-        L = len(time_uniform)
-
-        signal_matrix = np.zeros((L, n_valid))
-        for ip, d in enumerate(probe_data):
-            signal_matrix[:, ip] = np.interp(
-                time_uniform, d["time"], d["signal"],
-                left=d["signal"][0], right=d["signal"][-1],
+        time_uniform, signal_matrix, dt_use, reused_shared = \
+            _probe_matrix_on_common_time(
+                probe_data, resample=config.get("fft_resample", False),
+                target_dt=config.get("fft_target_dt"),
             )
-
-        # Apply same mean subtraction and windowing as FFT probe analysis
-        signal_matrix, win_scale, _ = _preprocess_probe_signal(
-            signal_matrix, config, time_uniform=time_uniform,
+        L = len(time_uniform)
+        freq_full = np.fft.rfftfreq(L, dt_use)
+        target_idx, actual_target_freq = _find_nearest_freq_bin(
+            freq_full, target_freq
         )
-
-        Y_complex = np.fft.fft(signal_matrix, axis=0)
-        freq = np.fft.fftfreq(L, dt_use)
-        half = L // 2
-        freq_ss = freq[:half]
-        Y_ss = Y_complex[:half, :] * win_scale
-        P1 = np.abs(Y_ss) / L
-        P1[1:, :] = 2.0 * P1[1:, :]
-        _ts(f"  [SD] FFT complete: {len(freq_ss)} bins x {n_valid} probes")
+        Y_target = np.empty(n_valid, dtype=complex)
+        P_target = np.empty(n_valid, dtype=float)
+        fft_batch_size = max(1, int(config.get("fft_batch_size", 32)))
+        for first in range(0, n_valid, fft_batch_size):
+            last = min(first + fft_batch_size, n_valid)
+            work = signal_matrix[:, first:last].copy()
+            work, win_scale, _ = _preprocess_probe_signal(
+                work, config, time_uniform=time_uniform, copy_raw=False,
+                log_details=(first == 0),
+            )
+            spectrum = np.fft.rfft(work, axis=0)
+            coeff = spectrum[target_idx, :] * win_scale
+            Y_target[first:last] = coeff
+            P_target[first:last] = np.abs(coeff) / L
+        if target_idx not in (0, len(freq_full) - 1):
+            P_target *= 2.0
+        freq_ss = np.array([actual_target_freq])
+        Y_ss = Y_target[None, :]
+        P1 = P_target[None, :]
+        _ts(
+            f"  [SD] Target-bin FFT complete: {actual_target_freq:.6e} Hz "
+            f"x {n_valid} probes"
+        )
 
         # Phase speed
         bl_x = freq_data["x"]
         u_edge_interp = np.interp(probe_x_m, bl_x, freq_data["u_edge"])
-        T_edge_interp = None
-        if "temperature" in baseline_ds["fields"]:
-            T_edge_vals = np.zeros(len(bl_profiles))
-            for i, bl in enumerate(bl_profiles):
-                Tp = bl.get("T_profile", np.array([300.0]))
-                T_edge_vals[i] = Tp[-1] if len(Tp) > 0 else 300.0
-            T_edge_interp = np.interp(probe_x_m, bl_x, T_edge_vals)
+        T_edge_interp = None if T_edge_vals is None else np.interp(
+            probe_x_m, bl_x, T_edge_vals
+        )
 
         phase_data = fdb.compute_phase_speed_from_probes(
             np.array(probe_x_m), freq_ss, Y_ss, target_freq,
             u_edge=u_edge_interp, T_edge=T_edge_interp,
+            phase_convention=config.get(
+                "stability_phase_convention", "omega_t_minus_alpha_x"
+            ),
+        )
+        probe_order = np.argsort(probe_x_m)
+        coherence_nperseg = int(config.get(
+            "stability_coherence_nperseg", 16384
+        ))
+        target_coherence = fdb.compute_adjacent_target_coherence(
+            signal_matrix, 1.0 / dt_use, target_freq,
+            nperseg=coherence_nperseg,
+            noverlap=int(
+                config.get("stability_coherence_noverlap", 0.5)
+                * coherence_nperseg
+            ),
+            column_order=probe_order,
+        )
+        coherence_squared = target_coherence["coherence_squared"]
+        min_coherence = float(config.get("stability_min_coherence", 0.5))
+        phase_data["c_p_raw"] = phase_data["c_p"].copy()
+        phase_data["coherence_squared"] = coherence_squared
+        phase_data["coherence_threshold"] = min_coherence
+        phase_data["c_p"] = np.where(
+            coherence_squared >= min_coherence,
+            phase_data["c_p"], np.nan,
+        )
+        _ts(
+            f"  [SD] Coherence gate retained "
+            f"{np.sum(coherence_squared >= min_coherence)}/{len(coherence_squared)} "
+            f"adjacent pairs at gamma^2 >= {min_coherence:.2f}"
         )
 
         # Growth rate
@@ -1799,6 +2641,40 @@ def _process_stability_diagnostics(config):
             "bl_profiles": bl_profiles,
         }
 
+        np.savez_compressed(
+            output_dir / "stability_summary.npz",
+            target_frequency_hz=np.array(target_freq),
+            actual_fft_frequency_hz=np.array(actual_target_freq),
+            estimate_x_m=np.asarray(freq_data.get("x", [])),
+            f_omega_star_hz=np.asarray(freq_data.get("f_omega_star", [])),
+            f_acoustic_hz=np.asarray(freq_data.get("f_acoustic", [])),
+            delta_99_m=np.asarray(freq_data.get("delta_99", [])),
+            phase_x_mid_m=np.asarray(phase_data.get("x_mid", [])),
+            phase_speed_m_per_s=np.asarray(phase_data.get("c_p", [])),
+            phase_speed_raw_m_per_s=np.asarray(phase_data.get("c_p_raw", [])),
+            phase_coherence_squared=np.asarray(
+                phase_data.get("coherence_squared", [])
+            ),
+            phase_coherence_threshold=np.array(min_coherence),
+            slow_acoustic_speed_m_per_s=np.asarray(
+                phase_data.get("c_p_slow", [])
+            ),
+            fast_acoustic_speed_m_per_s=np.asarray(
+                phase_data.get("c_p_fast", [])
+            ),
+            growth_x_m=np.asarray(growth_data.get("x", [])),
+            spatial_growth_per_m=np.asarray(growth_data.get("alpha_i", [])),
+            spatial_growth_delta99=np.asarray(
+                growth_data.get("alpha_i_delta", [])
+            ),
+            spatial_growth_ci95_per_m=np.asarray(
+                growth_data.get("alpha_i_ci95", [])
+            ),
+            growth_fit_r_squared=np.asarray(
+                growth_data.get("r_squared", [])
+            ),
+        )
+
         _ts("  [SD] Generating stability summary plot ...")
         out_path = output_dir / "stability_summary.png"
         pdb.plot_stability_summary(plot_data, output_path=str(out_path))
@@ -1820,7 +2696,7 @@ def _process_stability_diagnostics(config):
 #  PHASE 2 WORKER: TRANSIENT ANALYSIS (STFT / Hilbert envelope)
 # ---------------------------------------------------------------------------
 
-def _process_transient_analysis(config):
+def _process_transient_analysis(config, probe_data=None):
     """Worker: run STFT spectrogram and Hilbert envelope on probe signals.
 
     Uses the same probe-loading path as _process_fft_probes.  Operates
@@ -1839,7 +2715,10 @@ def _process_transient_analysis(config):
         noverlap_frac = config.get("transient_stft_noverlap", 0.75)
         plot_probes = config.get("transient_plot_probe_indices", [0, 49, 99])
 
-        probe_data = _load_probe_timeseries(config, var_col, nt_skip=nt_skip, max_probes=max_probes)
+        if probe_data is None:
+            probe_data = _load_probe_timeseries(
+                config, var_col, nt_skip=nt_skip, max_probes=max_probes
+            )
         if not probe_data:
             return (label, False, "No probe data could be loaded")
 
@@ -1847,20 +2726,13 @@ def _process_transient_analysis(config):
         probe_x = [d["x"] for d in probe_data]
         _ts(f"  [TA] Loaded {n_valid} probes")
 
-        # Resample to common uniform time base
-        t_min = max(d["time"][0] for d in probe_data)
-        t_max = min(d["time"][-1] for d in probe_data)
-        dt_vals = [d["dt"] for d in probe_data if d["dt"] > 0]
-        dt_use = np.median(dt_vals) if dt_vals else 1.0
-        time_uniform = np.arange(t_min, t_max, dt_use)
-        L = len(time_uniform)
-
-        signal_matrix = np.zeros((L, n_valid))
-        for ip, d in enumerate(probe_data):
-            signal_matrix[:, ip] = np.interp(
-                time_uniform, d["time"], d["signal"],
-                left=d["signal"][0], right=d["signal"][-1],
+        time_uniform, signal_matrix, dt_use, reused_shared = \
+            _probe_matrix_on_common_time(
+                probe_data, resample=config.get("fft_resample", False),
+                target_dt=config.get("fft_target_dt"),
             )
+        if reused_shared:
+            _ts("  [TA] Reusing contiguous binary probe matrix")
 
         fs = 1.0 / dt_use
 
@@ -1882,6 +2754,8 @@ def _process_transient_analysis(config):
                     output_path=str(out_stft),
                     fmax=band[1] * 2,
                     title=f"STFT spectrogram — Probe {idx} — x={p['x']:.3f} cm",
+                    nperseg=nperseg,
+                    noverlap=noverlap,
                 )
                 _ts(f"  [TA] Saved spectrogram: {out_stft}")
             except Exception as exc:
@@ -1898,6 +2772,8 @@ def _process_transient_analysis(config):
                     time_uniform, sig_ms, filtered, envelope, pstats,
                     output_path=str(out_env),
                     title=f"Envelope — Probe {idx} — x={p['x']:.3f} cm",
+                    instantaneous_frequency=inst_freq,
+                    frequency_band=band,
                 )
                 _ts(f"  [TA] Saved envelope: {out_env}")
             except Exception as exc:
@@ -1905,7 +2781,14 @@ def _process_transient_analysis(config):
 
         # Batch envelope stats vs x
         packet_stats_list = []
-        for ip in range(n_valid):
+        packet_stride = max(1, int(config.get("transient_probe_stride", 1)))
+        packet_indices = sorted(
+            set(range(0, n_valid, packet_stride)) | {
+                int(value) for value in plot_probes if int(value) < n_valid
+            }
+        )
+        packet_x = [probe_x[ip] for ip in packet_indices]
+        for ip in packet_indices:
             sig = signal_matrix[:, ip] - np.mean(signal_matrix[:, ip])
             try:
                 envelope, _, _, _ = fdb.bandpass_hilbert_envelope(
@@ -1922,12 +2805,30 @@ def _process_transient_analysis(config):
         if len(packet_stats_list) > 1:
             try:
                 pdb.plot_envelope_growth(
-                    probe_x, packet_stats_list,
+                    packet_x, packet_stats_list,
                     output_path=str(output_dir / "envelope_growth_vs_x.png"),
                 )
                 _ts("  [TA] Saved envelope growth vs x")
             except Exception as exc:
                 _ts(f"  [TA] Envelope growth plot failed: {exc}")
+
+        stat_keys = (
+            "peak_amplitude", "peak_time", "arrival_time",
+            "half_width_half_max", "integrated_energy",
+        )
+        np.savez_compressed(
+            output_dir / "packet_statistics.npz",
+            probe_indices=np.asarray(packet_indices, dtype=int),
+            probe_x_cm=np.asarray(packet_x, dtype=float),
+            **{
+                key: np.asarray([
+                    np.nan if item.get(key) is None else item.get(key, np.nan)
+                    for item in packet_stats_list
+                ], dtype=float)
+                for key in stat_keys
+            },
+        )
+        _ts(f"  [TA] Saved packet statistics: {output_dir / 'packet_statistics.npz'}")
 
         return (label, True, None)
     except Exception as exc:
@@ -1938,7 +2839,7 @@ def _process_transient_analysis(config):
 #  PHASE 3 WORKER: NONLINEAR INTERACTION DIAGNOSTICS (bispectrum)
 # ---------------------------------------------------------------------------
 
-def _process_nonlinear_diagnostics(config):
+def _process_nonlinear_diagnostics(config, probe_data=None):
     """Worker: compute bicoherence for quadratic phase-coupling detection.
 
     Uses the same probe-loading path as _process_fft_probes.  Computes
@@ -1955,9 +2856,10 @@ def _process_nonlinear_diagnostics(config):
         nperseg = config.get("nonlinear_nperseg", 256)
         noverlap_frac = config.get("nonlinear_noverlap", 0.5)
         plot_probes = config.get("nonlinear_plot_probe_indices", [0, 49, 99])
-        sig_level = config.get("nonlinear_significance_level", 0.95)
-
-        probe_data = _load_probe_timeseries(config, var_col, nt_skip=nt_skip, max_probes=max_probes)
+        if probe_data is None:
+            probe_data = _load_probe_timeseries(
+                config, var_col, nt_skip=nt_skip, max_probes=max_probes
+            )
         if not probe_data:
             return (label, False, "No probe data could be loaded")
 
@@ -1965,27 +2867,55 @@ def _process_nonlinear_diagnostics(config):
         probe_x = [d["x"] for d in probe_data]
         _ts(f"  [NL] Loaded {n_valid} probes")
 
-        # Resample to uniform time base
-        t_min = max(d["time"][0] for d in probe_data)
-        t_max = min(d["time"][-1] for d in probe_data)
-        dt_vals = [d["dt"] for d in probe_data if d["dt"] > 0]
-        dt_use = np.median(dt_vals) if dt_vals else 1.0
-        time_uniform = np.arange(t_min, t_max, dt_use)
-        L = len(time_uniform)
-
-        signal_matrix = np.zeros((L, n_valid))
-        for ip, d in enumerate(probe_data):
-            signal_matrix[:, ip] = np.interp(
-                time_uniform, d["time"], d["signal"],
-                left=d["signal"][0], right=d["signal"][-1],
+        time_uniform, signal_matrix, dt_use, reused_shared = \
+            _probe_matrix_on_common_time(
+                probe_data, resample=config.get("fft_resample", False),
+                target_dt=config.get("fft_target_dt"),
             )
+        if reused_shared:
+            _ts("  [NL] Reusing contiguous binary probe matrix")
 
         fs = 1.0 / dt_use
         noverlap = int(noverlap_frac * nperseg)
 
-        # Determine fundamental frequency for triad targets
-        harmonic_freq = config.get("fft_harmonic_freq", 10.0e6)
-        target_freqs = [harmonic_freq * n for n in range(1, 6)]
+        # Select independent spectral modes rather than assuming integer
+        # harmonics. Explicit targets win; otherwise use the strongest local
+        # peaks of a representative probe within the configured band.
+        target_freqs = config.get("nonlinear_target_freqs")
+        nonlinear_fmax = float(config.get("nonlinear_fmax", 50.0e6))
+        if target_freqs is None:
+            from scipy.signal import find_peaks
+            representative = min(
+                config.get("fft_contour_ref_probe", 0), n_valid - 1
+            )
+            reference_signal = signal_matrix[:, representative]
+            reference_spectrum = np.abs(np.fft.rfft(
+                reference_signal - np.mean(reference_signal)
+            ))
+            reference_frequency = np.fft.rfftfreq(
+                len(reference_signal), dt_use
+            )
+            target_band = config.get(
+                "nonlinear_target_band", [1.0e5, nonlinear_fmax]
+            )
+            valid_band = (
+                (reference_frequency >= target_band[0])
+                & (reference_frequency <= min(target_band[1], nonlinear_fmax))
+            )
+            search = reference_spectrum.copy()
+            search[~valid_band] = -np.inf
+            peaks, _ = find_peaks(search, distance=3)
+            peaks = peaks[valid_band[peaks]]
+            count = int(config.get("nonlinear_num_target_modes", 5))
+            strongest = peaks[np.argsort(reference_spectrum[peaks])[::-1][:count]]
+            target_freqs = np.sort(reference_frequency[strongest]).tolist()
+            if not target_freqs:
+                return (label, False, "No nonlinear target spectral peaks found")
+        target_freqs = [float(value) for value in target_freqs]
+        _ts(
+            "  [NL] Independent target modes: "
+            + ", ".join(f"{value:.3e} Hz" for value in target_freqs)
+        )
 
         # Bicoherence maps for selected probes
         bicoherence_data = []
@@ -1998,12 +2928,13 @@ def _process_nonlinear_diagnostics(config):
             try:
                 freq_bic, bicoh = fdb.compute_bicoherence(
                     sig_ms, fs, nperseg=nperseg, noverlap=noverlap,
+                    fmax=nonlinear_fmax,
                 )
                 out_bic = output_dir / f"bicoherence_probe{idx:03d}.png"
                 pdb.plot_bicoherence_map(
                     freq_bic, bicoh,
                     output_path=str(out_bic),
-                    fmax=harmonic_freq * 4,
+                    fmax=nonlinear_fmax,
                     title=f"Bicoherence — Probe {idx} — x={p['x']:.3f} cm",
                 )
                 _ts(f"  [NL] Saved bicoherence map: {out_bic}")
@@ -2018,14 +2949,19 @@ def _process_nonlinear_diagnostics(config):
         try:
             triad_all = []
             x_all = []
-            remaining = [ip for ip in range(n_valid) if ip not in plot_probes]
+            stride = max(1, int(config.get("nonlinear_probe_stride", 1)))
+            sampled = set(range(0, n_valid, stride)) | set(plot_probes)
+            remaining = [
+                ip for ip in sorted(sampled)
+                if ip < n_valid and ip not in plot_probes
+            ]
             for idx in remaining:
                 sig = signal_matrix[:, idx] - np.mean(signal_matrix[:, idx])
                 try:
-                    freq_bic, bicoh = fdb.compute_bicoherence(
-                        sig, fs, nperseg=nperseg, noverlap=noverlap,
+                    t_bic = fdb.compute_triad_bicoherence(
+                        sig, fs, target_freqs,
+                        nperseg=nperseg, noverlap=noverlap,
                     )
-                    t_bic = fdb.extract_triad_bicoherence(freq_bic, bicoh, target_freqs)
                 except Exception:
                     t_bic = {}
                 triad_all.append(t_bic)
@@ -2044,6 +2980,27 @@ def _process_nonlinear_diagnostics(config):
                 pdb.plot_bicoherence_vs_x(
                     x_sorted, triad_sorted,
                     output_path=str(output_dir / "bicoherence_vs_x.png"),
+                    reference_threshold=config.get(
+                        "nonlinear_reference_threshold"
+                    ),
+                )
+                triad_labels = sorted({
+                    key for item in triad_sorted for key in item
+                })
+                triad_values = np.full(
+                    (len(triad_sorted), len(triad_labels)), np.nan, dtype=float
+                )
+                for row, item in enumerate(triad_sorted):
+                    for col, key in enumerate(triad_labels):
+                        if key in item:
+                            triad_values[row, col] = item[key]
+                np.savez_compressed(
+                    output_dir / "triad_bicoherence.npz",
+                    probe_x_cm=x_sorted,
+                    triad_labels=np.asarray(triad_labels),
+                    bicoherence_squared=triad_values,
+                    nperseg=np.array(nperseg),
+                    noverlap=np.array(noverlap),
                 )
                 _ts("  [NL] Saved bicoherence vs x")
         except Exception as exc:
@@ -2101,6 +3058,8 @@ def main(config=None):
     # Create output directory
     out_dir = Path(config["output_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
+    started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    _write_run_manifest(out_dir, config, "running", started_at=started_at)
 
     # --- Startup banner ---
     _hr("PeleC Post-Processing", char="=", width=75)
@@ -2153,19 +3112,31 @@ def main(config=None):
         )
     except Exception as exc:
         fdb._log_error("Failed to discover plotfiles", exc)
+        _write_run_manifest(
+            out_dir, config, "failed", failures=[str(exc)],
+            started_at=started_at,
+        )
         return 1
 
     if len(plotfile_paths) == 0:
         _ts("ERROR: No plotfiles found!  Check data_source and plot_prefix.")
+        _write_run_manifest(
+            out_dir, config, "failed", failures=["No plotfiles found"],
+            started_at=started_at,
+        )
         return 1
 
     _ts(f"Found {len(plotfile_paths)} plotfiles"
          f" (first: {os.path.basename(plotfile_paths[0])},"
          f" last: {os.path.basename(plotfile_paths[-1])})")
     _ts(f"Mem strategy: ONE AT A TIME (low-memory mode)")
+    plotfile_fields = _required_plotfile_fields(config)
+    if plotfile_fields is not None:
+        _ts(f"Field selection:    {', '.join(plotfile_fields)}")
 
     # --- Load baseline for p' contour if needed ---
-    baseline_fields = None
+    baseline_dataset = None
+    baseline_error = None
     if config.get("make_pprime_contour", False):
         baseline_name = config.get("pprime_baseline_plotfile", "")
         baseline_path = os.path.join(config["data_source"], baseline_name)
@@ -2173,16 +3144,16 @@ def main(config=None):
         try:
             baseline_ds = fdb.load_pelec_plotfile(
                 baseline_path,
-                field_names=None,
+                field_names=[config.get("pprime_field", "pressure")],
                 alias_map=config.get("field_aliases"),
                 convert_to_mks=True,
             )
-            fdb.compute_derived_fields(baseline_ds)
-            baseline_fields = baseline_ds["fields"]
-            _ts("Baseline loaded and derived fields computed.")
+            baseline_dataset = baseline_ds
+            _ts("Baseline field loaded.")
         except Exception as exc:
             _ts(f"[W] Failed to load baseline for p': {exc}")
-            baseline_fields = None
+            baseline_dataset = None
+            baseline_error = str(exc)
 
     # ------------------------------------------------------------------
     # 2. Process each plotfile individually
@@ -2196,6 +3167,9 @@ def main(config=None):
     surface_results = []
     surface_data_dict = {}
     forces_dict = {}
+    analysis_results = []
+    if baseline_error is not None:
+        pprime_results.append(("pprime_baseline", False, baseline_error))
 
     # Count enabled workflows for progress reporting
     enabled_workflows = sum([
@@ -2203,39 +3177,56 @@ def main(config=None):
         1 if config["make_line_profiles"] else 0,
         1 if config["make_streamlines"] else 0,
         1 if config["make_surface_analysis"] else 0,
+        1 if config.get("make_pprime_contour", False) else 0,
     ])
 
-    for i, pfile in enumerate(plotfile_paths, 1):
+    snapshot_paths = plotfile_paths if enabled_workflows else []
+    if not snapshot_paths:
+        _ts("No snapshot-based workflows enabled; skipping AMReX plotfile loading.")
+
+    for i, pfile in enumerate(snapshot_paths, 1):
         label = os.path.basename(pfile)
         t_snap = time.time()
 
-        _ts(f"┌─ Load {i:>4d}/{len(plotfile_paths)}:  {label}")
+        _ts(f"┌─ Load {i:>4d}/{len(snapshot_paths)}:  {label}")
         t_load = time.time()
 
         try:
             dataset = fdb.load_pelec_plotfile(
                 pfile,
-                field_names=None,
+                field_names=plotfile_fields,
                 alias_map=config.get("field_aliases"),
                 convert_to_mks=True,
             )
         except Exception as exc:
             fdb._log_error(f"Failed to load {label}", exc)
             _ts(f"├─ ✗ LOAD FAILED — {exc}")
+            failed = (label, False, f"Snapshot load failed: {exc}")
+            if config["make_contour_plots"]:
+                contour_results.append(failed)
+            if config.get("make_pprime_contour", False):
+                pprime_results.append(failed)
+            if config["make_line_profiles"]:
+                line_results.append(failed)
+            if config["make_streamlines"]:
+                streamline_results.append(failed)
+            if config["make_surface_analysis"]:
+                surface_results.append(failed)
             continue
 
         _ts(f"├─ Loaded in {time.time() - t_load:.1f} s  "
              f"({len(dataset.get('fields', []))} fields, "
              f"grid {dataset.get('grid_shape', '?')})")
 
-        # Compute derived fields
-        try:
-            t_der = time.time()
-            fdb.compute_derived_fields(dataset)
-            _ts(f"├─ Derived fields computed in {time.time() - t_der:.1f} s")
-        except Exception as exc:
-            fdb._log_error(f"Derived fields failed for {label}", exc)
-            _ts(f"├─ ✗ Derived fields FAILED — {exc}")
+        # Derived fields are needed only for complete/derived-field loads.
+        if plotfile_fields is None:
+            try:
+                t_der = time.time()
+                fdb.compute_derived_fields(dataset)
+                _ts(f"├─ Derived fields computed in {time.time() - t_der:.1f} s")
+            except Exception as exc:
+                fdb._log_error(f"Derived fields failed for {label}", exc)
+                _ts(f"├─ ✗ Derived fields FAILED — {exc}")
 
         # --- Contour plots ---
         if config["make_contour_plots"]:
@@ -2254,10 +3245,10 @@ def main(config=None):
                 _ts(f"├─ ✗ Contours → FAIL — {exc}")
 
         # --- p' (pressure perturbation) contour ---
-        if config.get("make_pprime_contour", False) and baseline_fields is not None:
+        if config.get("make_pprime_contour", False) and baseline_dataset is not None:
             t_pp = time.time()
             try:
-                r = _process_pprime_contour((dataset, config, baseline_fields))
+                r = _process_pprime_contour((dataset, config, baseline_dataset))
                 pprime_results.append(r)
                 if r[1]:
                     _ts(f"├─ p' contour -> OK  ({time.time() - t_pp:.1f} s)")
@@ -2326,13 +3317,18 @@ def main(config=None):
         _ts(f"└─ Done {label} — total {t_snap_elapsed:.1f} s")
 
         # Estimate remaining time
-        if i < len(plotfile_paths):
-            remaining = (len(plotfile_paths) - i) * t_snap_elapsed
+        if i < len(snapshot_paths):
+            remaining = (len(snapshot_paths) - i) * t_snap_elapsed
             _ts(f"    ⏳ Est. remaining: ~{remaining/60:.1f} min  "
-                 f"({len(plotfile_paths) - i} snapshots left)", end="\n\n")
+                 f"({len(snapshot_paths) - i} snapshots left)", end="\n\n")
 
         # Explicitly drop the dataset to free memory before next iteration
         del dataset
+
+    # The p' baseline is no longer needed. Release it before loading the much
+    # larger probe record and ask Python to promptly collect yt-owned objects.
+    baseline_dataset = None
+    gc.collect()
 
     # ------------------------------------------------------------------
     # 2b. Probe time-history plots (runs before FFT to ensure .dat files exist)
@@ -2396,15 +3392,47 @@ def main(config=None):
     # ------------------------------------------------------------------
     # 3. FFT probe analysis (runs once, not per-snapshot)
     # ------------------------------------------------------------------
+    shared_probe_data = None
+    probe_workflows_enabled = any((
+        config.get("make_fft_probes", False),
+        config.get("make_stability_diagnostics", False),
+        config.get("make_transient_analysis", False),
+        config.get("make_nonlinear_diagnostics", False),
+    ))
+    if probe_workflows_enabled:
+        _ts("Loading shared probe dataset for enabled analysis workflows ...")
+        try:
+            shared_max_probes = (
+                None if config.get("make_stability_diagnostics", False)
+                else config.get("fft_max_probes")
+            )
+            shared_probe_data = _load_probe_timeseries(
+                config,
+                config.get("fft_var_col", 4),
+                nt_skip=config.get("fft_nt_skip", 0),
+                max_probes=shared_max_probes,
+            )
+            if not shared_probe_data:
+                raise ValueError("No probe data could be loaded")
+            _ts(
+                f"Shared probe dataset ready: {len(shared_probe_data)} probes; "
+                "subsequent workflows will not rescan the binaries"
+            )
+        except Exception as exc:
+            analysis_results.append(("probe_data", False, str(exc)))
+            _ts(f"✗ Shared probe-data load failed — {exc}")
+
     if config.get("make_fft_probes", False):
         _ts("Running FFT probe analysis ...")
         try:
-            r = _process_fft_probes(config)
+            r = _process_fft_probes(config, shared_probe_data)
+            analysis_results.append(r)
             if r[1]:
                 _ts("FFT probe analysis -> OK")
             else:
                 _ts(f"✗ FFT probe analysis -> FAIL — {r[2]}")
         except Exception as exc:
+            analysis_results.append(("fft_probes", False, str(exc)))
             _ts(f"✗ FFT probe analysis -> FAIL — {exc}")
 
     # ------------------------------------------------------------------
@@ -2413,12 +3441,14 @@ def main(config=None):
     if config.get("make_stability_diagnostics", False):
         _ts("Running stability diagnostics ...")
         try:
-            r = _process_stability_diagnostics(config)
+            r = _process_stability_diagnostics(config, shared_probe_data)
+            analysis_results.append(r)
             if r[1]:
                 _ts("Stability diagnostics -> OK")
             else:
                 _ts(f"✗ Stability diagnostics -> FAIL — {r[2]}")
         except Exception as exc:
+            analysis_results.append(("stability", False, str(exc)))
             _ts(f"✗ Stability diagnostics -> FAIL — {exc}")
 
     # ------------------------------------------------------------------
@@ -2427,12 +3457,14 @@ def main(config=None):
     if config.get("make_transient_analysis", False):
         _ts("Running transient analysis ...")
         try:
-            r = _process_transient_analysis(config)
+            r = _process_transient_analysis(config, shared_probe_data)
+            analysis_results.append(r)
             if r[1]:
                 _ts("Transient analysis -> OK")
             else:
                 _ts(f"✗ Transient analysis -> FAIL — {r[2]}")
         except Exception as exc:
+            analysis_results.append(("transient", False, str(exc)))
             _ts(f"✗ Transient analysis -> FAIL — {exc}")
 
     # ------------------------------------------------------------------
@@ -2441,13 +3473,18 @@ def main(config=None):
     if config.get("make_nonlinear_diagnostics", False):
         _ts("Running nonlinear diagnostics ...")
         try:
-            r = _process_nonlinear_diagnostics(config)
+            r = _process_nonlinear_diagnostics(config, shared_probe_data)
+            analysis_results.append(r)
             if r[1]:
                 _ts("Nonlinear diagnostics -> OK")
             else:
                 _ts(f"✗ Nonlinear diagnostics -> FAIL — {r[2]}")
         except Exception as exc:
+            analysis_results.append(("nonlinear", False, str(exc)))
             _ts(f"✗ Nonlinear diagnostics -> FAIL — {exc}")
+
+    shared_probe_data = None
+    gc.collect()
 
     # ------------------------------------------------------------------
     # 7. Print summaries
@@ -2464,6 +3501,8 @@ def main(config=None):
         _print_results(streamline_results, "Streamlines")
     if config["make_surface_analysis"]:
         _print_results(surface_results, "Surface analysis")
+    if analysis_results:
+        _print_results(analysis_results, "Probe/stability analysis")
 
     # ------------------------------------------------------------------
     # 10. Group plots (original)
@@ -2629,15 +3668,86 @@ def main(config=None):
     # 14. Done
     # ------------------------------------------------------------------
     total_elapsed = time.time() - _t_start_global
-    _hr("Complete", char="=", width=75)
+    result_groups = [
+        contour_results, pprime_results, line_results,
+        streamline_results, surface_results, analysis_results,
+    ]
+    failed_results = [r for group in result_groups for r in group if not r[1]]
+    completion_title = "Complete" if not failed_results else "Completed with failures"
+    _hr(completion_title, char="=", width=75)
     _ts(f"Finished at: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     _ts(f"Total wall time: {total_elapsed/60:.1f} min  ({total_elapsed:.1f} s)")
     _ts(f"Results in: {out_dir.resolve()}")
     _ts(f"Snapshots processed: {len(plotfile_paths)}")
+    if failed_results:
+        _ts(f"ERROR: {len(failed_results)} workflow result(s) failed; returning exit status 1")
+        for name, _, reason in failed_results:
+            _ts(f"  - {name}: {reason}")
+    _write_run_manifest(
+        out_dir, config,
+        "failed" if failed_results else "completed",
+        plotfiles=plotfile_paths,
+        failures=[{"workflow": r[0], "reason": r[2]} for r in failed_results],
+        started_at=started_at,
+    )
     _hr()
-    return 0
+    return 1 if failed_results else 0
+
+
+def _parse_command_line(argv=None):
+    """Parse the small command-line surface while preserving the default run."""
+    parser = argparse.ArgumentParser(
+        description="PeleC CFD post-processing and analysis validation"
+    )
+    parser.add_argument(
+        "--validation-case",
+        action="store_true",
+        help="run the fast synthetic analysis-validation case instead of production",
+    )
+    parser.add_argument(
+        "--validation-output",
+        default="validation_outputs",
+        help="output directory used with --validation-case",
+    )
+    parser.add_argument(
+        "--config",
+        help="partial JSON configuration overlay (unknown keys are rejected)",
+    )
+    parser.add_argument("--output-dir", help="override the configured output directory")
+    parser.add_argument("--snapshot-start", type=int)
+    parser.add_argument("--snapshot-end", type=int)
+    parser.add_argument(
+        "--validate-config", action="store_true",
+        help="validate the effective configuration and exit without loading data",
+    )
+    parser.add_argument(
+        "--write-effective-config",
+        help="write the merged, validated configuration JSON before running",
+    )
+    return parser.parse_args(argv)
 
 
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    sys.exit(main())
+    cli_args = _parse_command_line()
+    if cli_args.validation_case:
+        sys.exit(run_validation_case(cli_args.validation_output))
+    try:
+        effective_config = pp_config.build_config(
+            CONFIG,
+            json_path=cli_args.config,
+            command_line_overrides={
+                "output_dir": cli_args.output_dir,
+                "snapshot_start": cli_args.snapshot_start,
+                "snapshot_end": cli_args.snapshot_end,
+            },
+        )
+        if cli_args.write_effective_config:
+            pp_config.write_config(effective_config, cli_args.write_effective_config)
+        if cli_args.validate_config:
+            print("Configuration is valid.")
+            sys.exit(0)
+        sys.exit(main(effective_config))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
+        sys.exit(2)

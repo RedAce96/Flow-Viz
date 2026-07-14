@@ -151,8 +151,14 @@ def _resolve_field_aliases(raw_names, alias_map=None):
                 out[canonical] = [raw]
         return out
 
-    # Iterable of names — treat each as canonical = raw
-    return {str(name): [str(name)] for name in raw_names}
+    # Iterable of names — accept canonical names as documented and expand
+    # them to their solver-specific raw candidates. Unknown names are still
+    # treated as canonical = raw for custom fields.
+    out = {}
+    for name in raw_names:
+        canonical = str(name)
+        out[canonical] = canonical_to_raws.get(canonical, [canonical])
+    return out
 
 
 def _collapse_field(values, dimensionality):
@@ -272,6 +278,10 @@ def load_pelec_plotfile(plotfile_path, field_names=None, alias_map=None,
         "available_fields": sorted(available_fields),
         "units": "MKS" if convert_to_mks else "CGS",
         "dimensionality": int(ds.dimensionality),
+        "grid_shape": (nx, ny),
+        "domain_length_x": float(
+            (right_edge[0] - left_edge[0]) / (100.0 if convert_to_mks else 1.0)
+        ),
     }
 
 
@@ -1745,10 +1755,16 @@ def regular_grid_interpolator(x_line, y_line, values_2d,
         if pts.ndim != 2 or pts.shape[1] != 2:
             raise ValueError("Sample points must have shape (n, 2).")
 
-        out = np.full(pts.shape[0], fill_value, dtype=float)
+        # scipy uses fill_value=None to request linear extrapolation.  Match
+        # that behaviour in the NumPy fallback rather than silently failing
+        # while constructing an array filled with ``None``.
+        extrapolate = fill_value is None
+        out = np.empty(pts.shape[0], dtype=float)
+        if not extrapolate:
+            out.fill(fill_value)
         px, py = pts[:, 0], pts[:, 1]
 
-        valid = (
+        valid = np.ones(pts.shape[0], dtype=bool) if extrapolate else (
             (px >= xc[0]) & (px <= xc[-1])
             & (py >= yc[0]) & (py <= yc[-1])
         )
@@ -1796,6 +1812,83 @@ def regular_grid_interpolator(x_line, y_line, values_2d,
         return out[0] if scalar else out
 
     return _interpolate
+
+
+def subtract_rectilinear_baseline(target_field, target_x, target_y,
+                                  baseline_field, baseline_x, baseline_y,
+                                  method="linear", chunk_size=128):
+    """Subtract a baseline field after mapping it to the target grid.
+
+    The fields use the framework's canonical ``(x, y)`` storage order.  A
+    direct subtraction is used for matching grids; otherwise the baseline is
+    interpolated in streamwise chunks so a second target-sized 2-D field is
+    never allocated.  Linear extrapolation is limited to the half-cell offset
+    encountered when two cell-centred grids cover the same physical domain.
+
+    Returns
+    -------
+    ndarray
+        ``target_field - baseline_on_target_grid`` with the target shape.
+    """
+    tx = np.asarray(target_x, dtype=float)
+    ty = np.asarray(target_y, dtype=float)
+    bx = np.asarray(baseline_x, dtype=float)
+    by = np.asarray(baseline_y, dtype=float)
+    target = np.asarray(target_field, dtype=float)
+    baseline = np.asarray(baseline_field, dtype=float)
+
+    for name, coord in (("target_x", tx), ("target_y", ty),
+                        ("baseline_x", bx), ("baseline_y", by)):
+        if coord.ndim != 1 or coord.size < 2:
+            raise ValueError(f"{name} must be a one-dimensional array with at least two points")
+        if not np.all(np.isfinite(coord)):
+            raise ValueError(f"{name} contains non-finite coordinates")
+
+    if target.shape != (tx.size, ty.size):
+        raise ValueError(
+            f"Target field shape {target.shape} does not match grid "
+            f"({tx.size}, {ty.size})"
+        )
+    if baseline.shape != (bx.size, by.size):
+        raise ValueError(
+            f"Baseline field shape {baseline.shape} does not match grid "
+            f"({bx.size}, {by.size})"
+        )
+    if method not in {"linear", "nearest"}:
+        raise ValueError("method must be 'linear' or 'nearest'")
+
+    # Accept descending loader output while giving the interpolator strictly
+    # increasing coordinates.
+    if np.any(np.diff(bx) == 0) or np.any(np.diff(by) == 0):
+        raise ValueError("Baseline coordinates must be unique")
+    if np.any(np.diff(tx) == 0) or np.any(np.diff(ty) == 0):
+        raise ValueError("Target coordinates must be unique")
+    bx_order = np.argsort(bx)
+    by_order = np.argsort(by)
+    bx = bx[bx_order]
+    by = by[by_order]
+    baseline = baseline[np.ix_(bx_order, by_order)]
+
+    same_grid = (
+        target.shape == baseline.shape
+        and np.allclose(tx, bx, rtol=1.0e-12, atol=1.0e-14)
+        and np.allclose(ty, by, rtol=1.0e-12, atol=1.0e-14)
+    )
+    if same_grid:
+        return target - baseline
+
+    interpolator = regular_grid_interpolator(
+        bx, by, baseline, method=method, fill_value=None
+    )
+    result = np.empty_like(target, dtype=float)
+    chunk_size = max(1, int(chunk_size))
+    for first in range(0, tx.size, chunk_size):
+        last = min(first + chunk_size, tx.size)
+        xx, yy = np.meshgrid(tx[first:last], ty, indexing="ij")
+        points = np.column_stack((xx.ravel(), yy.ravel()))
+        baseline_chunk = interpolator(points).reshape(last - first, ty.size)
+        result[first:last, :] = target[first:last, :] - baseline_chunk
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -2459,7 +2552,8 @@ def compute_gpi_criterion(y, u, T, rho, R_specific=287.05):
 
 def compute_phase_speed_from_probes(probe_x, freq, Y_complex, target_freq,
                                     u_edge=None, T_edge=None, gamma=1.4,
-                                    R_specific=287.05):
+                                    R_specific=287.05,
+                                    phase_convention="omega_t_minus_alpha_x"):
     """Compute phase speed from cross-spectral phase between adjacent probes.
 
     Parameters
@@ -2476,6 +2570,10 @@ def compute_phase_speed_from_probes(probe_x, freq, Y_complex, target_freq,
         Edge velocity [m/s] at each probe x-position for reference lines.
     T_edge : 1-D array-like, optional
         Edge temperature [K] for reference lines.
+    phase_convention : str, default "omega_t_minus_alpha_x"
+        Travelling-wave convention. The default interprets a downstream wave
+        as ``exp(i*(omega*t - alpha*x))``. ``"omega_t_plus_alpha_x"`` is
+        available for data defined with the opposite spatial sign.
 
     Returns
     -------
@@ -2486,6 +2584,18 @@ def compute_phase_speed_from_probes(probe_x, freq, Y_complex, target_freq,
     probe_x = np.asarray(probe_x, dtype=float)
     freq = np.asarray(freq, dtype=float)
     Y_complex = np.asarray(Y_complex, dtype=complex)
+
+    if phase_convention not in (
+            "omega_t_minus_alpha_x", "omega_t_plus_alpha_x"):
+        raise ValueError(f"Unknown phase convention: {phase_convention}")
+    if Y_complex.ndim != 2 or Y_complex.shape[0] != len(freq):
+        raise ValueError("Y_complex must have shape (n_freq, n_probes)")
+    if Y_complex.shape[1] != len(probe_x):
+        raise ValueError("Y_complex probe dimension must match probe_x")
+    if not np.all(np.isfinite(probe_x)) or not np.all(np.isfinite(freq)):
+        raise ValueError("probe_x and freq must contain only finite values")
+    if not np.isfinite(target_freq) or target_freq <= 0:
+        raise ValueError("target_freq must be positive and finite")
 
     sort_idx = np.argsort(probe_x)
     probe_x = probe_x[sort_idx]
@@ -2519,7 +2629,11 @@ def compute_phase_speed_from_probes(probe_x, freq, Y_complex, target_freq,
             continue
         dphi = phase[ip + 1] - phase[ip]
         dphi = np.mod(dphi + np.pi, 2.0 * np.pi) - np.pi
-        alpha_r[ip] = dphi / dx
+        # For exp(i*(omega*t-alpha*x)), FFT phase decreases downstream:
+        # dphi/dx = -alpha. Preserve the alternative convention explicitly
+        # instead of hiding the sign choice in a plot.
+        phase_sign = -1.0 if phase_convention == "omega_t_minus_alpha_x" else 1.0
+        alpha_r[ip] = phase_sign * dphi / dx
         if abs(alpha_r[ip]) > 1e-12:
             c_p[ip] = omega / alpha_r[ip]
         delta_phi[ip] = dphi
@@ -2529,15 +2643,20 @@ def compute_phase_speed_from_probes(probe_x, freq, Y_complex, target_freq,
     if u_edge is not None and T_edge is not None:
         u_edge_v = np.asarray(u_edge, dtype=float)
         T_edge_v = np.asarray(T_edge, dtype=float)
+        if len(u_edge_v) != n_probes or len(T_edge_v) != n_probes:
+            raise ValueError("u_edge and T_edge must match probe_x length")
+        u_edge_v = u_edge_v[sort_idx]
+        T_edge_v = T_edge_v[sort_idx]
         a_edge = np.sqrt(gamma * R_specific * T_edge_v)
         c_p_fast = np.interp(x_mid, probe_x, a_edge + u_edge_v)
-        c_p_slow = np.interp(x_mid, probe_x, np.maximum(a_edge - u_edge_v, 0.0))
+        c_p_slow = np.interp(x_mid, probe_x, u_edge_v - a_edge)
 
     return {
         "x_mid": x_mid, "c_p": c_p,
         "c_p_fast": c_p_fast, "c_p_slow": c_p_slow,
         "alpha_r": alpha_r, "delta_phi": delta_phi,
         "target_freq_actual": f_actual,
+        "phase_convention": phase_convention,
     }
 
 
@@ -2596,6 +2715,7 @@ def compute_growth_rate_from_probes(probe_x, freq, P1, target_freq,
 
     alpha_i = np.full(n_probes, np.nan)
     r2 = np.full(n_probes, np.nan)
+    alpha_i_ci95 = np.full(n_probes, np.nan)
     half = window_size // 2
 
     for i in range(n_probes):
@@ -2613,10 +2733,16 @@ def compute_growth_rate_from_probes(probe_x, freq, P1, target_freq,
         ss_res = np.sum((y_win - y_fit) ** 2)
         ss_tot = np.sum((y_win - np.mean(y_win)) ** 2)
         r2[i] = 1.0 - ss_res / ss_tot if ss_tot > 1e-20 else np.nan
+        sxx = np.sum((x_win - np.mean(x_win)) ** 2)
+        if len(x_win) > 2 and sxx > 0:
+            slope_se = np.sqrt((ss_res / (len(x_win) - 2)) / sxx)
+            alpha_i_ci95[i] = 1.96 * slope_se
 
     out = {
         "x": probe_x, "alpha_i": alpha_i,
         "A_at_f": A, "r_squared": r2,
+        "alpha_i_ci95": alpha_i_ci95,
+        "window_size": int(window_size),
     }
 
     if delta_99_interp is not None:
@@ -2627,6 +2753,211 @@ def compute_growth_rate_from_probes(probe_x, freq, P1, target_freq,
             out["alpha_i_delta"] = np.full(n_probes, np.nan)
 
     return out
+
+
+def compute_pair_coherence(signal_a, signal_b, fs, nperseg=16384,
+                           noverlap=None):
+    """Estimate magnitude-squared coherence and cross-spectral phase.
+
+    The cross spectrum follows SciPy's ``conj(X_a) * X_b`` convention, so
+    its phase is the downstream-minus-upstream phase for an ordered pair.
+    """
+    try:
+        from scipy.signal import coherence, csd
+    except ImportError as exc:
+        raise ImportError("scipy.signal is required for coherence analysis") from exc
+    a = np.asarray(signal_a, dtype=float).ravel()
+    b = np.asarray(signal_b, dtype=float).ravel()
+    if a.shape != b.shape or a.size < 8:
+        raise ValueError("Signals must have equal shape and at least 8 samples")
+    if not np.all(np.isfinite(a)) or not np.all(np.isfinite(b)):
+        raise ValueError("Signals contain NaN or infinite values")
+    fs = float(fs)
+    if not np.isfinite(fs) or fs <= 0:
+        raise ValueError("fs must be positive and finite")
+    nperseg = min(int(nperseg), a.size)
+    if nperseg < 8:
+        raise ValueError("nperseg must be at least 8")
+    if noverlap is None:
+        noverlap = nperseg // 2
+    noverlap = int(noverlap)
+    if not 0 <= noverlap < nperseg:
+        raise ValueError("noverlap must satisfy 0 <= noverlap < nperseg")
+    freq, gamma2 = coherence(
+        a, b, fs=fs, window="hann", nperseg=nperseg,
+        noverlap=noverlap, detrend="constant",
+    )
+    freq_csd, cross = csd(
+        a, b, fs=fs, window="hann", nperseg=nperseg,
+        noverlap=noverlap, detrend="constant", scaling="density",
+    )
+    if not np.array_equal(freq, freq_csd):
+        raise RuntimeError("Coherence and CSD frequency grids differ")
+    return {
+        "frequency_hz": freq,
+        "coherence_squared": np.clip(gamma2, 0.0, 1.0),
+        "cross_phase_rad": np.angle(cross),
+        "nperseg": nperseg,
+        "noverlap": noverlap,
+    }
+
+
+def compute_adjacent_target_coherence(signal_matrix, fs, target_freq,
+                                      nperseg=16384, noverlap=None,
+                                      column_order=None):
+    """Welch coherence at one frequency for every adjacent spatial pair.
+
+    Only one complex Fourier coefficient per block and probe is retained, so
+    this provides a coherence gate for large probe lines without allocating a
+    frequency-by-probe tensor.
+    """
+    signals = np.asarray(signal_matrix, dtype=float)
+    if signals.ndim != 2 or signals.shape[0] < 8 or signals.shape[1] < 2:
+        raise ValueError("signal_matrix must have shape (n_time>=8, n_probe>=2)")
+    if not np.all(np.isfinite(signals)):
+        raise ValueError("signal_matrix contains NaN or infinite values")
+    fs = float(fs)
+    nperseg = min(int(nperseg), signals.shape[0])
+    if noverlap is None:
+        noverlap = nperseg // 2
+    noverlap = int(noverlap)
+    if not 0 <= noverlap < nperseg:
+        raise ValueError("noverlap must satisfy 0 <= noverlap < nperseg")
+    frequency = np.fft.rfftfreq(nperseg, 1.0 / fs)
+    target_index = int(np.argmin(np.abs(frequency - float(target_freq))))
+    actual_frequency = float(frequency[target_index])
+    sample = np.arange(nperseg, dtype=float)
+    window = np.hanning(nperseg)
+    kernel = window * np.exp(
+        -2j * np.pi * target_index * sample / nperseg
+    )
+    kernel_sum = np.sum(kernel)
+    step = nperseg - noverlap
+    starts = np.arange(0, signals.shape[0] - nperseg + 1, step, dtype=int)
+    if starts.size < 2:
+        raise ValueError("Coherence requires at least two complete blocks")
+    order = (
+        np.arange(signals.shape[1]) if column_order is None
+        else np.asarray(column_order, dtype=int)
+    )
+    if sorted(order.tolist()) != list(range(signals.shape[1])):
+        raise ValueError("column_order must be a permutation of probe columns")
+    auto_sum = np.zeros(signals.shape[1], dtype=float)
+    cross_sum = np.zeros(signals.shape[1] - 1, dtype=complex)
+    for start in starts:
+        segment = signals[start:start + nperseg, :]
+        coefficient = kernel @ segment - np.mean(segment, axis=0) * kernel_sum
+        coefficient = coefficient[order]
+        auto_sum += np.abs(coefficient) ** 2
+        cross_sum += np.conj(coefficient[:-1]) * coefficient[1:]
+    auto_mean = auto_sum / starts.size
+    cross_mean = cross_sum / starts.size
+    denominator = auto_mean[:-1] * auto_mean[1:]
+    coherence_squared = np.abs(cross_mean) ** 2 / np.maximum(
+        denominator, 1.0e-30
+    )
+    return {
+        "target_frequency_actual_hz": actual_frequency,
+        "coherence_squared": np.clip(coherence_squared, 0.0, 1.0),
+        "cross_phase_rad": np.angle(cross_mean),
+        "n_blocks": int(starts.size),
+        "nperseg": nperseg,
+        "noverlap": noverlap,
+    }
+
+
+def fit_common_frequency_model(signal_matrix, dt, n_modes=10,
+                               train_fraction=0.6, freq_range=None,
+                               min_peak_distance_hz=None):
+    """Fit shared spectral frequencies and evaluate them out of sample.
+
+    Frequencies are selected from aggregate, per-probe-normalized training
+    spectra.  Sinusoidal coefficients are fit on the training interval only
+    and extrapolated into the held-out interval.  Validation error therefore
+    measures stationary coherent-mode predictability instead of same-window
+    Fourier reconstruction fidelity.
+    """
+    try:
+        from scipy.signal import find_peaks
+    except ImportError as exc:
+        raise ImportError("scipy.signal is required for mode selection") from exc
+    signals, length, fs, nyquist = _validate_reconstruction_sampling(
+        signal_matrix, dt
+    )
+    n_modes = int(n_modes)
+    if n_modes < 1:
+        raise ValueError("n_modes must be at least 1")
+    if not 0.2 <= float(train_fraction) <= 0.8:
+        raise ValueError("train_fraction must lie between 0.2 and 0.8")
+    n_train = int(round(length * float(train_fraction)))
+    if n_train < 16 or length - n_train < 8:
+        raise ValueError("Training and validation intervals are too short")
+
+    means = np.mean(signals[:n_train, :], axis=0, keepdims=True)
+    centered = signals - means
+    train = centered[:n_train, :]
+    validation = centered[n_train:, :]
+    spectrum = np.fft.rfft(train, axis=0)
+    freq = np.fft.rfftfreq(n_train, dt)
+    power = np.abs(spectrum) ** 2
+    normalization = np.sum(power, axis=0, keepdims=True)
+    score = np.mean(power / np.maximum(normalization, 1.0e-30), axis=1)
+    mask = np.ones(freq.size, dtype=bool)
+    mask[0] = False
+    if freq_range is not None:
+        f_low, f_high = map(float, freq_range)
+        if not 0 <= f_low < f_high <= nyquist:
+            raise ValueError("freq_range must lie within [0, Nyquist]")
+        mask &= (freq >= f_low) & (freq <= f_high)
+    df = fs / n_train
+    if min_peak_distance_hz is None:
+        min_peak_distance_hz = 3.0 * df
+    distance = max(1, int(np.ceil(float(min_peak_distance_hz) / df)))
+    search = score.copy()
+    search[~mask] = -np.inf
+    peaks, _ = find_peaks(search, distance=distance)
+    peaks = peaks[mask[peaks]]
+    if peaks.size == 0:
+        raise ValueError("No common spectral peaks found in the training interval")
+    selected = peaks[np.argsort(score[peaks])[::-1][:n_modes]]
+    selected = np.sort(selected)
+    selected_freq = freq[selected]
+
+    time = np.arange(length, dtype=float) * dt
+    columns = [np.ones(length)]
+    for value in selected_freq:
+        columns.extend((
+            np.cos(2.0 * np.pi * value * time),
+            np.sin(2.0 * np.pi * value * time),
+        ))
+    design = np.column_stack(columns)
+    coefficients, _, _, _ = np.linalg.lstsq(
+        design[:n_train, :], train, rcond=None
+    )
+    predicted = design @ coefficients
+    train_prediction = predicted[:n_train, :]
+    validation_prediction = predicted[n_train:, :]
+
+    def _relative_rms(observed, estimate):
+        numerator = np.sqrt(np.mean((observed - estimate) ** 2, axis=0))
+        denominator = np.sqrt(np.mean(observed ** 2, axis=0))
+        return numerator / np.maximum(denominator, 1.0e-30)
+
+    return {
+        "selected_frequency_hz": selected_freq,
+        "selected_bins": selected,
+        "spectral_score": score[selected],
+        "n_train": n_train,
+        "train_observed": train,
+        "train_prediction": train_prediction,
+        "validation_observed": validation,
+        "validation_prediction": validation_prediction,
+        "train_relative_rms": _relative_rms(train, train_prediction),
+        "validation_relative_rms": _relative_rms(
+            validation, validation_prediction
+        ),
+        "training_mean": means.ravel(),
+    }
 
 
 # ===========================================================================
@@ -2700,6 +3031,22 @@ def reconstruct_from_bins(Y_full, bin_mask):
     return reconstructed
 
 
+def _validate_reconstruction_sampling(signal_matrix, dt):
+    """Validate reconstruction inputs and return ``(array, L, Fs, Nyquist)``."""
+    signal_matrix = np.asarray(signal_matrix, dtype=float)
+    if signal_matrix.ndim == 1:
+        signal_matrix = signal_matrix.reshape(-1, 1)
+    if signal_matrix.ndim != 2 or signal_matrix.shape[0] < 2:
+        raise ValueError("signal_matrix must contain at least two time samples")
+    if not np.all(np.isfinite(signal_matrix)):
+        raise ValueError("signal_matrix contains NaN or infinite values")
+    dt = float(dt)
+    if not np.isfinite(dt) or dt <= 0:
+        raise ValueError("dt must be a positive finite sampling interval")
+    Fs = 1.0 / dt
+    return signal_matrix, signal_matrix.shape[0], Fs, 0.5 * Fs
+
+
 def reconstruct_from_harmonics(signal_matrix, dt, harmonic_freq, num_harmonics):
     """Reconstruct signal from fundamental and harmonic frequency bins only.
 
@@ -2723,20 +3070,35 @@ def reconstruct_from_harmonics(signal_matrix, dt, harmonic_freq, num_harmonics):
     harmonic_bins : list of int
         Positive-frequency bin indices used.
     """
-    signal_matrix = np.asarray(signal_matrix, dtype=float)
-    if signal_matrix.ndim == 1:
-        signal_matrix = signal_matrix.reshape(-1, 1)
-    L, n_signals = signal_matrix.shape
-    Fs = 1.0 / dt
+    signal_matrix, L, Fs, nyquist = _validate_reconstruction_sampling(
+        signal_matrix, dt
+    )
+    harmonic_freq = float(harmonic_freq)
+    num_harmonics = int(num_harmonics)
+    if not np.isfinite(harmonic_freq) or harmonic_freq <= 0:
+        raise ValueError("harmonic_freq must be positive and finite")
+    if num_harmonics < 1:
+        raise ValueError("num_harmonics must be at least 1")
+    highest = num_harmonics * harmonic_freq
+    if highest > nyquist * (1.0 + 10.0 * np.finfo(float).eps):
+        raise ValueError(
+            f"Requested harmonic {highest:.6g} Hz exceeds Nyquist "
+            f"frequency {nyquist:.6g} Hz"
+        )
 
     Y_full = np.fft.fft(signal_matrix, axis=0)
-    freq = np.fft.fftfreq(L, dt)
+    freq_pos = np.fft.rfftfreq(L, dt)
 
     harmonic_bins = []
     for nh in range(1, num_harmonics + 1):
         f_target = nh * harmonic_freq
-        idx = int(np.argmin(np.abs(freq - f_target)))
+        idx = int(np.argmin(np.abs(freq_pos - f_target)))
         harmonic_bins.append(idx)
+    if len(set(harmonic_bins)) != len(harmonic_bins):
+        raise ValueError(
+            "The requested harmonics are not distinguishable at the current "
+            "frequency resolution"
+        )
 
     total_mask = np.zeros(L, dtype=bool)
     for idx in harmonic_bins:
@@ -2777,11 +3139,20 @@ def reconstruct_from_band(signal_matrix, dt, f_low, f_high):
     bin_mask : ndarray, shape (L,)
         Bool mask of retained frequency bins.
     """
-    signal_matrix = np.asarray(signal_matrix, dtype=float)
-    if signal_matrix.ndim == 1:
-        signal_matrix = signal_matrix.reshape(-1, 1)
-    L = signal_matrix.shape[0]
-    Fs = 1.0 / dt
+    signal_matrix, L, Fs, nyquist = _validate_reconstruction_sampling(
+        signal_matrix, dt
+    )
+    f_low = float(f_low)
+    f_high = float(f_high)
+    if not (np.isfinite(f_low) and np.isfinite(f_high)):
+        raise ValueError("Band edges must be finite")
+    if f_low < 0 or f_high <= f_low:
+        raise ValueError("Band edges must satisfy 0 <= f_low < f_high")
+    if f_high > nyquist * (1.0 + 10.0 * np.finfo(float).eps):
+        raise ValueError(
+            f"Band upper edge {f_high:.6g} Hz exceeds Nyquist "
+            f"frequency {nyquist:.6g} Hz"
+        )
 
     Y_full = np.fft.fft(signal_matrix, axis=0)
     freq = np.fft.fftfreq(L, dt)
@@ -2795,8 +3166,9 @@ def reconstruct_from_band(signal_matrix, dt, f_low, f_high):
 
 
 def reconstruct_from_top_frequencies(signal_matrix, dt, n_peaks=15,
-                                     freq_range=None, min_peak_distance_hz=None):
-    """Reconstruct signal from the N largest-amplitude frequency bins.
+                                     freq_range=None, min_peak_distance_hz=None,
+                                     min_peak_prominence=None):
+    """Reconstruct signal from the N strongest local spectral peaks.
 
     Picks the top *n_peaks* amplitude peaks from the one-sided FFT spectrum
     for *each* signal column independently (per-probe), then takes the union
@@ -2818,6 +3190,8 @@ def reconstruct_from_top_frequencies(signal_matrix, dt, n_peaks=15,
     min_peak_distance_hz : float or None, optional
         Minimum separation between selected peaks [Hz].
         ``None`` auto-computes as ``max(3 * Fs/L, 1000.0)``.
+    min_peak_prominence : float or None, optional
+        Minimum FFT-magnitude prominence passed to ``scipy.signal.find_peaks``.
 
     Returns
     -------
@@ -2828,11 +3202,20 @@ def reconstruct_from_top_frequencies(signal_matrix, dt, n_peaks=15,
     peak_bins : list of int
         Positive-frequency bin indices selected.
     """
-    signal_matrix = np.asarray(signal_matrix, dtype=float)
-    if signal_matrix.ndim == 1:
-        signal_matrix = signal_matrix.reshape(-1, 1)
-    L, n_signals = signal_matrix.shape
-    Fs = 1.0 / dt
+    try:
+        from scipy.signal import find_peaks
+    except ImportError as exc:
+        raise ImportError(
+            "scipy.signal is required for spectral peak reconstruction"
+        ) from exc
+
+    signal_matrix, L, Fs, nyquist = _validate_reconstruction_sampling(
+        signal_matrix, dt
+    )
+    n_signals = signal_matrix.shape[1]
+    n_peaks = int(n_peaks)
+    if n_peaks < 1:
+        raise ValueError("n_peaks must be at least 1")
     df = Fs / L
 
     if min_peak_distance_hz is None:
@@ -2840,11 +3223,11 @@ def reconstruct_from_top_frequencies(signal_matrix, dt, n_peaks=15,
 
     # Full two-sided FFT
     Y_full = np.fft.fft(signal_matrix, axis=0)
-    freq = np.fft.fftfreq(L, dt)
+    freq_pos = np.fft.rfftfreq(L, dt)
 
-    # One-sided positive frequencies (exclude DC)
-    half = L // 2 + 1
-    freq_pos = freq[:half]
+    # One-sided nonnegative frequencies. rfftfreq represents the even-length
+    # Nyquist bin as +Fs/2 instead of the signed -Fs/2 returned by fftfreq.
+    half = len(freq_pos)
     Y_pos = Y_full[:half, :]
 
     # Build candidate mask (common frequency range restriction)
@@ -2852,8 +3235,14 @@ def reconstruct_from_top_frequencies(signal_matrix, dt, n_peaks=15,
     mask_pos[0] = False  # exclude DC
     if freq_range is not None:
         f_min, f_max = freq_range
+        f_min = float(f_min)
+        f_max = float(f_max)
+        if not (0 <= f_min < f_max <= nyquist):
+            raise ValueError(
+                "freq_range must satisfy 0 <= f_min < f_max <= Nyquist"
+            )
         mask_pos &= (freq_pos >= f_min) & (freq_pos <= f_max)
-    candidate_indices = np.where(mask_pos)[0]
+    min_distance_bins = max(1, int(np.ceil(min_peak_distance_hz / df)))
 
     # --- Per-probe peak selection ---
     # For each column, independently pick the top N peaks, then take the
@@ -2861,19 +3250,22 @@ def reconstruct_from_top_frequencies(signal_matrix, dt, n_peaks=15,
     selected_set = set()
     for col in range(n_signals):
         amp_col = np.abs(Y_pos[:, col])
-        remaining = list(candidate_indices)
-        n_local = min(n_peaks, len(remaining))
-        for _ in range(n_local):
-            if not remaining:
-                break
-            amps = np.array([amp_col[i] for i in remaining])
-            best = remaining[int(np.argmax(amps))]
-            selected_set.add(best)
-            f_best = freq_pos[best]
-            remaining = [i for i in remaining
-                         if abs(freq_pos[i] - f_best) >= min_peak_distance_hz]
+        search_amp = amp_col.copy()
+        search_amp[~mask_pos] = -np.inf
+        peak_idx, _ = find_peaks(
+            search_amp,
+            distance=min_distance_bins,
+            prominence=min_peak_prominence,
+        )
+        peak_idx = peak_idx[mask_pos[peak_idx]]
+        if len(peak_idx) == 0:
+            continue
+        order = np.argsort(amp_col[peak_idx])[::-1]
+        selected_set.update(peak_idx[order[:n_peaks]].tolist())
 
     selected = sorted(selected_set)
+    if not selected:
+        raise ValueError("No local spectral peaks satisfied the selection criteria")
 
     # Build two-sided mask
     total_mask = np.zeros(L, dtype=bool)
@@ -3447,7 +3839,7 @@ def extract_probe_window(signal, time, start_idx, end_idx):
 # ===========================================================================
 
 def compute_spectrogram(signal, fs, nperseg=256, noverlap=None, window="hann"):
-    """Compute STFT spectrogram in dB.
+    """Compute a power spectral density spectrogram in decibels.
 
     Parameters
     ----------
@@ -3464,7 +3856,7 @@ def compute_spectrogram(signal, fs, nperseg=256, noverlap=None, window="hann"):
     -------
     f : ndarray — frequency bins [Hz]
     t : ndarray — time bins [s]
-    Sxx_dB : ndarray — spectrogram magnitude in dB
+    Sxx_dB : ndarray — PSD in dB re signal-unit squared per hertz
     """
     try:
         from scipy import signal as scipy_signal
@@ -3472,11 +3864,26 @@ def compute_spectrogram(signal, fs, nperseg=256, noverlap=None, window="hann"):
         raise ImportError("scipy.signal is required for compute_spectrogram")
 
     signal = np.asarray(signal, dtype=float).ravel()
+    fs = float(fs)
+    nperseg = int(nperseg)
+    if not np.isfinite(fs) or fs <= 0:
+        raise ValueError("fs must be positive and finite")
+    if not np.all(np.isfinite(signal)):
+        raise ValueError("signal contains NaN or infinite values")
+    if nperseg < 8:
+        raise ValueError("nperseg must be at least 8")
+    if len(signal) < nperseg:
+        raise ValueError(
+            f"signal length ({len(signal)}) must be at least nperseg ({nperseg})"
+        )
     if noverlap is None:
         noverlap = int(0.75 * nperseg)
+    noverlap = int(noverlap)
+    if not 0 <= noverlap < nperseg:
+        raise ValueError("noverlap must satisfy 0 <= noverlap < nperseg")
     f, t, Sxx = scipy_signal.spectrogram(
         signal, fs=fs, window=window, nperseg=nperseg,
-        noverlap=noverlap, mode="magnitude",
+        noverlap=noverlap, detrend="constant", scaling="density", mode="psd",
     )
     eps = 1e-20
     Sxx_dB = 10.0 * np.log10(np.maximum(Sxx, eps))
@@ -3509,7 +3916,19 @@ def bandpass_hilbert_envelope(signal, fs, f_low, f_high, order=4):
         raise ImportError("scipy.signal is required for bandpass_hilbert_envelope")
 
     signal = np.asarray(signal, dtype=float).ravel()
+    fs = float(fs)
+    f_low = float(f_low)
+    f_high = float(f_high)
+    order = int(order)
+    if not np.isfinite(fs) or fs <= 0:
+        raise ValueError("fs must be positive and finite")
+    if not np.all(np.isfinite(signal)):
+        raise ValueError("signal contains NaN or infinite values")
+    if order < 1:
+        raise ValueError("order must be at least 1")
     nyquist = fs / 2.0
+    if not (0.0 < f_low < f_high < nyquist):
+        raise ValueError("Band must satisfy 0 < f_low < f_high < Nyquist")
     Wn = [f_low / nyquist, f_high / nyquist]
 
     sos = scipy_signal.butter(order, Wn, btype="band", output="sos")
@@ -3569,7 +3988,7 @@ def extract_packet_stats(envelope, time):
 #  PHASE 3: NONLINEAR INTERACTION DIAGNOSTICS (BISPECTRUM)
 # ===========================================================================
 
-def compute_bicoherence(signal, fs, nperseg=256, noverlap=None):
+def compute_bicoherence(signal, fs, nperseg=256, noverlap=None, fmax=None):
     """Compute squared bicoherence b²(f1, f2) ∈ [0, 1].
 
     The bicoherence measures quadratic phase coupling between frequency
@@ -3591,36 +4010,53 @@ def compute_bicoherence(signal, fs, nperseg=256, noverlap=None):
     freq : ndarray, shape (n_freq,) — frequency bins [Hz]
     bicoh : ndarray, shape (n_freq, n_freq) — upper-triangular b² matrix
     """
-    try:
-        from scipy import signal as scipy_signal
-    except ImportError:
-        raise ImportError("scipy.signal is required for compute_bicoherence")
-
     signal = np.asarray(signal, dtype=float).ravel()
+    fs = float(fs)
+    nperseg = int(nperseg)
+    if not np.isfinite(fs) or fs <= 0:
+        raise ValueError("fs must be positive and finite")
+    if not np.all(np.isfinite(signal)):
+        raise ValueError("signal contains NaN or infinite values")
+    if nperseg < 8:
+        raise ValueError("nperseg must be at least 8")
+    if len(signal) < nperseg:
+        raise ValueError(
+            f"signal length ({len(signal)}) must be at least nperseg ({nperseg})"
+        )
     if noverlap is None:
         noverlap = nperseg // 2
-
+    noverlap = int(noverlap)
+    if not 0 <= noverlap < nperseg:
+        raise ValueError("noverlap must satisfy 0 <= noverlap < nperseg")
     nstep = nperseg - noverlap
-    if nstep <= 0:
-        nstep = 1
-
     window = np.hanning(nperseg)
 
-    n_segments = max(1, (len(signal) - nperseg) // nstep + 1)
-    n_freq = nperseg // 2 + 1
+    n_segments = (len(signal) - nperseg) // nstep + 1
+    if n_segments < 2:
+        raise ValueError(
+            "Bicoherence requires at least two complete segments; increase "
+            "the record length or reduce nperseg"
+        )
+    frequency_full = np.fft.rfftfreq(nperseg, 1.0 / fs)
+    if fmax is None:
+        n_freq = frequency_full.size
+    else:
+        fmax = float(fmax)
+        if not 0 < fmax <= 0.5 * fs:
+            raise ValueError("fmax must lie in (0, Nyquist]")
+        n_freq = int(np.searchsorted(frequency_full, fmax, side="right"))
+        n_freq = max(2, n_freq)
 
-    X = np.zeros((n_segments, nperseg), dtype=complex)
+    X = np.empty((n_segments, n_freq), dtype=complex)
     for i in range(n_segments):
         start = i * nstep
-        if start + nperseg > len(signal):
-            break
-        seg = signal[start:start + nperseg] * window
-        X[i] = np.fft.fft(seg)
-    n_segments = np.sum(np.any(X != 0, axis=1))
+        seg = signal[start:start + nperseg]
+        seg = (seg - np.mean(seg)) * window
+        X[i] = np.fft.rfft(seg)[:n_freq]
 
-    X = X[:n_segments, :n_freq]
-
-    bicoh = np.zeros((n_freq, n_freq), dtype=float)
+    # Entries outside the valid f1+f2 <= Nyquist triangle are undefined, not
+    # zero-coupling measurements, so retain them as NaN.
+    bicoh = np.full((n_freq, n_freq), np.nan, dtype=float)
     eps = 1e-30
 
     for f1 in range(1, n_freq - 1):
@@ -3631,9 +4067,9 @@ def compute_bicoherence(signal, fs, nperseg=256, noverlap=None):
             B = np.mean(X[:, f1] * X[:, f2] * np.conj(X[:, f3]), axis=0)
             denom = np.mean(np.abs(X[:, f1] * X[:, f2]) ** 2, axis=0) * \
                     np.mean(np.abs(X[:, f3]) ** 2, axis=0)
-            bicoh[f1, f2] = np.abs(B) ** 2 / (denom + eps)
+            bicoh[f1, f2] = np.clip(np.abs(B) ** 2 / (denom + eps), 0.0, 1.0)
 
-    freq = np.fft.fftfreq(nperseg, 1.0 / fs)[:n_freq]
+    freq = frequency_full[:n_freq]
     return freq, bicoh
 
 
@@ -3666,4 +4102,60 @@ def extract_triad_bicoherence(freq, bicoh_matrix, target_freqs):
                 b_val = float(bicoh_matrix[fj_idx, fi_idx])
             label = f"b²({fi:.3e}, {fj:.3e})"
             result[label] = b_val
+    return result
+
+
+def compute_triad_bicoherence(signal, fs, target_freqs, nperseg=256,
+                              noverlap=None):
+    """Compute only requested squared-bicoherence triads.
+
+    This is numerically identical to extracting the same bins from
+    :func:`compute_bicoherence`, but avoids constructing and traversing the
+    full frequency-by-frequency map for every spatial probe.
+    """
+    signal = np.asarray(signal, dtype=float).ravel()
+    fs = float(fs)
+    nperseg = int(nperseg)
+    if not np.isfinite(fs) or fs <= 0:
+        raise ValueError("fs must be positive and finite")
+    if not np.all(np.isfinite(signal)):
+        raise ValueError("signal contains NaN or infinite values")
+    if nperseg < 8 or len(signal) < nperseg:
+        raise ValueError("signal must contain at least nperseg >= 8 samples")
+    if noverlap is None:
+        noverlap = nperseg // 2
+    noverlap = int(noverlap)
+    if not 0 <= noverlap < nperseg:
+        raise ValueError("noverlap must satisfy 0 <= noverlap < nperseg")
+
+    step = nperseg - noverlap
+    starts = np.arange(0, len(signal) - nperseg + 1, step, dtype=int)
+    if starts.size < 2:
+        raise ValueError("Bicoherence requires at least two complete segments")
+    window = np.hanning(nperseg)
+    spectra = np.empty((starts.size, nperseg // 2 + 1), dtype=complex)
+    for row, start in enumerate(starts):
+        segment = signal[start:start + nperseg]
+        spectra[row] = np.fft.rfft((segment - np.mean(segment)) * window)
+
+    freq = np.fft.rfftfreq(nperseg, 1.0 / fs)
+    bins = {float(value): int(np.argmin(np.abs(freq - value)))
+            for value in target_freqs}
+    eps = 1.0e-30
+    result = {}
+    for fi in target_freqs:
+        i = bins[float(fi)]
+        for fj in target_freqs:
+            j = bins[float(fj)]
+            if fi + fj > freq[-1] or i + j >= len(freq):
+                continue
+            i0, j0 = sorted((i, j))
+            product = spectra[:, i0] * spectra[:, j0]
+            summed = spectra[:, i0 + j0]
+            bispectrum = np.mean(product * np.conj(summed))
+            denominator = np.mean(np.abs(product) ** 2) * np.mean(
+                np.abs(summed) ** 2
+            )
+            value = np.clip(np.abs(bispectrum) ** 2 / (denominator + eps), 0.0, 1.0)
+            result[f"b²({fi:.3e}, {fj:.3e})"] = float(value)
     return result
