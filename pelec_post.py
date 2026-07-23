@@ -120,7 +120,8 @@ def _required_plotfile_fields(config):
     if config.get("make_line_profiles"):
         requested.update(config.get("line_fields", []))
         requested.add("x_velocity")  # delta_99 coordinate
-        if config.get("line_blasius_compressible_overlay"):
+        if config.get("line_reference_overlay") and config.get(
+                "line_reference_model") == "compressible_similarity":
             requested.update(("density", "temperature"))
     if config.get("make_pprime_contour"):
         requested.add(config.get("pprime_field", "pressure"))
@@ -238,13 +239,13 @@ CONFIG = {
     "plot_prefix": "pltFlatPlatePost",                         # Plotfile directory prefix
     # Dedicated review folder: preserves older output families while showing
     # the corrected figure formats and analysis products from this workflow.
-    "output_dir": "../TS-Driver/FP-Extended-Domain/1-Plot-Outputs/Analysis-Review",
+    "output_dir": "../TS-Driver/FP-Extended-Domain/3-Plot-Outputs/Drive",
 
     # --- Snapshot range ---
     # Set to None to process all discovered plotfiles.
-    "snapshot_start": 350000,
-    "snapshot_end": 380000,
-    "snapshot_step": 1000,
+    "snapshot_start": 211500,
+    "snapshot_end": 350000,
+    "snapshot_step": 500,
 
     # --- Field aliases ---
     # Map solver raw names -> canonical names.  If omitted, default PeleC
@@ -253,30 +254,30 @@ CONFIG = {
     "field_aliases": None,
 
     # --- Workflow toggles ---
-    "make_contour_plots": True,   # flow-through-time contour titles
-    "make_line_profiles": True,   # y/delta_99 boundary-layer profiles
+    "make_contour_plots": False,   # flow-through-time contour titles
+    "make_line_profiles": False,   # eta for similarity plots; otherwise y/delta_99
     "make_streamlines": False,
     "make_surface_analysis": False,
     "make_group_plots": False,
 
     "make_probe_plots": False,   # set True only if you need time-history plots (requires ASCII conversion)
-    "make_fft_probes": True,      # set True to run FFT / stability analysis on probe data
+    "make_fft_probes": False,      # set True to run FFT / stability analysis on probe data
     "make_pprime_contour": True,       # symmetric perturbation contours
-    "make_stability_diagnostics": True, # corrected phase-speed references
+    "make_stability_diagnostics": False, # corrected phase-speed references
 
 
     # --- Contour plot settings ---
     # List of canonical field names to plot.  Any field present in the
     # dataset (including derived fields) can be used.
     "contour_fields": [
-        "density",
+        "mach_number",
     ],
-    "contour_cmap": "viridis",           # Perceptually uniform scalar-field map
+    "contour_cmap": "turbo",           # Perceptually uniform scalar-field map
     "contour_norm": "linear",               # Color scaling: "linear", "log", "symlog", or a matplotlib Normalize object
     "contour_vlims": {                       # Per-field color limits [vmin, vmax]
-        "density": [None, None],             # robust 1st--99th percentile autoscale
+        "mach_number": [0, 7.7],             # robust 1st--99th percentile autoscale
     },
-    "contour_xlim": [-0.001, 0.4],           # full 0.4 m plate
+    "contour_xlim": [-0.001, 0.3],           # full 0.4 m plate
     "contour_ylim": None,                    # [ymin, ymax] or None for full domain
     # Time shown in figures. Flow-through time is t_FT = L_x / U_inf, where
     # L_x is the full AMReX domain length (independent of contour x-limits).
@@ -287,26 +288,53 @@ CONFIG = {
 
     # --- Line profile settings ---
     "line_x_stations": [0.05, 0.3],                  # x-locations to extract profiles [m]
-    "line_fields": ["x_velocity", "temperature"],
+    "line_fields": ["x_velocity", "temperature", "density"],
     "line_ylim": [0, 0.005],                              # [ymin, ymax] or None for full domain height
     "line_normalize_by_delta99": True,                    # plot y/delta_99 instead of y [m]
     "line_normalized_coordinate_limits": [0.0, 2.0],      # focus on BL + near-edge region
+    "line_similarity_eta_limits": [0.0, 10.0],            # eta range for compressible-similarity comparisons
 
-    # --- Blasius reference overlay (for line profiles) ---
-    "line_blasius_overlay": True,
+    # --- Laminar flat-plate reference overlay (for line profiles) ---
+    # The default is an independently solved, compressible similarity profile.
+    # It is a steady base-flow reference, not a model of the laser disturbance.
+    "line_reference_overlay": True,
+    "line_reference_model": "compressible_similarity",
+    "line_reference_fields": ["x_velocity", "temperature", "density"],
+    "line_reference": {
+        "u_inf": 1726.0,       # [m/s]
+        "T_inf": 125.0,        # [K]
+        # rho_inf = p_inf / (R T_inf) = 760 / (287.05 * 125) [kg/m^3]
+        "rho_inf": 0.021180978923532486,
+        "T_wall": 293.0,       # [K]; None selects an adiabatic wall
+        "leading_edge_x": 0.0, # [m]
+        "zero_pressure_gradient": True,
+        "gamma": 1.4,
+        "R": 287.05,           # [J/(kg K)]
+        "Cp": 1004.0,          # [J/(kg K)]
+        # Match FP-Extended-Domain/PeleC constant transport by default.
+        "transport_model": "constant",  # "constant" or "sutherland"
+        "mu": 8.65e-6,         # [Pa s], required for constant transport
+        "k": 0.012415,         # [W/(m K)], required for constant transport
+        "Pr": 0.71,            # used with the Sutherland option
+    },
+
+    # Kept only to permit an explicit legacy comparison if requested.
+    "line_blasius_overlay": False,
     "line_blasius_fields": ["x_velocity", "temperature"],
     "line_blasius": {
         "u_inf": 1726.0,        # freestream velocity [m/s]
         "T_inf": 125.0,         # freestream temperature [K]
-        "rho_inf": 0.0267,      # freestream density [kg/m^3]
+        "rho_inf": 0.021180978923532486,  # freestream density [kg/m^3]
         "T_wall": 293,         # wall temp [K]; None = adiabatic
         "recovery_factor": None,# None = sqrt(Pr_eff) (laminar)
         "const_transport": False,  # True = constant mu and k; False = Sutherland and mu*Cp/Pr
         "mu": 8.65e-6,         # constant viscosity [Pa.s]; used when const_transport=True
         "k": 0.012415,         # constant thermal cond. [W/(m.K)]; used to recompute Pr_eff
     },
-    "line_blasius_compressible_overlay": True,
-    "line_compare_overlay": True,
+    # Deprecated: the prior post-hoc transformed-coordinate overlay has been
+    # removed because it is not an independent compressible reference.
+    "line_blasius_compressible_overlay": False,
+    "line_compare_overlay": False,
     
     "line_compare_plotfile": "/lustre/isaac24/scratch/sbrollia/TS-Driver/FP-ED-Refined-1/pltFile/pltFlatPlateFlow260631",   # Optional external plotfile directory to overlay against current simulation
     "line_compare_label": "Refined-ED",
@@ -320,11 +348,11 @@ CONFIG = {
 
     # --- Surface analysis settings ---
     "surface_velocity_threshold": 10.0,
-    "surface_max_x": 0.2,
+    "surface_max_x": 0.4,
     "surface_geometry_method": "auto",   # 'auto', 'vfrac', 'ib_markers', 'velocity'
     "geometry_type": "flat_plate",              # 'auto', 'flat_plate' (analytical), 'wedge', 'custom'
     "plate_leading_edge": 0.0,            # [m] for geometry_type='flat_plate'
-    "surface_rho_inf": 0.0267,
+    "surface_rho_inf": 0.021180978923532486,
     "surface_u_inf": 1726.0,
     "surface_T_inf": None,
     "surface_mu": 8.65e-6,                  # constant viscosity [Pa.s]; None -> Sutherland
@@ -338,7 +366,10 @@ CONFIG = {
     # not enable surface analysis.
     "make_force_analysis": False,
     "make_spacetime_plots": False,
-    "make_force_animation": False,
+    "make_force_animation": False,       # synchronized contour + surface-value animation
+    "animation_field": "temperature",     # visual contour in the synchronized animation
+    "animation_surface_key": "C_p",       # surface values advanced at the same time
+    "animation_fps": 8,
     "reference_area": None,              # auto = plate length * 1 m span
 
     # --- Laser annotation (for time-series / animation) ---
@@ -374,10 +405,10 @@ CONFIG = {
     "fft_window_compensation": True,  # Scale FFT amplitudes to preserve magnitude
     "fft_batch_size": 32,             # Probe columns per vectorized FFT batch
     "fft_plot_last_probe": False,
-    "fft_plot_probe_indices": [0, 249, 499, 749, 999, 1249],
+    "fft_plot_probe_indices": [499, 749, 999, 1249, 1749],
     "fft_plot_contour": True,  # can OOM with 2000 probes; use True with fft_max_probes <= ~200
     "fft_contour_normalize": True,  # True can create bright artifacts where the reference probe has a node
-    "fft_contour_ref_probe": 499,
+    "fft_contour_ref_probe": 749,
     "fft_contour_scale": "linear",  # "linear" gives 0-to-max amplitude; "db" gives the legacy dB plot
     "fft_contour_vmax": 400,  # None -> use the maximum plotted amplitude
 
@@ -415,7 +446,7 @@ CONFIG = {
     ),
     "pprime_field": "pressure",
     "pprime_cmap": "RdBu_r",
-    "pprime_vlims": [-500, 500],
+    "pprime_vlims": [-50, 50],
 
     # --- Stability diagnostics (2nd Mack mode) ---
     # Existing pre-event/base-flow plotfile; use an independently verified
@@ -832,7 +863,80 @@ def _process_single_line(args):
         # maximum velocity in the (possibly cropped) profile.
         bl_heights = {}
         line_ylim = config.get("line_ylim", None)
-        bl_cfg = config.get("line_blasius", {})
+        reference_model = config.get("line_reference_model", "none")
+        reference_cfg = config.get("line_reference", {})
+        legacy_bl_cfg = config.get("line_blasius", {})
+        reference_enabled = (
+            config.get("line_reference_overlay", False)
+            and reference_model != "none"
+        )
+        if (reference_enabled and reference_model == "compressible_similarity"
+                and (config.get("geometry_type") != "flat_plate"
+                     or not reference_cfg.get("zero_pressure_gradient", False))):
+            _ts(
+                "  [Line] Compressible similarity reference disabled: it is valid "
+                "only for a zero-pressure-gradient flat plate."
+            )
+            reference_enabled = False
+        if reference_model == "compressible_similarity":
+            bl_cfg = reference_cfg
+        else:
+            bl_cfg = legacy_bl_cfg
+        reference_fields = config.get(
+            "line_reference_fields", config.get("line_blasius_fields", [])
+        )
+        reference_cache = {}
+
+        similarity_labels = {
+            "x_velocity": r"$u/U_\infty$",
+            "temperature": r"$\theta=T/T_\infty$",
+            "density": r"$\rho/\rho_\infty$",
+        }
+        similarity_scales = {
+            "x_velocity": reference_cfg.get("u_inf"),
+            "temperature": reference_cfg.get("T_inf"),
+            "density": reference_cfg.get("rho_inf"),
+        }
+        similarity_eta_cache = {}
+
+        def _similarity_eta(ds, x_loc, profile_y):
+            """Return the CFD density-weighted eta coordinate at one station."""
+            cache_key = (id(ds), float(x_loc))
+            cached = similarity_eta_cache.get(cache_key)
+            if cached is None:
+                rho_profile = fdb.extract_line(ds, x_loc, "density")
+                if line_ylim is not None and len(rho_profile["y"]) > 1:
+                    y_min, y_max = line_ylim
+                    mask = ((rho_profile["y"] >= y_min)
+                            & (rho_profile["y"] <= y_max))
+                    rho_profile["y"] = rho_profile["y"][mask]
+                    rho_profile["values"] = rho_profile["values"][mask]
+                if reference_cfg.get("transport_model", "constant") == "constant":
+                    mu_inf = reference_cfg["mu"]
+                else:
+                    mu_inf = fdb.sutherland_viscosity(reference_cfg["T_inf"])
+                eta = fdb.compute_compressible_similarity_coordinate(
+                    rho_profile["y"], rho_profile["values"], x_loc,
+                    u_inf=reference_cfg["u_inf"],
+                    rho_inf=reference_cfg["rho_inf"],
+                    mu_inf=mu_inf,
+                    leading_edge_x=reference_cfg.get("leading_edge_x", 0.0),
+                )
+                cached = (np.asarray(rho_profile["y"], dtype=float), eta)
+                similarity_eta_cache[cache_key] = cached
+            return np.interp(profile_y, cached[0], cached[1])
+
+        def _use_similarity_coordinates(profile, ds, x_loc, field_key):
+            """Convert one CFD profile to eta and a dimensionless field."""
+            scale = similarity_scales.get(field_key)
+            if scale is None or float(scale) <= 0.0:
+                raise ValueError(f"No positive similarity scale for {field_key}")
+            profile["eta"] = _similarity_eta(
+                ds, x_loc, np.asarray(profile["y"], dtype=float)
+            )
+            profile["values"] = np.asarray(profile["values"], dtype=float) / float(scale)
+            profile.pop("boundary_layer_height", None)
+
         if "x_velocity" in dataset["fields"]:
             for x_loc in config["line_x_stations"]:
                 try:
@@ -885,8 +989,12 @@ def _process_single_line(args):
         for field_key in config["line_fields"]:
             if field_key not in dataset["fields"]:
                 continue
+            similarity_plot = (
+                reference_enabled
+                and reference_model == "compressible_similarity"
+                and field_key in reference_fields
+            )
             profiles = []
-            compressible_profiles = []
             compare_profiles = []
             for x_loc in config["line_x_stations"]:
                 try:
@@ -899,12 +1007,66 @@ def _process_single_line(args):
                         prof["values"] = prof["values"][mask]
                     prof["label"] = rf"Simulation, $x={x_loc:.3f}$ m"
                     prof["boundary_layer_height"] = bl_heights.get(x_loc)
+                    if similarity_plot:
+                        _use_similarity_coordinates(
+                            prof, dataset, x_loc, field_key
+                        )
                     profiles.append(prof)
 
-                    # Blasius reference overlay
-                    if (config.get("line_blasius_overlay", False)
+                    # Independently solved compressible laminar base-flow
+                    # reference.  This deliberately does not use the current
+                    # CFD profile, so it remains meaningful for transient data.
+                    if (reference_enabled
+                            and reference_model == "compressible_similarity"
+                            and field_key in reference_fields):
+                        try:
+                            cache_key = (
+                                float(x_loc), tuple(np.asarray(prof["y"], dtype=float))
+                            )
+                            reference = reference_cache.get(cache_key)
+                            if reference is None:
+                                reference = fdb.compute_compressible_flat_plate_reference_profile(
+                                    y=prof["y"], x_loc=x_loc,
+                                    u_inf=reference_cfg["u_inf"],
+                                    T_inf=reference_cfg["T_inf"],
+                                    rho_inf=reference_cfg["rho_inf"],
+                                    T_wall=reference_cfg.get("T_wall"),
+                                    gamma=reference_cfg.get("gamma", 1.4),
+                                    R=reference_cfg.get("R", 287.05),
+                                    Cp=reference_cfg.get("Cp", 1004.0),
+                                    leading_edge_x=reference_cfg.get("leading_edge_x", 0.0),
+                                    transport_model=reference_cfg.get("transport_model", "constant"),
+                                    mu=reference_cfg.get("mu", 8.65e-6),
+                                    k=reference_cfg.get("k", 0.012415),
+                                    Pr=reference_cfg.get("Pr", 0.71),
+                                )
+                                reference_cache[cache_key] = reference
+                            reference_values = {
+                                "x_velocity": reference["u_ratio"],
+                                "temperature": reference["theta"],
+                                "density": (
+                                    reference["density_similarity"]
+                                    / float(reference_cfg["rho_inf"])
+                                ),
+                            }
+                            ref_profile = {
+                                "eta": reference["eta"],
+                                "values": reference_values[field_key],
+                                "label": rf"Compressible similarity, $x={x_loc:.3f}$ m",
+                                "field_key": field_key,
+                                "linestyle": "--",
+                                "reference_model": "compressible_flat_plate_similarity",
+                            }
+                            profiles.append(ref_profile)
+                        except Exception as exc:
+                            fdb._log_error(
+                                f"Compressible similarity reference at x={x_loc:.3f}", exc
+                            )
+
+                    # Retained only for deliberate legacy comparisons.
+                    if (reference_enabled
+                            and reference_model == "incompressible_blasius_legacy"
                             and field_key in config.get("line_blasius_fields", [])):
-                        bl_cfg = config.get("line_blasius", {})
                         if all(k in bl_cfg for k in ("u_inf", "T_inf", "rho_inf")):
                             ref = fdb.compute_blasius_reference_profile(
                                 y=prof["y"], x_loc=x_loc,
@@ -937,48 +1099,10 @@ def _process_single_line(args):
                                 ref[field_key].setdefault("boundary_layer_height", bl_heights.get(x_loc))
                                 profiles.append(ref[field_key])
 
-                    # Compressible Blasius-style transform overlay for x_velocity.
-                    if (field_key == "x_velocity"
-                            and config.get("line_blasius_compressible_overlay", False)
-                            and all(k in bl_cfg for k in ("u_inf", "rho_inf"))):
-                        try:
-                            rho_prof = fdb.extract_line(dataset, x_loc, "density")
-                            if line_ylim is not None and len(rho_prof["y"]) > 1:
-                                y_min, y_max = line_ylim
-                                mask = (rho_prof["y"] >= y_min) & (rho_prof["y"] <= y_max)
-                                rho_prof["y"] = rho_prof["y"][mask]
-                                rho_prof["values"] = rho_prof["values"][mask]
-
-                            T_prof = None
-                            if "temperature" in dataset["fields"]:
-                                T_prof = fdb.extract_line(dataset, x_loc, "temperature")
-                                if line_ylim is not None and len(T_prof["y"]) > 1:
-                                    y_min, y_max = line_ylim
-                                    mask = (T_prof["y"] >= y_min) & (T_prof["y"] <= y_max)
-                                    T_prof["y"] = T_prof["y"][mask]
-                                    T_prof["values"] = T_prof["values"][mask]
-
-                            comp = fdb.compute_compressible_blasius_reference_profile(
-                                y=prof["y"],
-                                u_profile=prof["values"],
-                                rho_profile=rho_prof["values"],
-                                x_loc=x_loc,
-                                u_inf=bl_cfg["u_inf"],
-                                T_profile=None if T_prof is None else T_prof["values"],
-                                T_inf=bl_cfg.get("T_inf"),
-                                const_transport=bl_cfg.get("const_transport", False),
-                                mu=bl_cfg.get("mu"),
-                            )
-                            compressible_profiles.extend([comp["sim"], comp["blasius"]])
-                        except Exception as exc:
-                            fdb._log_error(
-                                f"Compressible Blasius overlay at x={x_loc:.3f}", exc
-                            )
-
                     # Optional external comparison run from another folder.
                     if (config.get("line_compare_overlay", False)
                             and compare_ds is not None
-                            and field_key in config.get("line_blasius_fields", [])):
+                            and field_key in reference_fields):
                         try:
                             cprof = fdb.extract_line(compare_ds, x_loc, field_key)
                             if line_ylim is not None and len(cprof["y"]) > 1:
@@ -993,6 +1117,10 @@ def _process_single_line(args):
                             cprof["color"] = config.get("line_compare_color", "C2")
                             cprof["linestyle"] = config.get("line_compare_linestyle", ":")
                             cprof["boundary_layer_height"] = compare_bl_heights.get(x_loc)
+                            if similarity_plot:
+                                _use_similarity_coordinates(
+                                    cprof, compare_ds, x_loc, field_key
+                                )
                             compare_profiles.append(cprof)
                         except Exception as exc:
                             fdb._log_error(f"Comparison line extraction at x={x_loc:.3f}", exc)
@@ -1004,37 +1132,35 @@ def _process_single_line(args):
 
             if profiles:
                 out = output_dir / f"{label}_{field_key}_profiles.png"
-                normalize_y = config.get("line_normalize_by_delta99", False)
+                normalize_y = (
+                    config.get("line_normalize_by_delta99", False)
+                    and not similarity_plot
+                )
                 pdb.plot_line_profiles(
                     profiles,
+                    field_label=(
+                        similarity_labels.get(field_key) if similarity_plot else None
+                    ),
                     output_path=str(out),
                     title=_plot_title(dataset, field_key, config),
                     swap_axes=True,
-                    xlabel=(r"$y/\delta_{99}$" if normalize_y else r"$y$ [m]"),
+                    xlabel=(
+                        r"$\eta$" if similarity_plot else
+                        (r"$y/\delta_{99}$" if normalize_y else r"$y$ [m]")
+                    ),
+                    x_key="eta" if similarity_plot else "y",
                     coordinate_normalization=(
                         "boundary_layer_height" if normalize_y else None
                     ),
-                    annotate_boundary_layer=not normalize_y,
+                    annotate_boundary_layer=(not normalize_y and not similarity_plot),
                     coordinate_limits=(
-                        config.get("line_normalized_coordinate_limits")
-                        if normalize_y else None
+                        config.get("line_similarity_eta_limits")
+                        if similarity_plot else
+                        (config.get("line_normalized_coordinate_limits")
+                         if normalize_y else None)
                     ),
                 )
 
-            if compressible_profiles:
-                out = output_dir / f"{label}_{field_key}_compressible_blasius.png"
-                pdb.plot_line_profiles(
-                    compressible_profiles,
-                    field_label=r"U/U_e",
-                    xlabel=r"Transformed coordinate $\eta_{vd}$",
-                    output_path=str(out),
-                    title=(
-                        f"Compressible Blasius transform — "
-                        + _plot_time_label(dataset, config)
-                    ),
-                    x_key="eta",
-                    swap_axes=False,
-                )
         return (label, True, None)
     except Exception as exc:
         return (label, False, str(exc))
@@ -1253,6 +1379,324 @@ def _read_probe_binary_header(f):
     return endian, n_probes, n_fields, probe_x, probe_y
 
 
+_PROBE_V2_FILE_MAGIC = b"PROBES2\0"
+_PROBE_V2_CHUNK_MAGIC = b"PRBCHNK2"
+_PROBE_V2_FOOTER_MAGIC = b"PRBEND2\0"
+_PROBE_V2_ENDIAN_MARKER = 0x0102030405060708
+
+
+def _expand_probe_binary_files(paths):
+    """Resolve literal paths and glob patterns for restart-segment inputs."""
+    if isinstance(paths, (str, os.PathLike)):
+        paths = [paths]
+    expanded = []
+    for value in paths:
+        pattern = os.path.expanduser(str(value))
+        matches = sorted(glob.glob(pattern))
+        if matches:
+            expanded.extend(str(Path(path).resolve()) for path in matches)
+        else:
+            expanded.append(str(Path(pattern).resolve()))
+    # Preserve segment order while avoiding repeated paths from overlapping
+    # glob patterns.
+    return list(dict.fromkeys(expanded))
+
+
+def _probe_binary_version(path):
+    with open(path, "rb") as stream:
+        magic = stream.read(8)
+    if magic == _PROBE_V2_FILE_MAGIC:
+        return 2
+    try:
+        if struct.unpack("<q", magic)[0] == 0x005345424F525050:
+            return 1
+        if struct.unpack(">q", magic)[0] == 0x005345424F525050:
+            return 1
+    except struct.error:
+        pass
+    raise ValueError(f"Unrecognized probe binary format: {path}")
+
+
+def _read_probe_v2_header(stream):
+    """Read a chunked probe-v2 file header at the start of ``stream``."""
+    stream.seek(0, os.SEEK_SET)
+    if stream.read(8) != _PROBE_V2_FILE_MAGIC:
+        raise ValueError("Not a chunked probe-v2 file")
+    raw = stream.read(8 * 8)
+    if len(raw) != 8 * 8:
+        raise EOFError("Incomplete probe-v2 file header")
+    values = struct.unpack("<8q", raw)
+    if values[1] == _PROBE_V2_ENDIAN_MARKER:
+        endian = "<"
+    else:
+        values = struct.unpack(">8q", raw)
+        if values[1] != _PROBE_V2_ENDIAN_MARKER:
+            raise ValueError("Probe-v2 endian marker is invalid")
+        endian = ">"
+    (version, _, n_probes, n_fields, chunk_capacity, probe_int,
+     name_width, unit_width) = values
+    if version != 2 or n_probes < 1 or n_fields < 1:
+        raise ValueError("Invalid probe-v2 header values")
+
+    def read_fixed_strings(count, width):
+        result = []
+        for _ in range(count):
+            raw_value = stream.read(width)
+            if len(raw_value) != width:
+                raise EOFError("Incomplete probe-v2 string metadata")
+            result.append(raw_value.split(b"\0", 1)[0].decode("ascii"))
+        return result
+
+    field_names = read_fixed_strings(n_fields, name_width)
+    field_units = read_fixed_strings(n_fields, unit_width)
+    float_dtype = np.dtype(f"{endian}f8")
+    raw_x = stream.read(8 * n_probes)
+    raw_y = stream.read(8 * n_probes)
+    if len(raw_x) != 8 * n_probes or len(raw_y) != 8 * n_probes:
+        raise EOFError("Incomplete probe-v2 coordinate metadata")
+    requested_x = np.frombuffer(raw_x, dtype=float_dtype).astype(float)
+    requested_y = np.frombuffer(raw_y, dtype=float_dtype).astype(float)
+    return {
+        "endian": endian,
+        "n_probes": n_probes,
+        "n_fields": n_fields,
+        "chunk_capacity": chunk_capacity,
+        "probe_int": probe_int,
+        "field_names": field_names,
+        "field_units": field_units,
+        "requested_x": requested_x,
+        "requested_y": requested_y,
+        "data_offset": stream.tell(),
+    }
+
+
+def _scan_probe_v2_chunks(stream, header, path):
+    """Return metadata for each complete chunk, ignoring a partial tail."""
+    endian = header["endian"]
+    chunks = []
+    stream.seek(header["data_offset"], os.SEEK_SET)
+    while True:
+        chunk_offset = stream.tell()
+        magic = stream.read(8)
+        if not magic:
+            break
+        if len(magic) < 8:
+            break
+        if magic != _PROBE_V2_CHUNK_MAGIC:
+            raise ValueError(
+                f"Bad probe-v2 chunk marker in {path} at byte {chunk_offset}"
+            )
+        raw_header = stream.read(7 * 8 + 2 * 8)
+        if len(raw_header) != 7 * 8 + 2 * 8:
+            break
+        (chunk_index, n_samples, n_probes, n_fields, payload_bytes,
+         first_step, last_step, first_time, last_time) = struct.unpack(
+            f"{endian}7q2d", raw_header
+        )
+        if (n_samples < 1 or n_probes != header["n_probes"]
+                or n_fields != header["n_fields"] or payload_bytes < 0):
+            raise ValueError(f"Invalid probe-v2 chunk header in {path}")
+        payload_offset = stream.tell()
+        footer_offset = payload_offset + payload_bytes
+        stream.seek(footer_offset, os.SEEK_SET)
+        raw_footer = stream.read(32)
+        if len(raw_footer) != 32:
+            break
+        footer_magic, footer_index, checksum, footer_bytes = struct.unpack(
+            f"{endian}8sqQq", raw_footer
+        )
+        if (footer_magic != _PROBE_V2_FOOTER_MAGIC
+                or footer_index != chunk_index
+                or footer_bytes != payload_bytes):
+            raise ValueError(f"Invalid probe-v2 chunk footer in {path}")
+        chunks.append({
+            "index": chunk_index,
+            "n_samples": n_samples,
+            "payload_offset": payload_offset,
+            "payload_bytes": payload_bytes,
+            "first_step": first_step,
+            "last_step": last_step,
+            "first_time": first_time,
+            "last_time": last_time,
+            "checksum": checksum,
+        })
+        stream.seek(footer_offset + 32, os.SEEK_SET)
+    return chunks
+
+
+def _load_probe_data_from_chunked_binary(
+        bin_files, var_col, dedup_tol=1e-12, nt_skip=0, max_probes=None):
+    """Load one physical field from variable-major probe-v2 chunks."""
+    expected_names = ("rho", "u", "p", "T")
+    if not 1 <= int(var_col) <= len(expected_names):
+        raise ValueError("Chunked probe files support var_col values 1 through 4")
+    requested_name = expected_names[int(var_col) - 1]
+
+    file_info = []
+    reference = None
+    for path in bin_files:
+        stream = open(path, "rb")
+        try:
+            header = _read_probe_v2_header(stream)
+            chunks = _scan_probe_v2_chunks(stream, header, path)
+        except Exception:
+            stream.close()
+            raise
+        signature = (
+            header["n_probes"], tuple(header["field_names"]),
+            tuple(header["field_units"]),
+            tuple(header["requested_x"]), tuple(header["requested_y"]),
+        )
+        if reference is None:
+            reference = signature
+        elif signature != reference:
+            stream.close()
+            for item in file_info:
+                item["stream"].close()
+            raise ValueError(f"Probe-v2 segment layout mismatch in {path}")
+        if requested_name not in header["field_names"]:
+            stream.close()
+            raise ValueError(f"Field {requested_name!r} is absent from {path}")
+        file_info.append({
+            "path": path,
+            "stream": stream,
+            "header": header,
+            "chunks": chunks,
+            "field_index": header["field_names"].index(requested_name),
+        })
+
+    if not file_info:
+        return []
+    n_probes = file_info[0]["header"]["n_probes"]
+    n_load = n_probes if max_probes is None else min(int(max_probes), n_probes)
+    times_parts, steps_parts, signal_parts = [], [], []
+    x_sample = y_sample = sample_valid = None
+
+    try:
+        for item in file_info:
+            stream = item["stream"]
+            endian = item["header"]["endian"]
+            for chunk in item["chunks"]:
+                n_samples = chunk["n_samples"]
+                payload = chunk["payload_offset"]
+                steps_bytes = 8 * n_samples
+                times_bytes = 8 * n_samples
+                coordinates_bytes = 8 * n_probes
+                levels_bytes = 4 * n_probes
+                validity_bytes = n_probes
+
+                stream.seek(payload, os.SEEK_SET)
+                steps = np.frombuffer(
+                    stream.read(steps_bytes), dtype=f"{endian}i8"
+                ).astype(np.int64)
+                times = np.frombuffer(
+                    stream.read(times_bytes), dtype=f"{endian}f8"
+                ).astype(float)
+                chunk_x = np.frombuffer(
+                    stream.read(coordinates_bytes), dtype=f"{endian}f8"
+                ).astype(float)
+                chunk_y = np.frombuffer(
+                    stream.read(coordinates_bytes), dtype=f"{endian}f8"
+                ).astype(float)
+                stream.seek(levels_bytes, os.SEEK_CUR)
+                valid = np.frombuffer(
+                    stream.read(validity_bytes), dtype=np.uint8
+                ).astype(bool)
+
+                if x_sample is None:
+                    x_sample = chunk_x[:n_load].copy()
+                    y_sample = chunk_y[:n_load].copy()
+                    sample_valid = valid[:n_load].copy()
+                elif (not np.array_equal(valid[:n_load], sample_valid)
+                      or not np.allclose(chunk_x[:n_load], x_sample, equal_nan=True)
+                      or not np.allclose(chunk_y[:n_load], y_sample, equal_nan=True)):
+                    raise ValueError(
+                        "Probe sampling coordinates changed between chunks; "
+                        "split the analysis by mapping epoch"
+                    )
+
+                field_base = (
+                    payload + steps_bytes + times_bytes
+                    + 2 * coordinates_bytes + levels_bytes + validity_bytes
+                )
+                field_bytes = 8 * n_samples * n_probes
+                stream.seek(
+                    field_base + item["field_index"] * field_bytes,
+                    os.SEEK_SET,
+                )
+                raw_field = stream.read(field_bytes)
+                if len(raw_field) != field_bytes:
+                    raise EOFError(f"Short probe-v2 field block in {item['path']}")
+                values = np.frombuffer(
+                    raw_field, dtype=f"{endian}f8"
+                ).reshape(n_samples, n_probes)[:, :n_load].astype(float)
+                if not np.all(valid[:n_load]):
+                    values[:, ~valid[:n_load]] = np.nan
+                steps_parts.append(steps)
+                times_parts.append(times)
+                signal_parts.append(values)
+    finally:
+        for item in file_info:
+            item["stream"].close()
+
+    if not times_parts:
+        return []
+    steps = np.concatenate(steps_parts)
+    time_buf = np.concatenate(times_parts)
+    signal_buf = np.vstack(signal_parts)
+    order = np.lexsort((steps, time_buf))
+    steps = steps[order]
+    time_buf = time_buf[order]
+    signal_buf = signal_buf[order, :]
+
+    if dedup_tol >= 0 and time_buf.size:
+        keep = [0]
+        for idx in range(1, time_buf.size):
+            previous = keep[-1]
+            duplicate = (
+                steps[idx] == steps[previous]
+                or abs(time_buf[idx] - time_buf[previous]) < dedup_tol
+            )
+            if duplicate:
+                if not np.allclose(
+                        signal_buf[idx], signal_buf[previous],
+                        rtol=1.0e-12, atol=0.0, equal_nan=True):
+                    raise ValueError(
+                        "Conflicting duplicate probe samples were found at "
+                        f"step={steps[idx]}, time={time_buf[idx]:.17g}"
+                    )
+                continue
+            keep.append(idx)
+        keep = np.asarray(keep, dtype=int)
+        steps = steps[keep]
+        time_buf = time_buf[keep]
+        signal_buf = signal_buf[keep, :]
+
+    if nt_skip > 0:
+        steps = steps[nt_skip:]
+        time_buf = time_buf[nt_skip:]
+        signal_buf = signal_buf[nt_skip:, :]
+
+    header = file_info[0]["header"]
+    probe_data = []
+    for probe_id in range(n_load):
+        probe_data.append({
+            "x": float(x_sample[probe_id]),
+            "y": float(y_sample[probe_id]),
+            "x_req": float(header["requested_x"][probe_id]),
+            "y_req": float(header["requested_y"][probe_id]),
+            "time": time_buf,
+            "step": steps,
+            "signal": signal_buf[:, probe_id],
+            "dt": float(time_buf[1] - time_buf[0]) if time_buf.size >= 2 else 0.0,
+            "filename": f"chunked_probe_{probe_id:04d}",
+        })
+    if probe_data:
+        probe_data[0]["_shared_signal_matrix"] = signal_buf
+        probe_data[0]["_shared_uniform_time"] = True
+    return probe_data
+
+
 def _build_probe_binary_index(bin_files, dedup_tol=1e-12):
     """Build a sorted, deduplicated index of all timesteps across binaries.
 
@@ -1322,7 +1766,16 @@ def _load_probe_data_from_binary(config, var_col, nt_skip=0, max_probes=None):
     if not bin_files:
         return []
 
-    bin_files = [str(Path(b).resolve()) for b in bin_files]
+    bin_files = _expand_probe_binary_files(bin_files)
+    versions = {_probe_binary_version(path) for path in bin_files}
+    if versions == {2}:
+        return _load_probe_data_from_chunked_binary(
+            bin_files, var_col,
+            dedup_tol=config.get("probe_dedup_tol", 1e-12),
+            nt_skip=nt_skip, max_probes=max_probes,
+        )
+    if versions != {1}:
+        raise ValueError("Legacy and chunked probe files cannot be mixed")
     file_handles, file_endians, n_probes, n_fields, probe_x_req, probe_y_req, index = \
         _build_probe_binary_index(bin_files, dedup_tol=config.get("probe_dedup_tol", 1e-12))
 
@@ -2464,7 +2917,7 @@ def _process_stability_diagnostics(config, probe_data=None):
 
         _ts(f"  [SD] Extracting BL profiles at {n_surf} x-stations ...")
         bl_profiles = []
-        rho_inf = config.get("surface_rho_inf", 0.0267)
+        rho_inf = config.get("surface_rho_inf", 0.021180978923532486)
         u_inf = config.get("surface_u_inf", 1726.0)
 
         for idx in range(n_surf):
@@ -3644,16 +4097,21 @@ def main(config=None):
                     fdb._log_error(f"Reload failed for {lbl}", exc)
 
             if anim_datasets:
-                anim_field = config.get("contour_fields", ["mach_number"])[0]
+                anim_field = config.get(
+                    "animation_field",
+                    config.get("contour_fields", ["mach_number"])[0],
+                )
                 anim_out = str(anim_dir / f"loading_evolution.gif")
                 pdb.animate_contour_with_surface(
                     anim_datasets,
                     field_key=anim_field,
                     surfaces_series=anim_surfaces if anim_surfaces else None,
+                    surface_data_series=surface_data_dict,
+                    loading_key=config.get("animation_surface_key", "C_p"),
                     output_path=anim_out,
                     xlim=config.get("contour_xlim"),
                     ylim=config.get("contour_ylim"),
-                    fps=8,
+                    fps=config.get("animation_fps", 8),
                     laser_start_time=config.get("laser_start_time"),
                 )
                 _ts(f"Animation saved: {anim_out}")

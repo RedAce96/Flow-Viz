@@ -2158,6 +2158,331 @@ def compute_compressible_blasius_reference_profile(y, u_profile, rho_profile,
     return {"sim": sim_profile, "blasius": bl_profile}
 
 
+# Cache only the dimensionless BVP solution.  Mapping it onto y at a particular
+# x station remains inexpensive and makes a steady reference reusable across
+# multiple transient snapshots in one worker process.
+_COMPRESSIBLE_SIMILARITY_CACHE = {}
+
+
+def compute_compressible_similarity_coordinate(
+        y, density, x_loc, u_inf, rho_inf, mu_inf, leading_edge_x=0.0):
+    r"""Transform a physical CFD profile to the density-weighted coordinate.
+
+    The Howarth--Dorodnitsyn coordinate used by the compressible flat-plate
+    reference is
+
+    .. math::
+
+        \eta = \sqrt{\frac{U_e}{2\rho_e\mu_e x}}
+               \int_0^y \rho\,\mathrm{d}y.
+
+    ``y`` may start at the first cell centre rather than at the wall.  In that
+    case the first density value is extended to ``y=0`` for the short missing
+    interval.  Results are returned in the caller's original point order.
+    """
+    y = np.asarray(y, dtype=float)
+    density = np.asarray(density, dtype=float)
+    if y.ndim != 1 or density.ndim != 1 or y.size != density.size or y.size == 0:
+        raise ValueError("y and density must be non-empty one-dimensional arrays")
+    if not np.all(np.isfinite(y)) or not np.all(np.isfinite(density)):
+        raise ValueError("y and density must contain only finite values")
+    if np.any(y < 0.0) or np.any(density <= 0.0):
+        raise ValueError("y must be nonnegative and density must be positive")
+
+    x_relative = float(x_loc) - float(leading_edge_x)
+    for name, value in (("x_relative", x_relative), ("u_inf", u_inf),
+                        ("rho_inf", rho_inf), ("mu_inf", mu_inf)):
+        if float(value) <= 0.0:
+            raise ValueError(f"{name} must be positive")
+
+    order = np.argsort(y)
+    y_sorted = y[order]
+    rho_sorted = density[order]
+    if np.any(np.diff(y_sorted) <= 0.0):
+        raise ValueError("y must contain unique coordinates")
+
+    mass_integral = np.empty_like(y_sorted)
+    mass_integral[0] = rho_sorted[0] * y_sorted[0]
+    if y_sorted.size > 1:
+        mass_integral[1:] = mass_integral[0] + np.cumsum(
+            0.5 * (rho_sorted[1:] + rho_sorted[:-1]) * np.diff(y_sorted)
+        )
+    eta_sorted = np.sqrt(
+        float(u_inf) / (2.0 * float(rho_inf) * float(mu_inf) * x_relative)
+    ) * mass_integral
+    eta = np.empty_like(eta_sorted)
+    eta[order] = eta_sorted
+    return eta
+
+
+def _compressible_similarity_core(M_inf, T_wall_ratio, gamma, Pr,
+                                  transport_model, T_inf, mu_inf,
+                                  eta_max, n_nodes):
+    """Solve the dimensionless Howarth--Dorodnitsyn flat-plate BVP.
+
+    The dependent variables are ``F, F', C F'', theta, C theta'/Pr`` with
+    ``theta = T/T_inf`` and ``C = (rho mu)/(rho_inf mu_inf)``.  For a
+    calorically perfect gas at zero pressure gradient, ``rho/rho_inf=1/theta``.
+    """
+    key = (float(M_inf), None if T_wall_ratio is None else float(T_wall_ratio),
+           float(gamma), float(Pr), str(transport_model), float(T_inf),
+           float(mu_inf), float(eta_max), int(n_nodes))
+    cached = _COMPRESSIBLE_SIMILARITY_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    try:
+        from scipy.integrate import solve_bvp
+    except ImportError as exc:
+        raise ImportError(
+            "scipy is required for the compressible similarity reference"
+        ) from exc
+
+    eta = np.linspace(0.0, float(eta_max), int(n_nodes))
+    recovery_temperature = 1.0 + np.sqrt(Pr) * 0.5 * (gamma - 1.0) * M_inf**2
+    theta_wall_guess = (float(T_wall_ratio) if T_wall_ratio is not None
+                        else recovery_temperature)
+
+    def coefficient(theta):
+        theta_safe = np.maximum(theta, 1.0e-8)
+        if transport_model == "constant":
+            mu_ratio = np.ones_like(theta_safe)
+        else:
+            mu_ratio = sutherland_viscosity(theta_safe * T_inf) / mu_inf
+        return mu_ratio / theta_safe
+
+    # Smooth initial state satisfying the wall values approximately.  The BVP
+    # solver adjusts the unknown wall shear and heat flux to meet edge values.
+    fp_guess = 1.0 - np.exp(-eta)
+    F_guess = eta - 1.0 + np.exp(-eta)
+    theta_guess = 1.0 + (theta_wall_guess - 1.0) * np.exp(-eta)
+    C_guess = coefficient(theta_guess)
+    fp_prime_guess = np.exp(-eta)
+    theta_prime_guess = -(theta_wall_guess - 1.0) * np.exp(-eta)
+    initial = np.vstack((
+        F_guess,
+        fp_guess,
+        C_guess * fp_prime_guess,
+        theta_guess,
+        C_guess * theta_prime_guess / Pr,
+    ))
+
+    def ode(_eta, state):
+        F, fp, momentum_flux, theta, heat_flux = state
+        C = coefficient(theta)
+        fpp = momentum_flux / C
+        theta_prime = Pr * heat_flux / C
+        return np.vstack((
+            fp,
+            fpp,
+            -F * fpp,
+            theta_prime,
+            -F * theta_prime - (gamma - 1.0) * M_inf**2 * C * fpp**2,
+        ))
+
+    if T_wall_ratio is None:
+        def boundary_conditions(wall, edge):
+            return np.array([
+                wall[0], wall[1], wall[4], edge[1] - 1.0, edge[3] - 1.0,
+            ])
+    else:
+        def boundary_conditions(wall, edge):
+            return np.array([
+                wall[0], wall[1], wall[3] - T_wall_ratio,
+                edge[1] - 1.0, edge[3] - 1.0,
+            ])
+
+    result = solve_bvp(
+        ode, boundary_conditions, eta, initial, tol=2.0e-5,
+        max_nodes=max(10000, 20 * int(n_nodes)), verbose=0,
+    )
+    if not result.success:
+        raise RuntimeError(
+            "compressible flat-plate similarity solve failed: " + result.message
+        )
+
+    # Evaluate on an evenly spaced coordinate for stable plotting/integration.
+    eta_out = np.linspace(0.0, float(eta_max), max(800, int(n_nodes)))
+    state = result.sol(eta_out)
+    theta_out = state[3]
+    if np.any(theta_out <= 0) or not np.all(np.isfinite(state)):
+        raise RuntimeError("compressible similarity solution has nonphysical state")
+    C_out = coefficient(theta_out)
+    solution = {
+        "eta": eta_out,
+        "F": state[0],
+        "u_ratio": state[1],
+        "momentum_flux": state[2],
+        "theta": theta_out,
+        "heat_flux": state[4],
+        "C": C_out,
+    }
+    _COMPRESSIBLE_SIMILARITY_CACHE[key] = solution
+    return solution
+
+
+def compute_compressible_flat_plate_reference_profile(
+        y, x_loc, u_inf, T_inf, rho_inf, T_wall=293.0, gamma=1.4,
+        R=287.05, Cp=1004.0, leading_edge_x=0.0,
+        transport_model="constant", mu=8.65e-6, k=0.012415, Pr=0.71,
+        eta_max=30.0, n=500):
+    """Return an independent compressible laminar flat-plate reference.
+
+    This solves the coupled zero-pressure-gradient Howarth--Dorodnitsyn
+    similarity equations for a calorically perfect gas.  Unlike a velocity
+    transformation of CFD data, the result is an independent base-flow
+    prediction suitable for comparing laminar velocity, temperature, and
+    density profiles.
+
+    ``transport_model='constant'`` uses the supplied ``mu`` and ``k`` and
+    derives ``Pr = mu*Cp/k``.  ``transport_model='sutherland'`` uses
+    Sutherland viscosity and the supplied constant ``Pr`` with
+    ``k = mu*Cp/Pr``.  ``T_wall=None`` applies an adiabatic wall condition.
+
+    Returns
+    -------
+    dict
+        ``profiles`` contains plot-compatible ``x_velocity``, ``temperature``
+        and ``density`` profiles.  ``scalars`` contains reference boundary
+        layer and wall quantities; ``y_similarity`` and ``eta`` expose the
+        complete similarity grid for further analysis.
+    """
+    y = np.asarray(y, dtype=float)
+    if y.ndim != 1 or y.size == 0:
+        raise ValueError("y must be a non-empty one-dimensional coordinate")
+    if not np.all(np.isfinite(y)) or np.any(y < 0):
+        raise ValueError("y must contain finite wall-normal distances >= 0")
+
+    x_rel = float(x_loc) - float(leading_edge_x)
+    if x_rel <= 0:
+        raise ValueError("x_loc must lie downstream of leading_edge_x")
+    for name, value in (("u_inf", u_inf), ("T_inf", T_inf),
+                        ("rho_inf", rho_inf), ("gamma", gamma),
+                        ("R", R), ("Cp", Cp)):
+        if float(value) <= 0:
+            raise ValueError(f"{name} must be positive")
+    if transport_model not in ("constant", "sutherland"):
+        raise ValueError("transport_model must be 'constant' or 'sutherland'")
+
+    if transport_model == "constant":
+        if float(mu) <= 0 or float(k) <= 0:
+            raise ValueError("constant transport requires positive mu and k")
+        mu_inf = float(mu)
+        Pr_eff = float(mu) * float(Cp) / float(k)
+    else:
+        if float(Pr) <= 0:
+            raise ValueError("Sutherland transport requires positive Pr")
+        mu_inf = float(sutherland_viscosity(float(T_inf)))
+        Pr_eff = float(Pr)
+
+    M_inf = float(u_inf) / np.sqrt(float(gamma) * float(R) * float(T_inf))
+    wall_ratio = None if T_wall is None else float(T_wall) / float(T_inf)
+    if wall_ratio is not None and wall_ratio <= 0:
+        raise ValueError("T_wall must be positive when specified")
+
+    core = _compressible_similarity_core(
+        M_inf, wall_ratio, float(gamma), Pr_eff, transport_model,
+        float(T_inf), mu_inf, float(eta_max), int(n),
+    )
+    eta = core["eta"]
+    theta = core["theta"]
+    u_ratio = core["u_ratio"]
+    C = core["C"]
+    fpp = core["momentum_flux"] / C
+    theta_prime = Pr_eff * core["heat_flux"] / C
+
+    # eta = sqrt(Ue/(2 rho_e mu_e x)) int(rho dy).  With p=p_e,
+    # rho/rho_e=1/theta, so dy/deta = sqrt(2 mu_e x/(rho_e Ue))*theta.
+    y_scale = np.sqrt(2.0 * mu_inf * x_rel / (float(rho_inf) * float(u_inf)))
+    y_similarity = np.zeros_like(eta)
+    y_similarity[1:] = y_scale * np.cumsum(
+        0.5 * (theta[1:] + theta[:-1]) * np.diff(eta)
+    )
+    temperature = theta * float(T_inf)
+    density = float(rho_inf) / theta
+    if transport_model == "constant":
+        mu_similarity = np.full_like(theta, float(mu))
+        k_similarity = np.full_like(theta, float(k))
+    else:
+        mu_similarity = sutherland_viscosity(temperature)
+        k_similarity = mu_similarity * float(Cp) / Pr_eff
+
+    # Include the wall explicitly even when the CFD profile starts at a cell
+    # centre, then map the reference onto the requested physical y coordinate.
+    y_plot = np.unique(np.concatenate(([0.0], np.sort(y))))
+    u_plot = np.interp(y_plot, y_similarity, u_ratio * float(u_inf),
+                       left=0.0, right=float(u_inf))
+    T_plot = np.interp(y_plot, y_similarity, temperature,
+                       left=temperature[0], right=float(T_inf))
+    rho_plot = np.interp(y_plot, y_similarity, density,
+                         left=density[0], right=float(rho_inf))
+
+    idx99 = np.flatnonzero(u_ratio >= 0.99)
+    delta_99 = (float(np.interp(0.99, u_ratio, y_similarity)) if idx99.size
+                else float(y_similarity[-1]))
+    mass_velocity_ratio = density * u_ratio / float(rho_inf)
+    delta_star = float(np.trapz(1.0 - mass_velocity_ratio, y_similarity))
+    theta_momentum = float(np.trapz(
+        mass_velocity_ratio * (1.0 - u_ratio), y_similarity
+    ))
+    shape_factor = delta_star / theta_momentum if theta_momentum > 0 else np.nan
+
+    deta_dy_wall = density[0] * np.sqrt(
+        float(u_inf) / (2.0 * float(rho_inf) * mu_inf * x_rel)
+    )
+    tau_w = float(mu_similarity[0] * float(u_inf) * fpp[0] * deta_dy_wall)
+    dT_dy_wall = float(T_inf) * theta_prime[0] * deta_dy_wall
+    # q_w > 0 is heat from the wall into the fluid; q_w < 0 is wall heating.
+    q_w = float(-k_similarity[0] * dT_dy_wall)
+    C_f = tau_w / (0.5 * float(rho_inf) * float(u_inf)**2)
+
+    shared = {
+        "linestyle": "--",
+        "boundary_layer_height": delta_99,
+        "reference_model": "compressible_flat_plate_similarity",
+    }
+    profiles = {
+        "x_velocity": {
+            "y": y_plot, "values": u_plot,
+            "label": "Compressible laminar similarity",
+            "field_key": "x_velocity", **shared,
+        },
+        "temperature": {
+            "y": y_plot, "values": T_plot,
+            "label": "Compressible laminar similarity",
+            "field_key": "temperature", **shared,
+        },
+        "density": {
+            "y": y_plot, "values": rho_plot,
+            "label": "Compressible laminar similarity",
+            "field_key": "density", **shared,
+        },
+    }
+    return {
+        "profiles": profiles,
+        "eta": eta,
+        "theta": theta,
+        "y_similarity": y_similarity,
+        "u_ratio": u_ratio,
+        "temperature_similarity": temperature,
+        "density_similarity": density,
+        "mu_similarity": mu_similarity,
+        "scalars": {
+            "x_relative": x_rel,
+            "M_inf": M_inf,
+            "Pr": Pr_eff,
+            "transport_model": transport_model,
+            "delta_99": delta_99,
+            "delta_star": delta_star,
+            "theta": theta_momentum,
+            "H": shape_factor,
+            "tau_w": tau_w,
+            "C_f": C_f,
+            "q_w": q_w,
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # 8.  AERODYNAMIC FORCE CALCULATIONS
 # ---------------------------------------------------------------------------

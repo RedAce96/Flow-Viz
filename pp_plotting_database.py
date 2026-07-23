@@ -61,7 +61,8 @@ def configure_plot_style(overrides=None):
         "xtick.labelsize": 9, "ytick.labelsize": 9,
         "xtick.direction": "in", "ytick.direction": "in",
         "xtick.top": True, "ytick.right": True,
-        "legend.fontsize": 9, "legend.framealpha": 0.9,
+        "legend.fontsize": 9, "legend.frameon": False,
+        "legend.labelcolor": "linecolor",
         "lines.linewidth": 1.6, "savefig.dpi": 300,
         "savefig.bbox": "tight", "figure.dpi": 120,
     }
@@ -303,7 +304,7 @@ def plot_contour(dataset, field_key, output_path=None, figsize=(14, 4),
         vmax=vmax if p_norm is None else None,
         rasterized=rasterized,
     )
-    cb = ax.figure.colorbar(p, ax=ax, pad=0.02, shrink=0.9)
+    cb = ax.figure.colorbar(p, ax=ax, pad=0.02, shrink=0.2)
     cb.set_label(colorbar_label if colorbar_label is not None else field_label(field_key))
 
     ax.set_xlabel(xlabel)
@@ -1193,7 +1194,7 @@ def plot_spacetime(surface_data_series, field_key="C_p", output_path=None,
 def plot_contour_with_surface_loading(dataset, surfaces, surface_data,
                                        field_key="temperature",
                                        loading_key="C_p",
-                                       output_path=None, figsize=(18, 6),
+                                       output_path=None, figsize=(14, 8),
                                        cmap="turbo", vmin=None, vmax=None,
                                        xlim=None, ylim=None):
     """Plot a flow contour with the detected surface and loading distribution.
@@ -1211,7 +1212,7 @@ def plot_contour_with_surface_loading(dataset, surfaces, surface_data,
     loading_key : str, default 'C_p'
         Surface loading to plot on the right axis.
     output_path : str, optional
-    figsize : tuple, default (18, 6)
+    figsize : tuple, default (14, 8)
     cmap : str, default 'turbo'
     vmin, vmax : float, optional
     xlim, ylim : tuple, optional
@@ -1221,9 +1222,9 @@ def plot_contour_with_surface_loading(dataset, surfaces, surface_data,
     matplotlib.figure.Figure
     """
     fig = plt.figure(figsize=figsize)
-    gs = fig.add_gridspec(1, 2, width_ratios=[2, 1], wspace=0.3)
+    gs = fig.add_gridspec(2, 1, height_ratios=[2, 1], hspace=0.35)
     ax_contour = fig.add_subplot(gs[0])
-    ax_loading = fig.add_subplot(gs[1])
+    ax_loading = fig.add_subplot(gs[1], sharex=ax_contour)
 
     # ---- Left: flow contour ----
     xx, yy = np.meshgrid(dataset["x"], dataset["y"], indexing="ij")
@@ -1245,7 +1246,8 @@ def plot_contour_with_surface_loading(dataset, surfaces, surface_data,
                             "-", color=color, linewidth=2,
                             label=f"{side} surface")
     ax_contour.legend(fontsize=9)
-    ax_contour.set_xlabel("x [m]", fontsize=12)
+    ax_contour.set_xlabel("")
+    ax_contour.tick_params(labelbottom=False)
     ax_contour.set_ylabel("y [m]", fontsize=12)
     ax_contour.set_title(f"{field_key} with Surface", fontsize=14)
     if xlim is not None:
@@ -1283,8 +1285,10 @@ def plot_contour_with_surface_loading(dataset, surfaces, surface_data,
 
 def animate_contour_with_surface(dataset_series, field_key,
                                   surfaces_series=None,
-                                  output_path="loading_evolution.mp4",
-                                  figsize=(14, 6),
+                                  surface_data_series=None,
+                                  loading_key="C_p",
+                                  output_path="loading_evolution.gif",
+                                  figsize=(14, 8),
                                   cmap="turbo", vmin=None, vmax=None,
                                   xlim=None, ylim=None,
                                   fps=10, dpi=150,
@@ -1292,7 +1296,8 @@ def animate_contour_with_surface(dataset_series, field_key,
     """Animate a flow contour across snapshots with optional surface overlay.
 
     If ``surfaces_series`` is provided, each frame also shows detected surface
-    points, timestamp, and laser-on indicator.
+    points.  If ``surface_data_series`` is provided, a second panel advances
+    the matching surface-value distribution in lockstep with the contour.
 
     Parameters
     ----------
@@ -1302,8 +1307,14 @@ def animate_contour_with_surface(dataset_series, field_key,
         Field to contour.
     surfaces_series : dict, optional
         Keys match ``dataset_series``, values are surface dicts.
-    output_path : str, default 'loading_evolution.mp4'
-    figsize : tuple, default (14, 6)
+    surface_data_series : dict, optional
+        Keys match ``dataset_series``, values are surface-property dicts.  The
+        requested ``loading_key`` is plotted for the same snapshot as each
+        contour frame.
+    loading_key : str, default 'C_p'
+        Surface property to show in the synchronized right-hand panel.
+    output_path : str, default 'loading_evolution.gif'
+    figsize : tuple, default (14, 8)
     cmap : str, default 'turbo'
     vmin, vmax : float, optional
     xlim, ylim : tuple, optional
@@ -1317,7 +1328,7 @@ def animate_contour_with_surface(dataset_series, field_key,
     str
         Path to the output file.
     """
-    snap_labels = sorted(dataset_series.keys())
+    snap_labels = sorted(dataset_series.keys(), key=fdb_mod.natural_sort_key)
     if len(snap_labels) == 0:
         raise ValueError("dataset_series is empty.")
 
@@ -1341,9 +1352,20 @@ def animate_contour_with_surface(dataset_series, field_key,
         else:
             vmin_global, vmax_global = 0.0, 1.0
 
-    # Set up figure
-    fig, ax = plt.subplots(figsize=figsize)
-    ax.set_xlabel("x [m]", fontsize=12)
+    # Set up a contour-only figure for backwards compatibility, or the paired
+    # contour/loading layout requested for synchronized surface diagnostics.
+    show_loading = surface_data_series is not None
+    if show_loading:
+        fig = plt.figure(figsize=figsize)
+        grid = fig.add_gridspec(2, 1, height_ratios=[2.0, 1.0], hspace=0.35)
+        ax = fig.add_subplot(grid[0])
+        ax_loading = fig.add_subplot(grid[1], sharex=ax)
+    else:
+        fig, ax = plt.subplots(figsize=figsize)
+        ax_loading = None
+    ax.set_xlabel("" if show_loading else "x [m]", fontsize=12)
+    if show_loading:
+        ax.tick_params(labelbottom=False)
     ax.set_ylabel("y [m]", fontsize=12)
     if xlim is not None:
         ax.set_xlim(xlim)
@@ -1358,7 +1380,7 @@ def animate_contour_with_surface(dataset_series, field_key,
     p = ax.pcolormesh(xx0, yy0, f0, cmap=cmap, shading="auto",
                        vmin=vmin_global, vmax=vmax_global, rasterized=True)
     cb = fig.colorbar(p, ax=ax, pad=0.02, shrink=0.4)
-    cb.set_label(field_key, fontsize=12)
+    cb.set_label(field_label(field_key), fontsize=12)
 
     # Surface lines (if available)
     surf_lines = {}
@@ -1376,13 +1398,61 @@ def animate_contour_with_surface(dataset_series, field_key,
 
     ax.legend(fontsize=9, loc="upper right")
 
+    loading_lines = {}
+    if show_loading:
+        loading_values = []
+        loading_x_values = []
+        for label in snap_labels:
+            frame_data = surface_data_series.get(label, {})
+            for side in ("upper", "lower"):
+                side_data = frame_data.get(side, {})
+                if loading_key not in side_data:
+                    continue
+                x_values = np.asarray(side_data.get("x", []), dtype=float)
+                values = np.asarray(side_data[loading_key], dtype=float)
+                finite = np.isfinite(x_values) & np.isfinite(values)
+                if np.any(finite):
+                    loading_x_values.append(x_values[finite])
+                    loading_values.append(values[finite])
+
+        for side, color in (("upper", "red"), ("lower", "blue")):
+            line, = ax_loading.plot(
+                [], [], "-", color=color, linewidth=2,
+                label=f"{side} {loading_key}",
+            )
+            loading_lines[side] = line
+        ax_loading.set_xlabel("x [m]", fontsize=12)
+        ax_loading.set_ylabel(field_label(loading_key), fontsize=12)
+        ax_loading.set_title(f"Surface {field_title(loading_key)}", fontsize=14)
+        ax_loading.grid(True, alpha=0.3)
+        if xlim is not None:
+            ax_loading.set_xlim(xlim)
+        elif loading_x_values:
+            all_loading_x = np.concatenate(loading_x_values)
+            ax_loading.set_xlim(np.nanmin(all_loading_x), np.nanmax(all_loading_x))
+        if loading_values:
+            all_loading_values = np.concatenate(loading_values)
+            load_min = float(np.nanmin(all_loading_values))
+            load_max = float(np.nanmax(all_loading_values))
+            if np.isclose(load_min, load_max):
+                padding = max(0.05 * abs(load_min), 1.0e-12)
+            else:
+                padding = 0.05 * (load_max - load_min)
+            ax_loading.set_ylim(load_min - padding, load_max + padding)
+        ax_loading.legend(fontsize=9, loc="best")
+
     def _init():
         p.set_array(np.ma.array(f0.ravel()))
         for ln in surf_lines.values():
             ln.set_data([], [])
         time_text.set_text("")
         laser_text.set_text("")
-        return (p, *surf_lines.values(), time_text, laser_text)
+        for ln in loading_lines.values():
+            ln.set_data([], [])
+        return (
+            p, *surf_lines.values(), *loading_lines.values(),
+            time_text, laser_text,
+        )
 
     def _update(frame_idx):
         label = snap_labels[frame_idx]
@@ -1402,6 +1472,16 @@ def animate_contour_with_surface(dataset_series, field_key,
                 else:
                     ln.set_data([], [])
 
+        # Update the surface-value panel using the exact same snapshot label.
+        if show_loading:
+            frame_data = surface_data_series.get(label, {})
+            for side, ln in loading_lines.items():
+                side_data = frame_data.get(side, {})
+                if loading_key in side_data and len(side_data.get("x", [])) > 0:
+                    ln.set_data(side_data["x"], side_data[loading_key])
+                else:
+                    ln.set_data([], [])
+
         # Update annotations
         time_text.set_text(f"t = {t:.2e} s")
         if laser_start_time is not None and t >= laser_start_time:
@@ -1409,7 +1489,10 @@ def animate_contour_with_surface(dataset_series, field_key,
         else:
             laser_text.set_text("")
 
-        return (p, *surf_lines.values(), time_text, laser_text)
+        return (
+            p, *surf_lines.values(), *loading_lines.values(),
+            time_text, laser_text,
+        )
 
     anim = FuncAnimation(fig, _update, frames=len(snap_labels),
                          init_func=_init, blit=True, repeat=False)
