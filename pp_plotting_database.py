@@ -275,10 +275,16 @@ def plot_contour(dataset, field_key, output_path=None, figsize=(14, 4),
             f"Field shape {field.shape} does not match grid ({x.size}, {y.size})"
         )
 
-    if vmin is None:
-        vmin = np.nanpercentile(field, 1)
-    if vmax is None:
-        vmax = np.nanpercentile(field, 99)
+    if field_key == "vorticity" and vmin is None and vmax is None:
+        # A signed curl must use limits symmetric about zero; independent
+        # percentile limits can visually bias one rotation direction.
+        bound = np.nanpercentile(np.abs(field), 99)
+        vmin, vmax = -bound, bound
+    else:
+        if vmin is None:
+            vmin = np.nanpercentile(field, 1)
+        if vmax is None:
+            vmax = np.nanpercentile(field, 99)
 
     # Resolve color normalisation
     if isinstance(norm, str):
@@ -1654,7 +1660,7 @@ def plot_stability_summary(data, output_path=None, figsize=(18, 14)):
     ------------
     1. Estimated 2nd mode frequency vs x (omega* approx 0.3 and acoustic formulas)
     2. Phase speed c_p vs x with fast/slow acoustic reference lines
-    3. Spatial growth rate alpha_i (raw and delta_99-normalised)
+    3. Spatial amplification -alpha_i (raw and delta_99-normalised)
     4. Boundary-layer profiles at selected x-stations with GPI markers
 
     Parameters
@@ -1787,49 +1793,62 @@ def plot_stability_summary(data, output_path=None, figsize=(18, 14)):
     gd = data.get("growth_rate", {})
     x_g = gd.get("x", [])
     if len(x_g) > 0:
-        ai = gd.get("alpha_i", [])
-        valid_ai = np.isfinite(ai)
+        alpha_i = np.asarray(gd.get("alpha_i", []), dtype=float)
+        amplification = -alpha_i
+        valid_ai = np.isfinite(amplification)
 
         if np.any(valid_ai):
             color1 = "tab:blue"
             ax3_twin = ax3.twinx()
-            l1 = ax3.plot(x_g[valid_ai], ai[valid_ai], "o-", markersize=4,
-                          linewidth=1.2, color=color1, label=r"$\alpha_i$ [m$^{-1}$]")
+            l1 = ax3.plot(
+                np.asarray(x_g)[valid_ai], amplification[valid_ai],
+                "o-", markersize=4, linewidth=1.2, color=color1,
+                label=r"$-\alpha_i$ [m$^{-1}$]",
+            )
             ci95 = np.asarray(gd.get("alpha_i_ci95", []), dtype=float)
-            if ci95.shape == np.asarray(ai).shape:
+            if ci95.shape == alpha_i.shape:
                 valid_ci = valid_ai & np.isfinite(ci95)
                 if np.any(valid_ci):
                     ax3.fill_between(
                         np.asarray(x_g)[valid_ci],
-                        np.asarray(ai)[valid_ci] - ci95[valid_ci],
-                        np.asarray(ai)[valid_ci] + ci95[valid_ci],
+                        amplification[valid_ci] - ci95[valid_ci],
+                        amplification[valid_ci] + ci95[valid_ci],
                         color=color1, alpha=0.18, linewidth=0,
                         label="local-fit 95% CI",
                     )
             ax3.axhline(y=0, color="gray", linestyle=":", linewidth=0.8)
-            ax3.set_ylabel(r"$\alpha_i$ [m$^{-1}$]", fontsize=12, color=color1)
+            ax3.set_ylabel(
+                r"Amplification $-\alpha_i$ [m$^{-1}$]",
+                fontsize=12, color=color1,
+            )
             ax3.tick_params(axis="y", labelcolor=color1)
 
-            aid = gd.get("alpha_i_delta", [])
+            aid = -np.asarray(gd.get("alpha_i_delta", []), dtype=float)
             valid_aid = np.isfinite(aid)
             if np.any(valid_aid):
                 color2 = "tab:red"
                 l2 = ax3_twin.plot(x_g[valid_aid], aid[valid_aid], "s--",
                                    markersize=4, linewidth=1.0, color=color2,
-                                   label=r"$\alpha_i \delta_{99}$")
-                ax3_twin.set_ylabel(r"$\alpha_i \delta_{99}$", fontsize=12,
-                                    color=color2)
+                                   label=r"$-\alpha_i \delta_{99}$")
+                ax3_twin.set_ylabel(
+                    r"$-\alpha_i \delta_{99}$", fontsize=12, color=color2
+                )
                 ax3_twin.tick_params(axis="y", labelcolor=color2)
 
             lines = l1
-            labels = [r"$\alpha_i$ [m$^{-1}$]"]
+            labels = [r"$-\alpha_i$ [m$^{-1}$]"]
             if np.any(valid_aid):
                 lines = l1 + l2
-                labels = [r"$\alpha_i$ [m$^{-1}$]", r"$\alpha_i \delta_{99}$"]
+                labels = [
+                    r"$-\alpha_i$ [m$^{-1}$]",
+                    r"$-\alpha_i \delta_{99}$",
+                ]
             ax3.legend(lines, labels, fontsize=8, loc="best")
 
     ax3.set_xlabel("x [m]", fontsize=12)
-    ax3.set_title("Panel 3: Spatial Growth Rate", fontsize=13)
+    ax3.set_title(
+        "Panel 3: Spatial Amplification (positive means growth)", fontsize=13
+    )
     ax3.grid(True, alpha=0.3)
 
     # -- Panel 4: GPI profiles
@@ -1884,6 +1903,216 @@ def plot_stability_summary(data, output_path=None, figsize=(18, 14)):
         plt.savefig(output_path, dpi=200, bbox_inches="tight")
         plt.close(fig)
 
+    return fig
+
+
+def _robust_symmetric_limit(values, percentile=98.0):
+    """Return a finite symmetric colour limit for a possibly masked array."""
+    values = np.asarray(values, dtype=float)
+    finite = np.abs(values[np.isfinite(values)])
+    if finite.size == 0:
+        return 1.0
+    limit = float(np.nanpercentile(finite, percentile))
+    return limit if limit > 0.0 else 1.0
+
+
+def plot_wavenumber_summary(data, output_path=None, figsize=(18, 13)):
+    """Plot measured frequency-resolved wavenumber and phase-speed products.
+
+    These panels show dominant coherent wave estimates from the probe line.
+    Fast-like and slow-like markers indicate proximity to acoustic references,
+    not definitive F/S eigenmode identification.
+    """
+    frequency = np.asarray(data["frequency_hz"], dtype=float)
+    x = np.asarray(data["x_center_m"], dtype=float)
+    phase_valid = np.asarray(data["phase_valid_mask"], dtype=bool)
+    growth_valid = np.asarray(data["growth_valid_mask"], dtype=bool)
+    power = np.asarray(data["spectral_power"], dtype=float)
+    alpha_real = np.asarray(data["alpha_real_rad_per_m"], dtype=float)
+    amplification = np.asarray(
+        data["amplification_rate_per_m"], dtype=float
+    )
+    phase_speed = np.asarray(data["phase_speed_m_per_s"], dtype=float)
+    candidate = np.asarray(
+        data.get("acoustic_candidate", np.zeros_like(phase_speed, dtype=np.int8))
+    )
+
+    fig, axes = plt.subplots(2, 2, figsize=figsize, sharex=True, sharey=True)
+    ax_power, ax_real, ax_growth, ax_speed = axes.flat
+
+    reference_power = np.nanmax(power)
+    power_db = 10.0 * np.log10(
+        np.maximum(power, 1.0e-300) / max(reference_power, 1.0e-300)
+    )
+    mesh = ax_power.pcolormesh(
+        x, frequency, np.clip(power_db, -60.0, 0.0),
+        shading="auto", cmap="magma", vmin=-60.0, vmax=0.0,
+    )
+    fig.colorbar(mesh, ax=ax_power, label="Local spectral power [dB re max]")
+    ax_power.set_title("Measured pressure energy")
+
+    real_plot = np.where(phase_valid, alpha_real, np.nan)
+    real_limit = _robust_symmetric_limit(real_plot)
+    mesh = ax_real.pcolormesh(
+        x, frequency, real_plot, shading="auto", cmap="viridis",
+        vmin=0.0, vmax=real_limit,
+    )
+    fig.colorbar(mesh, ax=ax_real, label=r"$\alpha_r$ [rad m$^{-1}$]")
+    ax_real.set_title(r"Real wavenumber $\alpha_r$ (quality accepted)")
+
+    growth_plot = np.where(growth_valid, amplification, np.nan)
+    growth_limit = _robust_symmetric_limit(growth_plot)
+    mesh = ax_growth.pcolormesh(
+        x, frequency, growth_plot, shading="auto", cmap="RdBu_r",
+        vmin=-growth_limit, vmax=growth_limit,
+    )
+    fig.colorbar(
+        mesh, ax=ax_growth,
+        label=r"Amplification $-\alpha_i$ [m$^{-1}$]",
+    )
+    ax_growth.axhline(
+        data.get("target_frequency_hz", np.nan), color="0.2",
+        linestyle=":", linewidth=0.8, label="Legacy heuristic target",
+    )
+    ax_growth.set_title(
+        r"Imaginary wavenumber as amplification $-\alpha_i$"
+    )
+    ax_growth.legend(fontsize=8, loc="best")
+
+    speed_plot = np.where(phase_valid, phase_speed, np.nan)
+    finite_speed = speed_plot[np.isfinite(speed_plot)]
+    if finite_speed.size:
+        speed_low, speed_high = np.nanpercentile(
+            finite_speed, [2.0, 98.0]
+        )
+        if speed_high <= speed_low:
+            speed_high = speed_low + 1.0
+    else:
+        speed_low, speed_high = 0.0, 1.0
+    mesh = ax_speed.pcolormesh(
+        x, frequency, speed_plot, shading="auto", cmap="turbo",
+        vmin=speed_low, vmax=speed_high,
+    )
+    fig.colorbar(mesh, ax=ax_speed, label=r"$c_p$ [m s$^{-1}$]")
+    x_grid, frequency_grid = np.meshgrid(x, frequency)
+    for code, color, label in (
+            (1, "cyan", "slow-like candidate"),
+            (2, "red", "fast-like candidate")):
+        selected = phase_valid & (candidate == code)
+        if np.any(selected):
+            ax_speed.plot(
+                x_grid[selected], frequency_grid[selected],
+                linestyle="none", marker="o", markersize=2.5,
+                markerfacecolor="none", markeredgecolor=color,
+                markeredgewidth=0.45, label=label,
+            )
+    ax_speed.set_title(
+        "Phase speed; markers are acoustic-reference candidates"
+    )
+    if np.any(candidate):
+        ax_speed.legend(fontsize=8, loc="best")
+
+    retained_phase = 100.0 * np.mean(phase_valid)
+    retained_growth = 100.0 * np.mean(growth_valid)
+    mean_coherence = np.asarray(
+        data["mean_coherence_squared"], dtype=float
+    )
+    fig.suptitle(
+        "Measurement-first wave analysis — dominant coherent branch, not LST\n"
+        f"phase accepted {retained_phase:.1f}%, "
+        f"growth accepted {retained_growth:.1f}%, "
+        rf"median $\gamma^2={np.nanmedian(mean_coherence):.3f}$",
+        fontsize=14, fontweight="bold",
+    )
+    for ax in axes.flat:
+        ax.set_yscale("log")
+        ax.set_xlabel("x [m]")
+        ax.set_ylabel("Frequency [Hz]")
+        ax.grid(True, which="both", alpha=0.15)
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.94])
+    if output_path is not None:
+        fig.savefig(output_path, dpi=220, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_phase_speed_dispersion(data, output_path=None, n_stations=5,
+                                figsize=(16, 9)):
+    """Plot local measured phase-speed dispersion with acoustic references."""
+    frequency = np.asarray(data["frequency_hz"], dtype=float)
+    x = np.asarray(data["x_center_m"], dtype=float)
+    phase_speed = np.asarray(data["phase_speed_m_per_s"], dtype=float)
+    valid = np.asarray(data["phase_valid_mask"], dtype=bool)
+    slow = np.asarray(data.get("slow_acoustic_speed_m_per_s", []), dtype=float)
+    fast = np.asarray(data.get("fast_acoustic_speed_m_per_s", []), dtype=float)
+    candidate = np.asarray(
+        data.get("acoustic_candidate", np.zeros_like(phase_speed, dtype=np.int8))
+    )
+    n_stations = max(1, min(int(n_stations), x.size))
+    indices = np.unique(np.linspace(
+        0, x.size - 1, n_stations, dtype=int
+    ))
+    n_columns = min(3, len(indices))
+    n_rows = int(np.ceil(len(indices) / n_columns))
+    fig, axes = plt.subplots(
+        n_rows, n_columns, figsize=figsize, squeeze=False,
+        sharex=True, sharey=True,
+    )
+    for ax, index in zip(axes.flat, indices):
+        accepted = valid[:, index]
+        unclassified = accepted & (candidate[:, index] == 0)
+        slow_like = accepted & (candidate[:, index] == 1)
+        fast_like = accepted & (candidate[:, index] == 2)
+        if np.any(unclassified):
+            ax.plot(
+                frequency[unclassified], phase_speed[unclassified, index],
+                "o", color="0.35", markersize=3, label="unclassified",
+            )
+        if np.any(slow_like):
+            ax.plot(
+                frequency[slow_like], phase_speed[slow_like, index],
+                "o", color="C0", markersize=4, label="slow-like",
+            )
+        if np.any(fast_like):
+            ax.plot(
+                frequency[fast_like], phase_speed[fast_like, index],
+                "o", color="C3", markersize=4, label="fast-like",
+            )
+        if slow.shape == x.shape and np.isfinite(slow[index]):
+            ax.axhline(
+                slow[index], color="C0", linestyle="--", linewidth=1.0,
+                label=r"$U_e-a_e$",
+            )
+        if fast.shape == x.shape and np.isfinite(fast[index]):
+            ax.axhline(
+                fast[index], color="C3", linestyle="--", linewidth=1.0,
+                label=r"$U_e+a_e$",
+            )
+        ax.set_title(f"x = {x[index]:.4f} m")
+        ax.grid(True, which="both", alpha=0.3)
+    for ax in axes.flat[len(indices):]:
+        ax.set_visible(False)
+    for ax in axes[-1, :]:
+        if ax.get_visible():
+            ax.set_xlabel("Frequency [Hz]")
+    for ax in axes[:, 0]:
+        ax.set_ylabel(r"$c_p$ [m s$^{-1}$]")
+    handles, labels = axes.flat[0].get_legend_handles_labels()
+    if handles:
+        fig.legend(
+            handles, labels, loc="upper center", ncol=min(5, len(handles)),
+            bbox_to_anchor=(0.5, 0.96),
+        )
+    fig.suptitle(
+        "Local phase-speed dispersion\n"
+        "fast-like/slow-like denotes proximity to acoustic references, not "
+        "an F/S eigensolution",
+        fontsize=14, fontweight="bold",
+    )
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.90])
+    if output_path is not None:
+        fig.savefig(output_path, dpi=220, bbox_inches="tight")
+        plt.close(fig)
     return fig
 
 

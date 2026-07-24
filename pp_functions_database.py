@@ -15,6 +15,7 @@
 import os
 import re
 import traceback
+import warnings
 import numpy as np
 
 # ---------------------------------------------------------------------------
@@ -171,8 +172,143 @@ def _collapse_field(values, dimensionality):
     return values
 
 
+def _compute_native_amr_vorticity(ds):
+    """Composite signed 2-D vorticity after differentiating native AMR grids.
+
+    Differentiating a finest-level ``covering_grid`` is invalid in regions
+    represented only by coarser AMR levels: yt repeats each coarse value into
+    a block of fine cells, so a finite difference produces zero block
+    interiors and impulses at block edges.  This routine reverses that order:
+
+    1. obtain one interpolated ghost cell around each native grid,
+    2. evaluate ``dv/dx - du/dy`` at that grid's own resolution, and
+    3. composite coarse-to-fine, allowing finer grids to overwrite covered
+       coarse cells.
+
+    The returned array follows the package convention ``(nx, ny)`` and uses
+    inverse seconds for PeleC's CGS velocity/coordinate fields.
+    """
+    if int(ds.dimensionality) != 2:
+        raise ValueError(
+            "Native AMR vorticity currently supports 2-D PeleC datasets only"
+        )
+
+    max_level = int(ds.index.max_level)
+    refine_by = int(ds.refine_by)
+    finest_dims = (
+        np.asarray(ds.domain_dimensions, dtype=int)
+        * refine_by ** max_level
+    )
+    composite = np.full(
+        (int(finest_dims[0]), int(finest_dims[1])),
+        np.nan,
+        dtype=float,
+    )
+    domain_dims = np.asarray(ds.domain_dimensions, dtype=int)
+    velocity_fields = [
+        ("boxlib", "x_velocity"),
+        ("boxlib", "y_velocity"),
+    ]
+
+    # yt requires symmetric ghost zones, including the collapsed z direction.
+    # Temporarily enabling periodic lookup supplies those cells.  Values at
+    # the real x/y domain boundaries are replaced below with second-order
+    # one-sided differences, so periodic data never enters the final curl.
+    periodicity_was_forced = bool(getattr(ds, "_force_periodicity", False))
+    ds.force_periodicity(True)
+    try:
+        for grid in sorted(ds.index.grids, key=lambda item: item.Level):
+            level = int(grid.Level)
+            # yt 4.4 emits a benign weak-proxy RuntimeWarning while building
+            # this smoothed ghost cube.  The requested raw velocity fields are
+            # still populated correctly; suppress only that exact warning.
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=(
+                        "Something went wrong during field computation.*"
+                        "weakref.ProxyType"
+                    ),
+                    category=RuntimeWarning,
+                )
+                ghosted = grid.retrieve_ghost_zones(
+                    1,
+                    velocity_fields,
+                    smoothed=True,
+                )
+                u = np.asarray(ghosted[velocity_fields[0]], dtype=float)
+                v = np.asarray(ghosted[velocity_fields[1]], dtype=float)
+            dx = float(grid.dds[0].d)
+            dy = float(grid.dds[1].d)
+
+            dv_dx = (
+                v[2:, 1:-1, 1:-1] - v[:-2, 1:-1, 1:-1]
+            ) / (2.0 * dx)
+            du_dy = (
+                u[1:-1, 2:, 1:-1] - u[1:-1, :-2, 1:-1]
+            ) / (2.0 * dy)
+            curl = dv_dx - du_dy
+
+            start = np.asarray(grid.get_global_startindex(), dtype=int)
+            active = np.asarray(grid.ActiveDimensions, dtype=int)
+            level_dims = domain_dims * refine_by ** level
+
+            # Replace the periodic ghost contribution at physical boundaries
+            # with second-order one-sided derivatives.
+            if start[0] == 0:
+                dv_dx_left = (
+                    -3.0 * v[1, 1:-1, 1:-1]
+                    + 4.0 * v[2, 1:-1, 1:-1]
+                    - v[3, 1:-1, 1:-1]
+                ) / (2.0 * dx)
+                curl[0, :, :] = dv_dx_left - du_dy[0, :, :]
+            if start[0] + active[0] == level_dims[0]:
+                dv_dx_right = (
+                    3.0 * v[-2, 1:-1, 1:-1]
+                    - 4.0 * v[-3, 1:-1, 1:-1]
+                    + v[-4, 1:-1, 1:-1]
+                ) / (2.0 * dx)
+                curl[-1, :, :] = dv_dx_right - du_dy[-1, :, :]
+            if start[1] == 0:
+                du_dy_bottom = (
+                    -3.0 * u[1:-1, 1, 1:-1]
+                    + 4.0 * u[1:-1, 2, 1:-1]
+                    - u[1:-1, 3, 1:-1]
+                ) / (2.0 * dy)
+                curl[:, 0, :] = dv_dx[:, 0, :] - du_dy_bottom
+            if start[1] + active[1] == level_dims[1]:
+                du_dy_top = (
+                    3.0 * u[1:-1, -2, 1:-1]
+                    - 4.0 * u[1:-1, -3, 1:-1]
+                    + u[1:-1, -4, 1:-1]
+                ) / (2.0 * dy)
+                curl[:, -1, :] = dv_dx[:, -1, :] - du_dy_top
+
+            curl = curl[:, :, 0]
+            prolongation = refine_by ** (max_level - level)
+            if prolongation > 1:
+                curl = np.repeat(curl, prolongation, axis=0)
+                curl = np.repeat(curl, prolongation, axis=1)
+
+            finest_start = start[:2] * prolongation
+            finest_end = finest_start + np.asarray(curl.shape, dtype=int)
+            composite[
+                finest_start[0]:finest_end[0],
+                finest_start[1]:finest_end[1],
+            ] = curl
+    finally:
+        ds.force_periodicity(periodicity_was_forced)
+
+    missing = int(np.count_nonzero(~np.isfinite(composite)))
+    if missing:
+        raise RuntimeError(
+            f"Native AMR vorticity composite left {missing} cells unfilled"
+        )
+    return composite
+
+
 def load_pelec_plotfile(plotfile_path, field_names=None, alias_map=None,
-                        convert_to_mks=True):
+                        convert_to_mks=True, derive_native_vorticity=False):
     """Load a single PeleC / AMReX plotfile into a ``StandardDataset``.
 
     Parameters
@@ -185,6 +321,9 @@ def load_pelec_plotfile(plotfile_path, field_names=None, alias_map=None,
         Extra solver-specific aliases merged with defaults.
     convert_to_mks : bool, default True
         Convert CGS coordinates / supported fields to MKS.
+    derive_native_vorticity : bool, default False
+        Compute signed ``dv/dx - du/dy`` on native AMR patches even when
+        ``field_names=None`` requests the general default field set.
 
     Returns
     -------
@@ -234,6 +373,8 @@ def load_pelec_plotfile(plotfile_path, field_names=None, alias_map=None,
 
     fields = {}
     raw_field_names = {}
+    native_vorticity_needed = bool(derive_native_vorticity)
+    derive_native_magnitude = False
 
     for canonical, raw_candidates in field_map.items():
         # Try each candidate raw name in order
@@ -248,6 +389,13 @@ def load_pelec_plotfile(plotfile_path, field_names=None, alias_map=None,
                 break
 
         if matched_raw is None:
+            if canonical == "vorticity":
+                native_vorticity_needed = True
+                continue
+            if canonical == "vorticity_magnitude":
+                native_vorticity_needed = True
+                derive_native_magnitude = True
+                continue
             # When field_names is explicitly provided, raise an error.
             # When using the default alias set, just skip missing fields
             # (e.g. volume_fraction on non-EB grids).
@@ -266,6 +414,17 @@ def load_pelec_plotfile(plotfile_path, field_names=None, alias_map=None,
         fields[canonical] = np.asarray(values, dtype=float)
         raw_field_names[canonical] = matched_raw
 
+    if native_vorticity_needed and "vorticity" not in fields:
+        fields["vorticity"] = _compute_native_amr_vorticity(ds)
+        raw_field_names["vorticity"] = (
+            "native_amr_dv_dx_minus_du_dy"
+        )
+        if derive_native_magnitude:
+            fields["vorticity_magnitude"] = np.abs(fields["vorticity"])
+            raw_field_names["vorticity_magnitude"] = (
+                "abs(native_amr_curl)"
+            )
+
     return {
         "source": plotfile_path,
         "case_label": os.path.basename(os.path.dirname(plotfile_path)),
@@ -278,6 +437,8 @@ def load_pelec_plotfile(plotfile_path, field_names=None, alias_map=None,
         "available_fields": sorted(available_fields),
         "units": "MKS" if convert_to_mks else "CGS",
         "dimensionality": int(ds.dimensionality),
+        "amr_max_level": int(finest_level),
+        "amr_refine_by": int(ds.refine_by),
         "grid_shape": (nx, ny),
         "domain_length_x": float(
             (right_edge[0] - left_edge[0]) / (100.0 if convert_to_mks else 1.0)
@@ -364,7 +525,8 @@ def discover_plotfile_paths(plot_source, plot_prefix="plt",
 def load_pelec_plotfile_series(plot_source, plot_prefix="plt",
                                field_names=None, alias_map=None,
                                convert_to_mks=True,
-                               start=None, end=None, step=1):
+                               start=None, end=None, step=1,
+                               derive_native_vorticity=False):
     """Discover and load a series of PeleC plotfiles.
 
     Parameters
@@ -390,7 +552,8 @@ def load_pelec_plotfile_series(plot_source, plot_prefix="plt",
 
     return [
         load_pelec_plotfile(p, field_names=field_names, alias_map=alias_map,
-                            convert_to_mks=convert_to_mks)
+                            convert_to_mks=convert_to_mks,
+                            derive_native_vorticity=derive_native_vorticity)
         for p in plotfiles
     ]
 
@@ -454,13 +617,24 @@ def compute_derived_fields(dataset, gamma=1.4, R=287.05, beta=50.0):
             a = np.where(a > 0, a, np.nan)
             f["mach_number"] = f["velocity_magnitude"] / a
 
-    # Vorticity (2-D in-plane)
+    # Vorticity (2-D in-plane).  AMR plotfiles must provide a curl computed
+    # on native patches; differentiating their finest-level covering grid
+    # creates coarse-cell edge impulses.  Uniform datasets remain safe to
+    # derive here.
     if "vorticity" not in f:
-        if "x_velocity" in f and "y_velocity" in f:
+        if (
+            int(dataset.get("amr_max_level", 0)) == 0
+            and "x_velocity" in f
+            and "y_velocity" in f
+        ):
             dv_dx, _ = np.gradient(f["y_velocity"], dx, dy)
             _, du_dy = np.gradient(f["x_velocity"], dx, dy)
             f["vorticity"] = dv_dx - du_dy
-            f["vorticity_magnitude"] = np.abs(f["vorticity"])
+
+    # Never replace a solver-provided ``magvort`` field, which the loader
+    # canonicalizes as ``vorticity_magnitude``.
+    if "vorticity_magnitude" not in f and "vorticity" in f:
+        f["vorticity_magnitude"] = np.abs(f["vorticity"])
 
     # Schlieren
     if "schlieren" not in f:
@@ -2988,9 +3162,11 @@ def compute_phase_speed_from_probes(probe_x, freq, Y_complex, target_freq,
 def compute_growth_rate_from_probes(probe_x, freq, P1, target_freq,
                                     delta_99_interp=None,
                                     window_size=None):
-    """Compute spatial growth rate alpha_i from FFT amplitude vs probe position.
+    """Compute spatial alpha_i and amplification from FFT amplitude.
 
     Fits ln(A) = -alpha_i * x + const over a sliding window.
+    Under the standard spatial-LST convention, ``-alpha_i`` is therefore the
+    amplification rate: positive values grow downstream.
 
     Parameters
     ----------
@@ -3010,8 +3186,8 @@ def compute_growth_rate_from_probes(probe_x, freq, P1, target_freq,
     Returns
     -------
     dict
-        ``x``, ``alpha_i``, ``alpha_i_delta`` (if delta_99 given),
-        ``A_at_f``, ``r_squared``.
+        ``x``, ``alpha_i``, ``amplification_rate``, ``alpha_i_delta``
+        (if delta_99 given), ``A_at_f``, ``r_squared``.
     """
     probe_x = np.asarray(probe_x, dtype=float)
     freq = np.asarray(freq, dtype=float)
@@ -3023,9 +3199,12 @@ def compute_growth_rate_from_probes(probe_x, freq, P1, target_freq,
 
     n_probes = len(probe_x)
     if n_probes < 3:
-        return {"x": probe_x, "alpha_i": np.full(n_probes, np.nan),
-                "A_at_f": np.full(n_probes, np.nan),
-                "r_squared": np.full(n_probes, np.nan)}
+        missing = np.full(n_probes, np.nan)
+        return {
+            "x": probe_x, "alpha_i": missing.copy(),
+            "amplification_rate": missing.copy(),
+            "A_at_f": missing.copy(), "r_squared": missing.copy(),
+        }
 
     f_idx = int(np.argmin(np.abs(freq - target_freq)))
     A = P1[f_idx, :].copy()
@@ -3065,6 +3244,7 @@ def compute_growth_rate_from_probes(probe_x, freq, P1, target_freq,
 
     out = {
         "x": probe_x, "alpha_i": alpha_i,
+        "amplification_rate": -alpha_i,
         "A_at_f": A, "r_squared": r2,
         "alpha_i_ci95": alpha_i_ci95,
         "window_size": int(window_size),
@@ -3074,8 +3254,12 @@ def compute_growth_rate_from_probes(probe_x, freq, P1, target_freq,
         d99 = np.asarray(delta_99_interp, dtype=float)
         if len(d99) == n_probes:
             out["alpha_i_delta"] = alpha_i * d99[sort_idx]
+            out["amplification_rate_delta"] = (
+                -alpha_i * d99[sort_idx]
+            )
         else:
             out["alpha_i_delta"] = np.full(n_probes, np.nan)
+            out["amplification_rate_delta"] = np.full(n_probes, np.nan)
 
     return out
 
@@ -3188,6 +3372,383 @@ def compute_adjacent_target_coherence(signal_matrix, fs, target_freq,
         "n_blocks": int(starts.size),
         "nperseg": nperseg,
         "noverlap": noverlap,
+    }
+
+
+def _weighted_linear_fit(x, y, weights):
+    """Return slope, intercept, weighted R-squared, and slope standard error."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    weights = np.asarray(weights, dtype=float)
+    valid = (
+        np.isfinite(x) & np.isfinite(y) & np.isfinite(weights)
+        & (weights > 0.0)
+    )
+    if np.sum(valid) < 3:
+        return np.nan, np.nan, np.nan, np.nan
+    x = x[valid]
+    y = y[valid]
+    weights = weights[valid]
+    weights = weights / np.mean(weights)
+    design = np.column_stack((x, np.ones_like(x)))
+    normal = design.T @ (weights[:, None] * design)
+    try:
+        covariance_base = np.linalg.inv(normal)
+    except np.linalg.LinAlgError:
+        return np.nan, np.nan, np.nan, np.nan
+    coefficients = covariance_base @ (
+        design.T @ (weights * y)
+    )
+    slope, intercept = coefficients
+    fitted = design @ coefficients
+    mean = np.average(y, weights=weights)
+    residual_sum = np.sum(weights * (y - fitted) ** 2)
+    total_sum = np.sum(weights * (y - mean) ** 2)
+    r_squared = (
+        1.0 - residual_sum / total_sum
+        if total_sum > 1.0e-30 else np.nan
+    )
+    degrees_freedom = len(y) - 2
+    if degrees_freedom > 0:
+        residual_variance = residual_sum / degrees_freedom
+        slope_standard_error = np.sqrt(
+            max(0.0, residual_variance * covariance_base[0, 0])
+        )
+    else:
+        slope_standard_error = np.nan
+    return slope, intercept, r_squared, slope_standard_error
+
+
+def compute_frequency_resolved_wavenumber(
+        signal_matrix, probe_x, fs, frequency_band,
+        nperseg=16384, noverlap=None, frequency_stride=1,
+        spatial_window_size=101, spatial_step=20, fft_batch_size=32,
+        min_coherence=0.8, min_coherent_fraction=0.8,
+        min_phase_r_squared=0.8, min_amplitude_r_squared=0.5,
+        min_relative_power_db=-40.0,
+        max_edge_phase_rad=0.9 * np.pi, phase_speed_bounds=None,
+        phase_convention="omega_t_minus_alpha_x"):
+    """Estimate frequency-resolved complex streamwise wavenumber.
+
+    The routine first forms Welch-averaged auto spectra and adjacent-probe
+    cross spectra.  Within overlapping spatial windows it then fits
+
+    ``phase(x) = constant - alpha_r*x``
+
+    and
+
+    ``log(amplitude(x)) = constant - alpha_i*x``.
+
+    The latter follows the standard spatial-LST convention
+    ``q' = Re(qhat exp(i*(alpha*x - omega*t)))``.  Consequently
+    ``-alpha_i`` is the spatial amplification rate.
+
+    This is a dominant-wave estimator.  It deliberately does not label the
+    result as an F or S eigenmode: simultaneous waves at one frequency can
+    produce a composite cross-spectral phase and require an eigensolution or
+    a separately validated multi-exponential decomposition.
+
+    Parameters
+    ----------
+    signal_matrix : array-like, shape (n_time, n_probe)
+        Uniformly sampled probe signals.
+    probe_x : 1-D array-like
+        Probe positions [m]. They may be irregular but must be distinct.
+    fs : float
+        Temporal sample rate [Hz].
+    frequency_band : pair of float
+        Inclusive frequency range [Hz].
+    nperseg, noverlap : int
+        Welch block length and overlap.
+    frequency_stride : int
+        Retain every Nth FFT bin within ``frequency_band``.
+    spatial_window_size, spatial_step : int
+        Number of probes per local fit and distance between fit centres.
+    fft_batch_size : int
+        Probe columns transformed together to bound peak memory.
+    min_coherence, min_coherent_fraction : float
+        Adjacent-pair coherence requirements for a valid phase fit.
+    min_phase_r_squared, min_amplitude_r_squared : float
+        Fit-quality gates. Phase and growth masks are returned separately.
+    min_relative_power_db : float
+        Minimum local spectral power relative to the strongest frequency at
+        the same spatial centre. This is a leakage/noise guard, not a
+        calibrated signal-to-noise ratio.
+    max_edge_phase_rad : float
+        Phase-alias guard applied to adjacent cross-spectral phase.
+    phase_speed_bounds : pair of float, optional
+        Accepted positive phase-speed interval [m/s].
+    phase_convention : str
+        Convention used to interpret the positive-frequency FFT phase.
+
+    Returns
+    -------
+    dict
+        Frequency/x grids, raw ``alpha_real`` and ``alpha_imag``, explicit
+        ``amplification_rate=-alpha_imag``, phase speed, wavelength, spectral
+        power, uncertainty and quality metrics, and separate validity masks.
+    """
+    signals = np.asarray(signal_matrix, dtype=float)
+    x = np.asarray(probe_x, dtype=float)
+    if signals.ndim != 2 or signals.shape[1] != x.size:
+        raise ValueError(
+            "signal_matrix must have shape (n_time, len(probe_x))"
+        )
+    if signals.shape[0] < 8 or x.size < 5:
+        raise ValueError("At least 8 time samples and 5 probes are required")
+    if not np.all(np.isfinite(signals)) or not np.all(np.isfinite(x)):
+        raise ValueError("Signals and probe positions must be finite")
+    fs = float(fs)
+    if not np.isfinite(fs) or fs <= 0.0:
+        raise ValueError("fs must be positive and finite")
+    if phase_convention not in (
+            "omega_t_minus_alpha_x", "omega_t_plus_alpha_x"):
+        raise ValueError(f"Unknown phase convention: {phase_convention}")
+
+    band = np.asarray(frequency_band, dtype=float)
+    if band.shape != (2,) or not 0.0 <= band[0] < band[1] <= 0.5 * fs:
+        raise ValueError("frequency_band must lie within [0, Nyquist]")
+    frequency_stride = int(frequency_stride)
+    spatial_window_size = int(spatial_window_size)
+    spatial_step = int(spatial_step)
+    fft_batch_size = int(fft_batch_size)
+    if frequency_stride < 1 or spatial_step < 1 or fft_batch_size < 1:
+        raise ValueError(
+            "frequency_stride, spatial_step, and fft_batch_size must be positive"
+        )
+    if spatial_window_size < 5:
+        raise ValueError("spatial_window_size must be at least 5")
+    if spatial_window_size > x.size:
+        spatial_window_size = x.size
+    if spatial_window_size % 2 == 0:
+        spatial_window_size -= 1
+    if not 0.0 <= min_coherence <= 1.0:
+        raise ValueError("min_coherence must lie within [0, 1]")
+    if not 0.0 <= min_coherent_fraction <= 1.0:
+        raise ValueError("min_coherent_fraction must lie within [0, 1]")
+    min_relative_power_db = float(min_relative_power_db)
+    if not np.isfinite(min_relative_power_db) or min_relative_power_db > 0.0:
+        raise ValueError("min_relative_power_db must be finite and <= 0")
+    if not 0.0 < max_edge_phase_rad <= np.pi:
+        raise ValueError("max_edge_phase_rad must lie within (0, pi]")
+    if phase_speed_bounds is not None:
+        phase_speed_bounds = np.asarray(phase_speed_bounds, dtype=float)
+        if (phase_speed_bounds.shape != (2,)
+                or phase_speed_bounds[0] < 0.0
+                or phase_speed_bounds[1] <= phase_speed_bounds[0]):
+            raise ValueError(
+                "phase_speed_bounds must be [positive_min, larger_max]"
+            )
+
+    order = np.argsort(x)
+    x = x[order]
+    signals = signals[:, order]
+    if np.any(np.diff(x) <= 0.0):
+        raise ValueError("probe_x positions must be distinct")
+
+    nperseg = min(int(nperseg), signals.shape[0])
+    if nperseg < 8:
+        raise ValueError("nperseg must be at least 8")
+    if noverlap is None:
+        noverlap = nperseg // 2
+    noverlap = int(noverlap)
+    if not 0 <= noverlap < nperseg:
+        raise ValueError("noverlap must satisfy 0 <= noverlap < nperseg")
+    step = nperseg - noverlap
+    starts = np.arange(
+        0, signals.shape[0] - nperseg + 1, step, dtype=int
+    )
+    if starts.size < 2:
+        raise ValueError(
+            "Frequency-resolved analysis requires at least two Welch blocks"
+        )
+
+    all_frequency = np.fft.rfftfreq(nperseg, 1.0 / fs)
+    selected = np.flatnonzero(
+        (all_frequency >= band[0]) & (all_frequency <= band[1])
+    )[::frequency_stride]
+    if selected.size == 0:
+        raise ValueError("No FFT bins fall inside frequency_band")
+    frequency = all_frequency[selected]
+    n_frequency = frequency.size
+    n_probe = x.size
+    auto_sum = np.zeros((n_frequency, n_probe), dtype=float)
+    cross_sum = np.zeros((n_frequency, n_probe - 1), dtype=complex)
+    window = np.hanning(nperseg)
+
+    for start in starts:
+        coefficient = np.empty((n_frequency, n_probe), dtype=complex)
+        for first in range(0, n_probe, fft_batch_size):
+            last = min(first + fft_batch_size, n_probe)
+            work = signals[start:start + nperseg, first:last]
+            work = work - np.mean(work, axis=0, keepdims=True)
+            spectrum = np.fft.rfft(
+                work * window[:, None], axis=0
+            )
+            coefficient[:, first:last] = spectrum[selected, :]
+        auto_sum += np.abs(coefficient) ** 2
+        cross_sum += np.conj(coefficient[:, :-1]) * coefficient[:, 1:]
+
+    auto_power = auto_sum / starts.size
+    cross_power = cross_sum / starts.size
+    denominator = auto_power[:, :-1] * auto_power[:, 1:]
+    coherence = np.clip(
+        np.abs(cross_power) ** 2 / np.maximum(denominator, 1.0e-300),
+        0.0, 1.0,
+    )
+    edge_phase = np.angle(cross_power)
+    amplitude = np.sqrt(np.maximum(auto_power, 1.0e-300))
+
+    half_window = spatial_window_size // 2
+    centre_indices = np.arange(
+        half_window, n_probe - half_window, spatial_step, dtype=int
+    )
+    if centre_indices.size == 0:
+        centre_indices = np.array([n_probe // 2], dtype=int)
+    n_centre = centre_indices.size
+    shape = (n_frequency, n_centre)
+    alpha_real = np.full(shape, np.nan)
+    alpha_imag = np.full(shape, np.nan)
+    alpha_real_ci95 = np.full(shape, np.nan)
+    alpha_imag_ci95 = np.full(shape, np.nan)
+    phase_r_squared = np.full(shape, np.nan)
+    amplitude_r_squared = np.full(shape, np.nan)
+    mean_coherence = np.full(shape, np.nan)
+    coherent_fraction = np.full(shape, np.nan)
+    alias_margin = np.full(shape, np.nan)
+    local_power = np.full(shape, np.nan)
+
+    phase_sign = (
+        -1.0 if phase_convention == "omega_t_minus_alpha_x" else 1.0
+    )
+    for frequency_index in range(n_frequency):
+        for centre_number, centre in enumerate(centre_indices):
+            first = centre - half_window
+            last = centre + half_window + 1
+            x_window = x[first:last]
+            edge_coherence = coherence[
+                frequency_index, first:last - 1
+            ]
+            phase_increment = edge_phase[
+                frequency_index, first:last - 1
+            ]
+            local_phase = np.concatenate((
+                [0.0], np.cumsum(phase_increment)
+            ))
+            probe_weights = np.empty(spatial_window_size, dtype=float)
+            probe_weights[0] = edge_coherence[0]
+            probe_weights[-1] = edge_coherence[-1]
+            probe_weights[1:-1] = np.minimum(
+                edge_coherence[:-1], edge_coherence[1:]
+            )
+            phase_slope, _, phase_r2, phase_se = _weighted_linear_fit(
+                x_window, local_phase, probe_weights
+            )
+            log_amplitude = np.log(
+                amplitude[frequency_index, first:last]
+            )
+            amplitude_slope, _, amplitude_r2, amplitude_se = (
+                _weighted_linear_fit(
+                    x_window, log_amplitude, probe_weights
+                )
+            )
+            alpha_real[frequency_index, centre_number] = (
+                phase_sign * phase_slope
+            )
+            alpha_imag[frequency_index, centre_number] = -amplitude_slope
+            alpha_real_ci95[frequency_index, centre_number] = 1.96 * phase_se
+            alpha_imag_ci95[frequency_index, centre_number] = (
+                1.96 * amplitude_se
+            )
+            phase_r_squared[frequency_index, centre_number] = phase_r2
+            amplitude_r_squared[frequency_index, centre_number] = amplitude_r2
+            mean_coherence[frequency_index, centre_number] = np.mean(
+                edge_coherence
+            )
+            coherent_fraction[frequency_index, centre_number] = np.mean(
+                edge_coherence >= min_coherence
+            )
+            largest_phase = np.max(np.abs(phase_increment))
+            alias_margin[frequency_index, centre_number] = (
+                np.inf if largest_phase == 0.0
+                else np.pi / largest_phase
+            )
+            local_power[frequency_index, centre_number] = np.mean(
+                auto_power[frequency_index, first:last]
+            )
+
+    omega = 2.0 * np.pi * frequency[:, None]
+    phase_speed = np.divide(
+        omega, alpha_real,
+        out=np.full_like(alpha_real, np.nan),
+        where=np.abs(alpha_real) > 1.0e-12,
+    )
+    wavelength = np.divide(
+        2.0 * np.pi, alpha_real,
+        out=np.full_like(alpha_real, np.nan),
+        where=np.abs(alpha_real) > 1.0e-12,
+    )
+    amplification_rate = -alpha_imag
+    centre_peak_power = np.nanmax(local_power, axis=0, keepdims=True)
+    relative_power_db = 10.0 * np.log10(
+        np.maximum(local_power, 1.0e-300)
+        / np.maximum(centre_peak_power, 1.0e-300)
+    )
+    spectral_valid = relative_power_db >= min_relative_power_db
+    phase_valid = (
+        np.isfinite(alpha_real)
+        & (alpha_real > 0.0)
+        & np.isfinite(phase_r_squared)
+        & (phase_r_squared >= min_phase_r_squared)
+        & (coherent_fraction >= min_coherent_fraction)
+        & spectral_valid
+    )
+    # The edge phase is wrapped to [-pi, pi]. Values too close to that limit
+    # cannot distinguish the physical wavenumber from a spatial alias.
+    phase_valid &= alias_margin >= (np.pi / max_edge_phase_rad)
+    if phase_speed_bounds is not None:
+        phase_valid &= (
+            (phase_speed >= phase_speed_bounds[0])
+            & (phase_speed <= phase_speed_bounds[1])
+        )
+    growth_valid = (
+        phase_valid
+        & np.isfinite(alpha_imag)
+        & np.isfinite(amplitude_r_squared)
+        & (amplitude_r_squared >= min_amplitude_r_squared)
+    )
+
+    return {
+        "frequency_hz": frequency,
+        "x_center_m": x[centre_indices],
+        "alpha_real_rad_per_m": alpha_real,
+        "alpha_imag_rad_per_m": alpha_imag,
+        "amplification_rate_per_m": amplification_rate,
+        "phase_speed_m_per_s": phase_speed,
+        "wavelength_m": wavelength,
+        "alpha_real_ci95_rad_per_m": alpha_real_ci95,
+        "alpha_imag_ci95_rad_per_m": alpha_imag_ci95,
+        "phase_fit_r_squared": phase_r_squared,
+        "amplitude_fit_r_squared": amplitude_r_squared,
+        "mean_coherence_squared": mean_coherence,
+        "coherent_pair_fraction": coherent_fraction,
+        "spatial_alias_margin": alias_margin,
+        "spectral_power": local_power,
+        "relative_spectral_power_db": relative_power_db,
+        "spectral_valid_mask": spectral_valid,
+        "phase_valid_mask": phase_valid,
+        "growth_valid_mask": growth_valid,
+        "adjacent_coherence_squared": coherence,
+        "adjacent_cross_phase_rad": edge_phase,
+        "probe_x_sorted_m": x,
+        "probe_sort_order": order,
+        "n_blocks": int(starts.size),
+        "nperseg": int(nperseg),
+        "noverlap": int(noverlap),
+        "spatial_window_size": int(spatial_window_size),
+        "spatial_step": int(spatial_step),
+        "phase_convention": phase_convention,
+        "alpha_convention": "exp(i*(alpha*x-omega*t))",
     }
 
 

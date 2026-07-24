@@ -113,6 +113,9 @@ def _required_plotfile_fields(config):
     direct_fields = {
         "density", "pressure", "temperature",
         "x_velocity", "y_velocity", "z_velocity",
+        # The loader handles these explicitly: ``magvort`` is preserved for
+        # magnitude, while signed curl is evaluated on native AMR patches.
+        "vorticity", "vorticity_magnitude",
     }
     requested = set()
     if config.get("make_contour_plots"):
@@ -129,6 +132,19 @@ def _required_plotfile_fields(config):
     if not requested or not requested.issubset(direct_fields):
         return None
     return sorted(requested)
+
+
+def _config_needs_native_vorticity(config):
+    """Whether an enabled snapshot workflow requests signed vorticity."""
+    requested = set()
+    if config.get("make_contour_plots"):
+        requested.update(config.get("contour_fields", []))
+    if config.get("make_line_profiles"):
+        requested.update(config.get("line_fields", []))
+    if config.get("make_streamlines"):
+        requested.add(config.get("streamline_color_key"))
+        requested.add(config.get("streamline_mask_key"))
+    return "vorticity" in requested
 
 
 def _json_safe(value):
@@ -239,13 +255,13 @@ CONFIG = {
     "plot_prefix": "pltFlatPlatePost",                         # Plotfile directory prefix
     # Dedicated review folder: preserves older output families while showing
     # the corrected figure formats and analysis products from this workflow.
-    "output_dir": "../TS-Driver/FP-Extended-Domain/3-Plot-Outputs/Drive",
+    "output_dir": "../TS-Driver/FP-Extended-Domain/3-Plot-Outputs/Vorticity",
 
     # --- Snapshot range ---
     # Set to None to process all discovered plotfiles.
     "snapshot_start": 211500,
-    "snapshot_end": 350000,
-    "snapshot_step": 500,
+    "snapshot_end": 250500,
+    "snapshot_step": 1000,
 
     # --- Field aliases ---
     # Map solver raw names -> canonical names.  If omitted, default PeleC
@@ -254,7 +270,7 @@ CONFIG = {
     "field_aliases": None,
 
     # --- Workflow toggles ---
-    "make_contour_plots": False,   # flow-through-time contour titles
+    "make_contour_plots": True,   # flow-through-time contour titles
     "make_line_profiles": False,   # eta for similarity plots; otherwise y/delta_99
     "make_streamlines": False,
     "make_surface_analysis": False,
@@ -262,7 +278,7 @@ CONFIG = {
 
     "make_probe_plots": False,   # set True only if you need time-history plots (requires ASCII conversion)
     "make_fft_probes": False,      # set True to run FFT / stability analysis on probe data
-    "make_pprime_contour": True,       # symmetric perturbation contours
+    "make_pprime_contour": False,       # symmetric perturbation contours
     "make_stability_diagnostics": False, # corrected phase-speed references
 
 
@@ -270,14 +286,26 @@ CONFIG = {
     # List of canonical field names to plot.  Any field present in the
     # dataset (including derived fields) can be used.
     "contour_fields": [
-        "mach_number",
+        "vorticity", "vorticity_magnitude"
     ],
     "contour_cmap": "turbo",           # Perceptually uniform scalar-field map
     "contour_norm": "linear",               # Color scaling: "linear", "log", "symlog", or a matplotlib Normalize object
-    "contour_vlims": {                       # Per-field color limits [vmin, vmax]
-        "mach_number": [0, 7.7],             # robust 1st--99th percentile autoscale
+    # Field-specific choices override the global fallbacks above. Signed
+    # vorticity needs a zero-centred diverging map; magnitude is non-negative
+    # and spans several orders of magnitude.
+    "contour_cmaps": {
+        "vorticity": "RdBu_r",
+        "vorticity_magnitude": "magma",
     },
-    "contour_xlim": [-0.001, 0.3],           # full 0.4 m plate
+    "contour_norms": {
+        "vorticity": "linear",
+        "vorticity_magnitude": "linear",
+    },
+    "contour_vlims": {                       # Per-field color limits [vmin, vmax]
+        "vorticity": [-1000, 1000],       # symmetric signed range [s^-1]
+        "vorticity_magnitude": [0, 1000], # emphasize outer-flow detail [s^-1]
+    },
+    "contour_xlim": [-0.001, 0.4],           # full 0.4 m plate
     "contour_ylim": None,                    # [ymin, ymax] or None for full domain
     # Time shown in figures. Flow-through time is t_FT = L_x / U_inf, where
     # L_x is the full AMReX domain length (independent of contour x-limits).
@@ -461,6 +489,26 @@ CONFIG = {
     "stability_min_coherence": 0.5,
     # Downstream wave convention: exp(i*(omega*t - alpha*x)).
     "stability_phase_convention": "omega_t_minus_alpha_x",
+    # Frequency-resolved, measurement-first complex-wavenumber analysis.
+    # This estimates the dominant coherent wave in each local (x, f) window;
+    # it does not assign definitive LST F/S eigenmode labels.
+    "stability_make_wavenumber_analysis": True,
+    "stability_analysis_time_window": None,  # [start_s, end_s] or None
+    "stability_wavenumber_nperseg": 16384,
+    "stability_wavenumber_noverlap": 0.5,
+    "stability_frequency_stride": 1,
+    "stability_spatial_window_size": 101,
+    "stability_spatial_step": 20,
+    "stability_wavenumber_min_coherence": 0.8,
+    "stability_wavenumber_min_coherent_fraction": 0.8,
+    "stability_wavenumber_min_phase_r2": 0.8,
+    "stability_wavenumber_min_amplitude_r2": 0.5,
+    "stability_wavenumber_min_relative_power_db": -40.0,
+    "stability_wavenumber_max_edge_phase_rad": 2.827433388230814,
+    "stability_phase_speed_bounds": [500.0, 2500.0],
+    # Relative distance to the U_e +/- a_e reference, measured as a fraction
+    # of their separation, for cautious "fast-like"/"slow-like" candidates.
+    "stability_acoustic_reference_tolerance": 0.25,
 
     # --- Phase 1: Disturbance signal reconstruction ---
     # Reconstruct time-domain disturbance from FFT harmonics, a frequency
@@ -820,12 +868,20 @@ def _process_single_contour(args):
                 continue
             out = output_dir / f"{label}_{field_key}.png"
             vlims = config.get("contour_vlims", {}).get(field_key, [None, None])
+            cmap = config.get("contour_cmaps", {}).get(
+                field_key,
+                config.get("contour_cmap", "viridis"),
+            )
+            norm = config.get("contour_norms", {}).get(
+                field_key,
+                config.get("contour_norm", "linear"),
+            )
             pdb.plot_contour(
                 dataset, field_key,
                 output_path=str(out),
                 title=_plot_title(dataset, field_key, config),
-                cmap=pdb.resolve_cmap(config.get("contour_cmap", "viridis")),
-                norm=config.get("contour_norm", "linear"),
+                cmap=pdb.resolve_cmap(cmap),
+                norm=norm,
                 vmin=vlims[0],
                 vmax=vlims[1],
                 xlim=config.get("contour_xlim"),
@@ -852,6 +908,9 @@ def _process_single_line(args):
                     field_names=_required_plotfile_fields(config),
                     alias_map=config.get("field_aliases"),
                     convert_to_mks=True,
+                    derive_native_vorticity=(
+                        _config_needs_native_vorticity(config)
+                    ),
                 )
             except Exception as exc:
                 fdb._log_error(f"Comparison plotfile load failed: {compare_plotfile}", exc)
@@ -3065,6 +3124,150 @@ def _process_stability_diagnostics(config, probe_data=None):
             delta_99_interp=d99_interp, window_size=growth_win,
         )
 
+        # Frequency-resolved dominant-wave analysis. Unlike the legacy
+        # adjacent-pair target-frequency product, this uses Welch-averaged
+        # cross spectra and local phase/amplitude regression over the complete
+        # configured band. It remains a measurement, not an F/S eigensolution.
+        wave_data = {}
+        if config.get("stability_make_wavenumber_analysis", True):
+            wave_signals = signal_matrix
+            wave_time = time_uniform
+            analysis_window = config.get(
+                "stability_analysis_time_window", None
+            )
+            if analysis_window is not None:
+                time_mask = (
+                    (wave_time >= float(analysis_window[0]))
+                    & (wave_time <= float(analysis_window[1]))
+                )
+                if np.sum(time_mask) < 8:
+                    raise ValueError(
+                        "stability_analysis_time_window contains fewer than "
+                        "8 samples"
+                    )
+                wave_signals = wave_signals[time_mask, :]
+                wave_time = wave_time[time_mask]
+            overlap_fraction = float(config.get(
+                "stability_wavenumber_noverlap", 0.5
+            ))
+            # Preserve at least two statistically independent Welch blocks
+            # when an explicit transient window is shorter than the requested
+            # segment length.
+            largest_two_block_segment = int(
+                len(wave_time) / max(2.0 - overlap_fraction, 1.0)
+            )
+            wave_nperseg = min(
+                int(config.get("stability_wavenumber_nperseg", 16384)),
+                largest_two_block_segment,
+            )
+            if wave_nperseg < 8:
+                raise ValueError(
+                    "Stability analysis window is too short for two Welch "
+                    "blocks of at least 8 samples"
+                )
+            wave_overlap = int(
+                overlap_fraction * wave_nperseg
+            )
+            _ts(
+                "  [SD] Computing frequency-resolved complex wavenumber "
+                f"over {freq_band[0]:.3e}--{freq_band[1]:.3e} Hz ..."
+            )
+            wave_data = fdb.compute_frequency_resolved_wavenumber(
+                wave_signals,
+                np.asarray(probe_x_m),
+                1.0 / dt_use,
+                freq_band,
+                nperseg=wave_nperseg,
+                noverlap=wave_overlap,
+                frequency_stride=int(config.get(
+                    "stability_frequency_stride", 1
+                )),
+                spatial_window_size=int(config.get(
+                    "stability_spatial_window_size", 101
+                )),
+                spatial_step=int(config.get(
+                    "stability_spatial_step", 20
+                )),
+                fft_batch_size=fft_batch_size,
+                min_coherence=float(config.get(
+                    "stability_wavenumber_min_coherence", 0.8
+                )),
+                min_coherent_fraction=float(config.get(
+                    "stability_wavenumber_min_coherent_fraction", 0.8
+                )),
+                min_phase_r_squared=float(config.get(
+                    "stability_wavenumber_min_phase_r2", 0.8
+                )),
+                min_amplitude_r_squared=float(config.get(
+                    "stability_wavenumber_min_amplitude_r2", 0.5
+                )),
+                min_relative_power_db=float(config.get(
+                    "stability_wavenumber_min_relative_power_db", -40.0
+                )),
+                max_edge_phase_rad=float(config.get(
+                    "stability_wavenumber_max_edge_phase_rad",
+                    0.9 * np.pi,
+                )),
+                phase_speed_bounds=config.get(
+                    "stability_phase_speed_bounds", None
+                ),
+                phase_convention=config.get(
+                    "stability_phase_convention",
+                    "omega_t_minus_alpha_x",
+                ),
+            )
+            wave_x = wave_data["x_center_m"]
+            wave_u_edge = np.interp(
+                wave_x, bl_x, freq_data["u_edge"]
+            )
+            if T_edge_vals is not None:
+                wave_T_edge = np.interp(wave_x, bl_x, T_edge_vals)
+                wave_a_edge = np.sqrt(1.4 * 287.05 * wave_T_edge)
+                wave_slow = wave_u_edge - wave_a_edge
+                wave_fast = wave_u_edge + wave_a_edge
+            else:
+                wave_slow = np.full_like(wave_x, np.nan)
+                wave_fast = np.full_like(wave_x, np.nan)
+            wave_data["slow_acoustic_speed_m_per_s"] = wave_slow
+            wave_data["fast_acoustic_speed_m_per_s"] = wave_fast
+            wave_data["target_frequency_hz"] = float(target_freq)
+            wave_data["analysis_time_start_s"] = float(wave_time[0])
+            wave_data["analysis_time_end_s"] = float(wave_time[-1])
+
+            # Candidate labels are deliberately reference proximity only.
+            phase_speed_grid = wave_data["phase_speed_m_per_s"]
+            slow_distance = np.abs(
+                phase_speed_grid - wave_slow[None, :]
+            )
+            fast_distance = np.abs(
+                phase_speed_grid - wave_fast[None, :]
+            )
+            reference_gap = np.abs(wave_fast - wave_slow)[None, :]
+            tolerance = float(config.get(
+                "stability_acoustic_reference_tolerance", 0.25
+            ))
+            nearest_distance = np.minimum(slow_distance, fast_distance)
+            candidate = np.where(
+                slow_distance <= fast_distance, 1, 2
+            ).astype(np.int8)
+            candidate[
+                (~wave_data["phase_valid_mask"])
+                | (nearest_distance > tolerance * reference_gap)
+                | (~np.isfinite(nearest_distance))
+            ] = 0
+            wave_data["acoustic_candidate"] = candidate
+            wave_data["acoustic_candidate_meaning"] = (
+                "0=unclassified, 1=slow-like, 2=fast-like; "
+                "reference proximity only, not LST"
+            )
+            _ts(
+                "  [SD] Wavenumber analysis retained "
+                f"{np.mean(wave_data['phase_valid_mask']) * 100.0:.1f}% "
+                "of phase fits and "
+                f"{np.mean(wave_data['growth_valid_mask']) * 100.0:.1f}% "
+                "of complex-wavenumber fits"
+            )
+
         # GPI
         n_bl = len(bl_profiles)
         gpi_indices = np.linspace(0, n_bl - 1, min(num_gpi, n_bl)).astype(int)
@@ -3092,6 +3295,7 @@ def _process_stability_diagnostics(config, probe_data=None):
             "target_freq": target_freq,
             "freq_band": freq_band,
             "bl_profiles": bl_profiles,
+            "wavenumber": wave_data,
         }
 
         np.savez_compressed(
@@ -3117,6 +3321,9 @@ def _process_stability_diagnostics(config, probe_data=None):
             ),
             growth_x_m=np.asarray(growth_data.get("x", [])),
             spatial_growth_per_m=np.asarray(growth_data.get("alpha_i", [])),
+            spatial_amplification_per_m=np.asarray(
+                growth_data.get("amplification_rate", [])
+            ),
             spatial_growth_delta99=np.asarray(
                 growth_data.get("alpha_i_delta", [])
             ),
@@ -3126,11 +3333,223 @@ def _process_stability_diagnostics(config, probe_data=None):
             growth_fit_r_squared=np.asarray(
                 growth_data.get("r_squared", [])
             ),
+            wave_frequency_hz=np.asarray(
+                wave_data.get("frequency_hz", [])
+            ),
+            wave_x_center_m=np.asarray(
+                wave_data.get("x_center_m", [])
+            ),
+            wave_alpha_real_rad_per_m=np.asarray(
+                wave_data.get("alpha_real_rad_per_m", [])
+            ),
+            wave_alpha_imag_rad_per_m=np.asarray(
+                wave_data.get("alpha_imag_rad_per_m", [])
+            ),
+            wave_amplification_rate_per_m=np.asarray(
+                wave_data.get("amplification_rate_per_m", [])
+            ),
+            wave_phase_speed_m_per_s=np.asarray(
+                wave_data.get("phase_speed_m_per_s", [])
+            ),
+            wave_wavelength_m=np.asarray(
+                wave_data.get("wavelength_m", [])
+            ),
+            wave_alpha_real_ci95_rad_per_m=np.asarray(
+                wave_data.get("alpha_real_ci95_rad_per_m", [])
+            ),
+            wave_alpha_imag_ci95_rad_per_m=np.asarray(
+                wave_data.get("alpha_imag_ci95_rad_per_m", [])
+            ),
+            wave_phase_fit_r_squared=np.asarray(
+                wave_data.get("phase_fit_r_squared", [])
+            ),
+            wave_amplitude_fit_r_squared=np.asarray(
+                wave_data.get("amplitude_fit_r_squared", [])
+            ),
+            wave_mean_coherence_squared=np.asarray(
+                wave_data.get("mean_coherence_squared", [])
+            ),
+            wave_coherent_pair_fraction=np.asarray(
+                wave_data.get("coherent_pair_fraction", [])
+            ),
+            wave_spatial_alias_margin=np.asarray(
+                wave_data.get("spatial_alias_margin", [])
+            ),
+            wave_spectral_power=np.asarray(
+                wave_data.get("spectral_power", [])
+            ),
+            wave_relative_spectral_power_db=np.asarray(
+                wave_data.get("relative_spectral_power_db", [])
+            ),
+            wave_spectral_valid_mask=np.asarray(
+                wave_data.get("spectral_valid_mask", []), dtype=bool
+            ),
+            wave_phase_valid_mask=np.asarray(
+                wave_data.get("phase_valid_mask", []), dtype=bool
+            ),
+            wave_growth_valid_mask=np.asarray(
+                wave_data.get("growth_valid_mask", []), dtype=bool
+            ),
+            wave_acoustic_candidate=np.asarray(
+                wave_data.get("acoustic_candidate", []), dtype=np.int8
+            ),
+            wave_slow_acoustic_speed_m_per_s=np.asarray(
+                wave_data.get("slow_acoustic_speed_m_per_s", [])
+            ),
+            wave_fast_acoustic_speed_m_per_s=np.asarray(
+                wave_data.get("fast_acoustic_speed_m_per_s", [])
+            ),
+            wave_analysis_time_start_s=np.asarray(
+                wave_data.get("analysis_time_start_s", np.nan)
+            ),
+            wave_analysis_time_end_s=np.asarray(
+                wave_data.get("analysis_time_end_s", np.nan)
+            ),
+            wave_alpha_convention=np.asarray(
+                wave_data.get(
+                    "alpha_convention", "not computed"
+                )
+            ),
+            wave_phase_convention=np.asarray(
+                wave_data.get(
+                    "phase_convention", "not computed"
+                )
+            ),
         )
+
+        if wave_data:
+            phase_valid = np.asarray(
+                wave_data["phase_valid_mask"], dtype=bool
+            )
+            growth_valid = np.asarray(
+                wave_data["growth_valid_mask"], dtype=bool
+            )
+            candidate = np.asarray(
+                wave_data["acoustic_candidate"], dtype=np.int8
+            )
+            minimum_coherence = float(config.get(
+                "stability_wavenumber_min_coherence", 0.8
+            ))
+            minimum_coherent_fraction = float(config.get(
+                "stability_wavenumber_min_coherent_fraction", 0.8
+            ))
+            minimum_phase_r2 = float(config.get(
+                "stability_wavenumber_min_phase_r2", 0.8
+            ))
+            minimum_amplitude_r2 = float(config.get(
+                "stability_wavenumber_min_amplitude_r2", 0.5
+            ))
+            minimum_power_db = float(config.get(
+                "stability_wavenumber_min_relative_power_db", -40.0
+            ))
+            maximum_edge_phase = float(config.get(
+                "stability_wavenumber_max_edge_phase_rad", 0.9 * np.pi
+            ))
+            speed_bounds = config.get(
+                "stability_phase_speed_bounds", None
+            )
+            phase_speed_grid = np.asarray(
+                wave_data["phase_speed_m_per_s"], dtype=float
+            )
+            speed_rejected = np.zeros_like(phase_valid)
+            if speed_bounds is not None:
+                speed_rejected = (
+                    (phase_speed_grid < float(speed_bounds[0]))
+                    | (phase_speed_grid > float(speed_bounds[1]))
+                    | (~np.isfinite(phase_speed_grid))
+                )
+            report = {
+                "analysis": "frequency_resolved_complex_wavenumber",
+                "interpretation": (
+                    "Dominant coherent wave measured from the wall-pressure "
+                    "probe line. Acoustic candidate labels are not F/S LST "
+                    "eigenmode identifications."
+                ),
+                "alpha_convention": wave_data["alpha_convention"],
+                "phase_convention": wave_data["phase_convention"],
+                "amplification_definition": "-alpha_imag",
+                "frequency_band_hz": [
+                    float(wave_data["frequency_hz"][0]),
+                    float(wave_data["frequency_hz"][-1]),
+                ],
+                "frequency_bins": int(len(wave_data["frequency_hz"])),
+                "spatial_centres": int(len(wave_data["x_center_m"])),
+                "analysis_time_s": [
+                    float(wave_data["analysis_time_start_s"]),
+                    float(wave_data["analysis_time_end_s"]),
+                ],
+                "welch_blocks": int(wave_data["n_blocks"]),
+                "phase_fit_accepted_fraction": float(np.mean(phase_valid)),
+                "complex_wavenumber_accepted_fraction": float(
+                    np.mean(growth_valid)
+                ),
+                "candidate_counts": {
+                    "unclassified": int(np.sum(candidate == 0)),
+                    "slow_like": int(np.sum(candidate == 1)),
+                    "fast_like": int(np.sum(candidate == 2)),
+                },
+                "quality_rejection_counts_nonexclusive": {
+                    "relative_power": int(np.sum(
+                        np.asarray(
+                            wave_data["relative_spectral_power_db"]
+                        ) < minimum_power_db
+                    )),
+                    "coherent_pair_fraction": int(np.sum(
+                        np.asarray(
+                            wave_data["coherent_pair_fraction"]
+                        ) < minimum_coherent_fraction
+                    )),
+                    "phase_fit_r_squared": int(np.sum(
+                        np.asarray(
+                            wave_data["phase_fit_r_squared"]
+                        ) < minimum_phase_r2
+                    )),
+                    "spatial_alias_margin": int(np.sum(
+                        np.asarray(
+                            wave_data["spatial_alias_margin"]
+                        ) < (np.pi / maximum_edge_phase)
+                    )),
+                    "phase_speed_bounds": int(np.sum(speed_rejected)),
+                    "amplitude_fit_r_squared": int(np.sum(
+                        np.asarray(
+                            wave_data["amplitude_fit_r_squared"]
+                        ) < minimum_amplitude_r2
+                    )),
+                },
+                "quality_thresholds": {
+                    "minimum_coherence_squared": minimum_coherence,
+                    "minimum_coherent_pair_fraction": (
+                        minimum_coherent_fraction
+                    ),
+                    "minimum_phase_fit_r_squared": minimum_phase_r2,
+                    "minimum_amplitude_fit_r_squared": minimum_amplitude_r2,
+                    "minimum_relative_spectral_power_db": minimum_power_db,
+                    "phase_speed_bounds_m_per_s": speed_bounds,
+                },
+            }
+            report_path = output_dir / "wave_analysis_report.json"
+            report_temporary = output_dir / ".wave_analysis_report.json.tmp"
+            with report_temporary.open("w", encoding="utf-8") as stream:
+                json.dump(report, stream, indent=2, sort_keys=True)
+                stream.write("\n")
+            os.replace(report_temporary, report_path)
+            _ts(f"  [SD] Saved wave-analysis report: {report_path}")
 
         _ts("  [SD] Generating stability summary plot ...")
         out_path = output_dir / "stability_summary.png"
         pdb.plot_stability_summary(plot_data, output_path=str(out_path))
+
+        if wave_data:
+            wave_path = output_dir / "wavenumber_summary.png"
+            pdb.plot_wavenumber_summary(
+                wave_data, output_path=str(wave_path)
+            )
+            dispersion_path = output_dir / "phase_speed_dispersion.png"
+            pdb.plot_phase_speed_dispersion(
+                wave_data, output_path=str(dispersion_path)
+            )
+            _ts(f"  [SD] Saved wavenumber summary: {wave_path}")
+            _ts(f"  [SD] Saved phase-speed dispersion: {dispersion_path}")
 
         if len(gpi_results) > 0:
             gpi_out = output_dir / "gpi_profiles.png"
@@ -3650,6 +4069,9 @@ def main(config=None):
                 field_names=plotfile_fields,
                 alias_map=config.get("field_aliases"),
                 convert_to_mks=True,
+                derive_native_vorticity=(
+                    _config_needs_native_vorticity(config)
+                ),
             )
         except Exception as exc:
             fdb._log_error(f"Failed to load {label}", exc)
@@ -4066,6 +4488,10 @@ def main(config=None):
         anim_dir = out_dir / "Animation"
         anim_dir.mkdir(parents=True, exist_ok=True)
         try:
+            anim_field = config.get(
+                "animation_field",
+                config.get("contour_fields", ["mach_number"])[0],
+            )
             # Re-discover plotfiles (same range as before)
             anim_plotfiles = fdb.discover_plotfile_paths(
                 config["data_source"],
@@ -4080,7 +4506,13 @@ def main(config=None):
             for pfile in anim_plotfiles:
                 lbl = os.path.basename(pfile)
                 try:
-                    ds = fdb.load_pelec_plotfile(pfile, convert_to_mks=True)
+                    ds = fdb.load_pelec_plotfile(
+                        pfile,
+                        convert_to_mks=True,
+                        derive_native_vorticity=(
+                            anim_field == "vorticity"
+                        ),
+                    )
                     fdb.compute_derived_fields(ds)
                     anim_datasets[lbl] = ds
                     if lbl in surface_data_dict:
@@ -4097,10 +4529,6 @@ def main(config=None):
                     fdb._log_error(f"Reload failed for {lbl}", exc)
 
             if anim_datasets:
-                anim_field = config.get(
-                    "animation_field",
-                    config.get("contour_fields", ["mach_number"])[0],
-                )
                 anim_out = str(anim_dir / f"loading_evolution.gif")
                 pdb.animate_contour_with_surface(
                     anim_datasets,
