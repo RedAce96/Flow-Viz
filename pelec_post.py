@@ -11,6 +11,7 @@
 # =============================================================================
 
 import argparse
+import csv
 import glob
 import gc
 import importlib.metadata
@@ -129,6 +130,10 @@ def _required_plotfile_fields(config):
     if config.get("make_pprime_contour"):
         requested.add(config.get("pprime_field", "pressure"))
 
+    if not requested and config.get("make_force_analysis", False):
+        # The certified force path reads native AMR wall grids directly.
+        # An empty field list keeps this orchestration dataset metadata-only.
+        return []
     if not requested or not requested.issubset(direct_fields):
         return None
     return sorted(requested)
@@ -149,12 +154,14 @@ def _config_needs_native_vorticity(config):
 
 def _json_safe(value):
     """Convert configuration/provenance values to JSON-safe objects."""
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if value is None or isinstance(value, (str, int, bool)):
         return value
+    if isinstance(value, float):
+        return value if np.isfinite(value) else None
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, np.generic):
-        return value.item()
+        return _json_safe(value.item())
     if isinstance(value, dict):
         return {str(k): _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple, set)):
@@ -243,6 +250,118 @@ def _write_run_manifest(output_dir, config, status, plotfiles=None,
     os.replace(temporary, destination)
     return destination
 
+
+def _write_analysis_evidence_report(
+        config, analysis_results, force_report=None):
+    """Assemble current-run measurement evidence without making LST claims."""
+    output_root = Path(config["output_dir"])
+    evidence_dir = output_root / "AnalysisEvidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    successful = {
+        str(label): bool(status)
+        for label, status, _ in analysis_results
+    }
+    sources = {}
+
+    def read_json(label, relative_path):
+        path = output_root / relative_path
+        if not successful.get(label, False) or not path.is_file():
+            return None
+        with path.open("r", encoding="utf-8") as stream:
+            value = json.load(stream)
+        sources[label] = str(path.relative_to(output_root))
+        return value
+
+    wave_report = read_json(
+        "stability", "StabilityDiagnostics/wave_analysis_report.json"
+    )
+    packet_report = read_json(
+        "transient", "TransientAnalysis/packet_propagation.json"
+    )
+    nonlinear_report = read_json(
+        "nonlinear", "NonlinearDiagnostics/nonlinear_significance.json"
+    )
+
+    modal_summary = None
+    modal_path = (
+        output_root / "FFTProbes" / "ModalAnalysis" / "modal_results.npz"
+    )
+    if successful.get("fft_probes", False) and modal_path.is_file():
+        with np.load(modal_path, allow_pickle=False) as archive:
+            modal_summary = {
+                "pod_subspace_cosines": archive[
+                    "sensitivity_pod_subspace_min_cosine_to_first_window"
+                ],
+                "dmd_dominant_frequency_hz": archive[
+                    "sensitivity_dmd_dominant_frequency_hz"
+                ],
+                "dmd_condition_number": archive[
+                    "sensitivity_dmd_retained_condition_number"
+                ],
+                "norm_definition": str(
+                    archive["modal_norm_definition"].item()
+                ),
+                "norm_scope": str(archive["modal_norm_scope"].item()),
+            }
+        sources["modal"] = str(modal_path.relative_to(output_root))
+
+    report = fdb.classify_measured_dynamics(
+        wave_report=wave_report,
+        packet_report=packet_report,
+        nonlinear_report=nonlinear_report,
+        modal_summary=modal_summary,
+        force_report=force_report,
+    )
+    report.update({
+        "generated_at": datetime.datetime.now(
+            datetime.timezone.utc
+        ).isoformat(),
+        "code_provenance": _git_provenance(),
+        "source_products": sources,
+        "enabled_workflows": {
+            "coherent_wave": bool(config.get(
+                "make_stability_diagnostics", False
+            )),
+            "transient_packet": bool(config.get(
+                "make_transient_analysis", False
+            )),
+            "quadratic_nonlinearity": bool(config.get(
+                "make_nonlinear_diagnostics", False
+            )),
+            "modal": bool(
+                config.get("make_fft_probes", False)
+                and config.get("make_modal_analysis", False)
+            ),
+            "aerodynamic_loads": bool(config.get(
+                "make_force_analysis", False
+            )),
+        },
+    })
+    report_path = evidence_dir / "analysis_evidence.json"
+    temporary = evidence_dir / ".analysis_evidence.json.tmp"
+    with temporary.open("w", encoding="utf-8") as stream:
+        json.dump(_json_safe(report), stream, indent=2, sort_keys=True)
+        stream.write("\n")
+    os.replace(temporary, report_path)
+
+    matrix_path = evidence_dir / "analysis_evidence_matrix.csv"
+    temporary_matrix = evidence_dir / ".analysis_evidence_matrix.csv.tmp"
+    with temporary_matrix.open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow([
+            "evidence_domain", "status", "meaning",
+            "LST_or_PSE_attribution",
+        ])
+        for domain, item in report["evidence"].items():
+            writer.writerow([
+                domain,
+                item.get("status", "not_available"),
+                item.get("meaning", ""),
+                "not performed; outside project scope",
+            ])
+    os.replace(temporary_matrix, matrix_path)
+    return report
+
 # ---------------------------------------------------------------------------
 #  USER CONFIGURATION
 # ---------------------------------------------------------------------------
@@ -253,9 +372,12 @@ CONFIG = {
     # --- Data source ---
     "data_source": "../TS-Driver/FP-Extended-Domain/pltFile",   # Directory with plotfiles
     "plot_prefix": "pltFlatPlatePost",                         # Plotfile directory prefix
-    # Dedicated review folder: preserves older output families while showing
-    # the corrected figure formats and analysis products from this workflow.
-    "output_dir": "../TS-Driver/FP-Extended-Domain/3-Plot-Outputs/Vorticity",
+    # Focused recommendations 6--10 demonstration. This directory is kept
+    # separate from the force-certification and legacy contour products.
+    "output_dir": (
+        "../TS-Driver/FP-Extended-Domain/3-Plot-Outputs/"
+        "Analysis-Recommendations-6-10"
+    ),
 
     # --- Snapshot range ---
     # Set to None to process all discovered plotfiles.
@@ -270,16 +392,19 @@ CONFIG = {
     "field_aliases": None,
 
     # --- Workflow toggles ---
-    "make_contour_plots": True,   # flow-through-time contour titles
+    # Probe-only demonstration: avoid loading every selected AMReX snapshot.
+    "make_contour_plots": False,
     "make_line_profiles": False,   # eta for similarity plots; otherwise y/delta_99
     "make_streamlines": False,
     "make_surface_analysis": False,
     "make_group_plots": False,
 
     "make_probe_plots": False,   # set True only if you need time-history plots (requires ASCII conversion)
-    "make_fft_probes": False,      # set True to run FFT / stability analysis on probe data
+    "make_fft_probes": True,       # FFT/coherence plus weighted POD/SPOD/DMD
     "make_pprime_contour": False,       # symmetric perturbation contours
-    "make_stability_diagnostics": False, # corrected phase-speed references
+    # Legacy workflow name; the enabled result is a measurement-first,
+    # coherence-gated wave analysis and does not perform LST/PSE.
+    "make_stability_diagnostics": True,
 
 
     # --- Contour plot settings ---
@@ -302,8 +427,8 @@ CONFIG = {
         "vorticity_magnitude": "linear",
     },
     "contour_vlims": {                       # Per-field color limits [vmin, vmax]
-        "vorticity": [-1000, 1000],       # symmetric signed range [s^-1]
-        "vorticity_magnitude": [0, 1000], # emphasize outer-flow detail [s^-1]
+        "vorticity": [-10000, 10000],       # symmetric signed range [s^-1]
+        "vorticity_magnitude": [0, 10000], # emphasize outer-flow detail [s^-1]
     },
     "contour_xlim": [-0.001, 0.4],           # full 0.4 m plate
     "contour_ylim": None,                    # [ymin, ymax] or None for full domain
@@ -382,7 +507,7 @@ CONFIG = {
     "plate_leading_edge": 0.0,            # [m] for geometry_type='flat_plate'
     "surface_rho_inf": 0.021180978923532486,
     "surface_u_inf": 1726.0,
-    "surface_T_inf": None,
+    "surface_T_inf": 125.0,
     "surface_mu": 8.65e-6,                  # constant viscosity [Pa.s]; None -> Sutherland
     "surface_k": 0.012415,                   # constant thermal cond. [W/(m.K)]; None -> mu*Cp/Pr
     "surface_wall_temperature": 293,    # constant wall temp [K]; None -> use cell-adjacent T
@@ -390,8 +515,10 @@ CONFIG = {
     "surface_Cp": 1004.0,                # specific heat [J/(kg.K)]
 
     # --- Force analysis settings ---
-    # Surface-dependent products remain disabled because this review run does
-    # not enable surface analysis.
+    # Keep certified force extraction off in this probe-focused demonstration
+    # so the run does not traverse the selected plotfile series. The evidence
+    # matrix will correctly mark aerodynamic-load evidence as not available;
+    # use the separately certified priorities 1--5 setup for force products.
     "make_force_analysis": False,
     "make_spacetime_plots": False,
     "make_force_animation": False,       # synchronized contour + surface-value animation
@@ -399,6 +526,92 @@ CONFIG = {
     "animation_surface_key": "C_p",       # surface values advanced at the same time
     "animation_fps": 8,
     "reference_area": None,              # auto = plate length * 1 m span
+
+    # Certified one-sided flat-plate force analysis.  The legacy ``surface_*``
+    # keys above remain available for general surface visualisation, but force
+    # integration uses this explicit physical contract.
+    "force": {
+        "geometry": {
+            "type": "flat_plate_one_sided",
+            "x_range_m": [0.0, 0.4],
+            "wall_y_m": 0.0,
+        },
+        "reference": {
+            "rho_inf": 0.021180978923532486,
+            "u_inf": 1726.0,
+            "p_inf": 760.0,
+            "T_inf": 125.0,
+            "R": 287.05,
+            "chord_m": 0.4,
+            "span_m": 1.0,
+            "moment_origin_m": [0.1, 0.0],
+        },
+        "transport": {
+            "model": "constant",
+            "mu_pa_s": 8.65e-6,
+            "k_w_m_k": 0.012415,
+            "wall_temperature_k": 293.0,
+        },
+        "wall_fit": {
+            "pressure_order": 2,
+            "velocity_order": 2,
+            "fluid_points": 4,
+            "viscosity_relative_tolerance": 1.0e-4,
+        },
+        "baseline": {
+            "mode": "static",  # "static", "paired", or "none"
+            "plotfile": "pltFlatPlateFlow210729",
+            "data_source": None,  # None -> top-level data_source
+            "paired_data_source": None,
+            "paired_plot_prefix": None,
+            "time_tolerance_s": 1.0e-12,
+            "drift_data_source": None,
+            "drift_plot_prefix": "pltFlatPlatePost",
+            "drift_sample_count": 10,
+        },
+        "boundary_layer": {
+            "enabled": True,
+            "stations_m": [0.05, 0.10, 0.20, 0.30],
+            "maximum_height_m": 0.01,
+        },
+        "quality": {
+            "minimum_coverage": 0.995,
+            "maximum_gap_widths": 2.0,
+            "minimum_forcing_periods": 10.0,
+            "minimum_welch_segments": 8,
+        },
+        "laser": {
+            "start_time_s": 0.005,
+            "frequency_hz": 10.0e6,
+            "pulse_fwhm_s": 10.0e-9,
+            "energy_per_pulse_j": 1.0e-3,
+            "duration_s": 3.0e-4,
+            "impulse_interval_s": None,
+        },
+        "history": {
+            "path": None,
+            # Probe/force linkage is opt-in because production probe files can
+            # be very large. Coordinates in PeleC probe headers are converted
+            # from centimetres to metres in the saved linkage product.
+            "probe_bin_files": [],
+            "probe_pressure_var_col": 3,
+            "probe_max_probes": None,
+            "spectral_nperseg": 16384,
+            "spectral_noverlap": 0.5,
+        },
+        "validation": {
+            "fit_sensitivity": True,
+            "integration_start_locations_m": [0.0, 0.001, 0.005, 0.01],
+            "grid_comparison_plotfile": None,
+            "control_volume": {
+                "enabled": False,
+                "plotfile": None,
+                "x_range_m": [0.05, 0.30],
+                "top_y_m": 0.01,
+                "maximum_level": 1,
+            },
+        },
+    },
 
     # --- Laser annotation (for time-series / animation) ---
     "laser_start_time": 0.005,            # [s] time when laser turns on
@@ -433,8 +646,13 @@ CONFIG = {
     "fft_window_compensation": True,  # Scale FFT amplitudes to preserve magnitude
     "fft_batch_size": 32,             # Probe columns per vectorized FFT batch
     "fft_plot_last_probe": False,
-    "fft_plot_probe_indices": [499, 749, 999, 1249, 1749],
-    "fft_plot_contour": True,  # can OOM with 2000 probes; use True with fft_max_probes <= ~200
+    # Use the same streamwise stations in the FFT and STFT comparison.
+    "fft_plot_probe_indices": [
+        0, 249, 499, 749, 999, 1249, 1499, 1749, 1999,
+    ],
+    # The full 2000-probe FFT contour is not needed for this demonstration
+    # and materially increases memory and plotting cost.
+    "fft_plot_contour": False,
     "fft_contour_normalize": True,  # True can create bright artifacts where the reference probe has a node
     "fft_contour_ref_probe": 749,
     "fft_contour_scale": "linear",  # "linear" gives 0-to-max amplitude; "db" gives the legacy dB plot
@@ -448,7 +666,9 @@ CONFIG = {
     "fft_slope_fmax": 2.0e8,
     "fft_plot_spectral_slope": True,
     "fft_growth_freqs": [5.0e6, 10.0e6, 30.0e6, 100.0e6, 200.0e6],
-    "fft_plot_growth_curves": True,
+    # Stationary full-record growth curves are superseded here by the
+    # coherence-gated local wavenumber fit and convecting-packet energy fit.
+    "fft_plot_growth_curves": False,
     # Welch coherence is evaluated on adjacent probe pairs near the selected
     # plotting stations. None builds [(i, i+1), ...] automatically.
     "make_coherence_analysis": True,
@@ -459,12 +679,20 @@ CONFIG = {
     # Modal screening on selected probe stations. These decompositions are
     # explicitly descriptive and are not substituted for LST eigenmodes.
     "make_modal_analysis": True,
-    "modal_probe_indices": None,  # None -> selected FFT/reconstruction probes
+    "modal_probe_indices": None,  # None -> full ordered line at modal_probe_stride
+    "modal_probe_stride": 4,
     "modal_n_modes": 4,
     "modal_spod_nperseg": 4096,
     "modal_spod_noverlap": 0.5,
     "modal_spod_frequency_stride": 2,
     "modal_spod_fmax": 50.0e6,
+    "modal_use_compressible_energy_weights": True,
+    "modal_base_rho_kg_m3": 0.021180978923532486,
+    "modal_base_temperature_k": 125.0,
+    "modal_gamma": 1.4,
+    "modal_gas_constant_j_kg_k": 287.05,
+    "modal_sensitivity_dmd_ranks": [2, 4, 8],
+    "modal_sensitivity_windows": [[0.0, 0.5], [0.5, 1.0]],
 
     # --- Pressure perturbation (p') contour ---
     "pprime_baseline_plotfile": "pltFlatPlateFlow210000",
@@ -514,7 +742,9 @@ CONFIG = {
     # Reconstruct time-domain disturbance from FFT harmonics, a frequency
     # band, or the top-N amplitude frequency peaks.
     # Requires make_fft_probes=True.
-    "make_disturbance_reconstruction": True,
+    # The older harmonic/top-frequency reconstruction is not part of this
+    # focused recommendations 6--10 run.
+    "make_disturbance_reconstruction": False,
     # None reuses fft_plot_probe_indices.  This keeps the expensive window
     # detection and reconstruction aligned with the probes selected for plots.
     # Set an explicit list only when reconstruction should use a different set.
@@ -573,13 +803,30 @@ CONFIG = {
     "transient_band": [1.0e5, 1.0e6],       # includes heuristic/observed low-MHz modes
     "transient_stft_nperseg": 16384,
     "transient_stft_noverlap": 0.75,
-    "transient_plot_probe_indices": [0, 49, 99, 249, 499],
+    # Nine probes spanning the complete line; these match the FFT figures.
+    "transient_plot_probe_indices": [
+        0, 249, 499, 749, 999, 1249, 1499, 1749, 1999,
+    ],
+    "transient_make_fft_stft_comparison": True,
+    "transient_spectrogram_scale": "linear",
+    # Linear PSD is nonnegative, matching the zero-based FFT-vs-x contour
+    # convention. None selects the maximum of each plotted spectrogram.
+    "transient_spectrogram_vmin": 0.0,
+    "transient_spectrogram_vmax": None,
+    "transient_spectrogram_fmax_hz": 2.0e6,
     "transient_probe_stride": 4,
+    "transient_baseline_end_time_s": 0.005,
+    "transient_arrival_noise_sigma": 6.0,
+    "transient_arrival_peak_fraction": 0.05,
+    "transient_arrival_persistent_samples": 4,
+    "transient_filter_edge_fraction": 0.01,
 
     # --- Phase 3: Nonlinear interaction diagnostics (bispectrum) ---
     # Quadratic phase-coupling detection via bicoherence.
     "make_nonlinear_diagnostics": True,
-    "nonlinear_nperseg": 16384,             # resolves O(0.1 MHz) content
+    # 8192 samples give about 61 kHz bins at the current 500 MHz sampling
+    # rate and 14 conservative non-overlapping blocks in the pilot record.
+    "nonlinear_nperseg": 8192,
     "nonlinear_noverlap": 0.5,              # overlap fraction
     "nonlinear_plot_probe_indices": [0, 49, 99, 249, 499],
     "nonlinear_target_freqs": None,          # None -> strongest independent peaks
@@ -589,6 +836,18 @@ CONFIG = {
     "nonlinear_probe_stride": 4,             # spatial sampling for triad trend
     # No significance line is drawn without a validated null/surrogate model.
     "nonlinear_reference_threshold": None,
+    "nonlinear_surrogate_validation": True,
+    # 499 surrogates resolve p=0.002, sufficient for the first BH threshold
+    # with the 15 unique unordered triads from five target frequencies.
+    "nonlinear_surrogate_count": 499,
+    "nonlinear_surrogate_alpha": 0.05,
+    "nonlinear_minimum_independent_segments": 8,
+    "nonlinear_surrogate_seed": 271828,
+    "nonlinear_laser_frequency_hz": 10.0e6,
+
+    # Unified evidence report. This classifies measured behavior without
+    # attempting LST/PSE or instability-eigenmode identification.
+    "make_evidence_classification": True,
 
     # --- Logging ---
     "debug_mode": True,
@@ -599,9 +858,9 @@ def run_validation_case(output_dir="validation_outputs"):
     """Run a fast synthetic case with known spectral and propagation answers.
 
     This test does not read AMReX plotfiles or production probe binaries. It
-    writes four figures that exercise the corrected phase convention,
-    same-window reconstruction metric, absolute-time PSD spectrogram,
-    instantaneous frequency, and bicoherence calculation.
+    exercises phase/coherence gating, packet kinematics, surrogate
+    bicoherence significance, weighted modal sensitivity, and the
+    measurement-only evidence classifier in addition to the core plots.
 
     Run from the project directory with::
 
@@ -702,6 +961,21 @@ def run_validation_case(output_dir="validation_outputs"):
         title="PSD spectrogram validation (absolute flow time)",
         nperseg=nperseg,
         noverlap=noverlap,
+        scale="linear",
+        vmin=0.0,
+    )
+    pdb.plot_fft_stft_comparison(
+        time, measured, fs,
+        output_path=str(
+            output_dir / "03_fft_stft_comparison_validation.png"
+        ),
+        fmax=20.0e6,
+        title="Synthetic same-probe FFT/STFT comparison",
+        signal_label="Mean-subtracted synthetic pressure",
+        nperseg=nperseg,
+        noverlap=noverlap,
+        spectrogram_scale="linear",
+        spectrogram_vmin=0.0,
     )
     envelope, _, inst_freq, filtered = fdb.bandpass_hilbert_envelope(
         measured - np.mean(measured), fs, 4.0e6, 7.0e6, order=4
@@ -789,7 +1063,10 @@ def run_validation_case(output_dir="validation_outputs"):
         - 2.0 * np.pi * modal_x[None, :] / 0.04
     )
     modal_dataset = mdb.SnapshotMatrix(
-        time, modal_values, modal_x[:, None], variable="synthetic pressure"
+        time, modal_values, modal_x[:, None], variable="synthetic pressure",
+        weights=mdb.scalar_compressible_energy_weights(
+            modal_x, "pressure", rho_base=0.02, temperature_base=125.0
+        )["weights"],
     )
     pod_validation = mdb.compute_pod(modal_dataset, n_modes=3)
     spod_grid = np.fft.rfftfreq(512, 1.0 / fs)
@@ -806,6 +1083,73 @@ def run_validation_case(output_dir="validation_outputs"):
     recovered_dmd_frequency = float(np.nanmedian(
         np.abs(dmd_validation["frequency_hz"])
     ))
+    modal_sensitivity = mdb.compute_modal_sensitivity(
+        modal_dataset, pod_modes=2, dmd_ranks=[2],
+        window_fractions=[[0.0, 0.5], [0.5, 1.0]],
+    )
+
+    # ------------------------------------------------------------------
+    # 6. Robust packet propagation and nonlinear-significance gates.
+    # ------------------------------------------------------------------
+    packet_x = np.linspace(0.0, 0.04, 9)
+    imposed_group_velocity = 800.0
+    packet_centre = (
+        time[0] + 10.0e-6 + packet_x / imposed_group_velocity
+    )
+    packet_envelopes = np.exp(0.5 * 8.0 * packet_x)[None, :] * np.exp(
+        -0.5 * (
+            (time[:, None] - packet_centre[None, :]) / 3.0e-6
+        ) ** 2
+    )
+    packet_propagation = fdb.estimate_packet_propagation(
+        packet_x, time, packet_envelopes,
+        baseline_end_time_s=time[0] + 3.0e-6,
+        peak_fraction=0.05,
+    )
+    pdb.plot_packet_propagation(
+        packet_propagation,
+        output_path=str(output_dir / "09_packet_propagation_validation.png"),
+    )
+    nonlinear_significance = fdb.compute_surrogate_triad_significance(
+        coupled, fs, [f1, f2], nperseg=500, noverlap=250,
+        n_surrogates=99, minimum_independent_segments=8,
+        random_seed=20260724, laser_frequency_hz=10.0e6,
+    )
+    evidence_validation = fdb.classify_measured_dynamics(
+        wave_report={
+            "phase_fit_accepted_fraction": 1.0,
+            "complex_wavenumber_accepted_fraction": 1.0,
+        },
+        packet_report=packet_propagation,
+        nonlinear_report={
+            "probe_results": [{
+                "status": "complete",
+                "significant_nonlaser_triad_count": int(np.sum(
+                    nonlinear_significance["significant_fdr"]
+                    & ~nonlinear_significance["laser_harmonic_related"]
+                )),
+                "significant_laser_related_triad_count": int(np.sum(
+                    nonlinear_significance["significant_fdr"]
+                    & nonlinear_significance["laser_harmonic_related"]
+                )),
+            }]
+        },
+        modal_summary={
+            "pod_subspace_cosines": modal_sensitivity[
+                "pod_subspace_min_cosine_to_first_window"
+            ],
+            "dmd_dominant_frequency_hz": modal_sensitivity[
+                "dmd_dominant_frequency_hz"
+            ],
+            "dmd_condition_number": modal_sensitivity[
+                "dmd_retained_condition_number"
+            ],
+        },
+    )
+    with (output_dir / "10_evidence_validation.json").open(
+            "w", encoding="utf-8") as stream:
+        json.dump(_json_safe(evidence_validation), stream, indent=2)
+        stream.write("\n")
 
     # Machine-readable values make the visual case suitable for regression.
     np.savez(
@@ -825,6 +1169,21 @@ def run_validation_case(output_dir="validation_outputs"):
         common_validation_relative_rms=common_model["validation_relative_rms"],
         pod_energy_fraction=pod_validation["energy_fraction"],
         recovered_dmd_frequency_hz=recovered_dmd_frequency,
+        recovered_group_velocity_m_s=packet_propagation[
+            "group_velocity_m_s"
+        ],
+        packet_arrival_fit_r_squared=packet_propagation[
+            "arrival_fit_r_squared"
+        ],
+        nonlinear_empirical_p_value=nonlinear_significance[
+            "empirical_p_value"
+        ],
+        nonlinear_significant_fdr=nonlinear_significance[
+            "significant_fdr"
+        ],
+        modal_pod_subspace_cosine=modal_sensitivity[
+            "pod_subspace_min_cosine_to_first_window"
+        ],
     )
 
     if not np.isclose(measured_phase_speed, expected_phase_speed, rtol=1.0e-10):
@@ -838,6 +1197,12 @@ def run_validation_case(output_dir="validation_outputs"):
         raise RuntimeError("Held-out common-frequency validation failed")
     if not np.isclose(recovered_dmd_frequency, 5.0e6, rtol=1.0e-3):
         raise RuntimeError("DMD frequency validation failed")
+    if not np.isclose(
+            packet_propagation["group_velocity_m_s"],
+            imposed_group_velocity, rtol=0.01):
+        raise RuntimeError("Packet group-velocity validation failed")
+    if not np.any(nonlinear_significance["significant_fdr"]):
+        raise RuntimeError("Surrogate bicoherence significance validation failed")
 
     _ts(f"Phase speed: expected {expected_phase_speed:.3f}, "
         f"recovered {measured_phase_speed:.3f} m/s")
@@ -847,6 +1212,14 @@ def run_validation_case(output_dir="validation_outputs"):
     _ts(f"Known coupled-triad bicoherence: {coupled_b2:.4f}")
     _ts(f"Common-mode held-out max relative RMS: {common_validation_rms:.3e}")
     _ts(f"DMD frequency: expected 5.000e6, recovered {recovered_dmd_frequency:.6e} Hz")
+    _ts(
+        f"Packet speed: expected {imposed_group_velocity:.3f}, recovered "
+        f"{packet_propagation['group_velocity_m_s']:.3f} m/s"
+    )
+    _ts(
+        "Surrogate-significant coupled triads: "
+        f"{np.count_nonzero(nonlinear_significance['significant_fdr'])}"
+    )
     _ts("Validation PASSED")
     return 0
 
@@ -1295,6 +1668,7 @@ def _process_single_surface(args):
             T_wall=config.get("surface_wall_temperature"),
             Pr=config.get("surface_Pr", 0.71),
             Cp=config.get("surface_Cp", 1004.0),
+            p_inf=config.get("force", {}).get("reference", {}).get("p_inf"),
         )
 
         # Plot surface properties
@@ -1305,27 +1679,1341 @@ def _process_single_surface(args):
             output_path=str(prop_out),
         )
 
-        # ---- Force analysis ----
-        force_result = None
-        if config.get("make_force_analysis", False):
-            try:
-                chord = config.get("reference_area", None)
-                if chord is not None:
-                    # reference_area is the area; derive chord as area / 1m
-                    chord = chord / 1.0
-                force_result = fdb.compute_integrated_forces(
-                    surface_data,
-                    rho_inf=config["surface_rho_inf"],
-                    u_inf=config["surface_u_inf"],
-                    chord_length=chord,
-                )
-                force_result["time"] = dataset.get("time", 0.0)
-            except Exception as fexc:
-                fdb._log_error(f"Force calculation failed for {label}", fexc)
-
-        return (label, True, {"surface": surface_data, "forces": force_result})
+        # Certified force integration is deliberately decoupled from this
+        # legacy general-surface visualisation path.
+        return (label, True, {"surface": surface_data, "forces": None})
     except Exception as exc:
         return (label, False, str(exc))
+
+
+def _certified_force_reference(config, pressure_increment=False):
+    """Translate public force configuration into the numerical API."""
+    force = config["force"]
+    reference = force["reference"]
+    return {
+        "rho_inf": float(reference["rho_inf"]),
+        "u_inf": float(reference["u_inf"]),
+        "p_inf": 0.0 if pressure_increment else float(reference["p_inf"]),
+        "chord": float(reference["chord_m"]),
+        "span": float(reference.get("span_m", 1.0)),
+        "moment_origin": np.asarray(reference["moment_origin_m"], dtype=float),
+        "x_range_m": np.asarray(force["geometry"]["x_range_m"], dtype=float),
+        "viscosity_pa_s": float(force["transport"]["mu_pa_s"]),
+    }
+
+
+def _force_output_metadata(config):
+    """Metadata contract shared by every certified force NPZ product."""
+    force = config["force"]
+    reference = force["reference"]
+    transport = force["transport"]
+    return {
+        "schema_version": np.array(1),
+        "certified_scope": np.array("stationary_one_sided_flat_plate"),
+        "load_designation": np.array("one_sided_per_unit_span"),
+        "pressure_convention": np.array("p_wall_minus_explicit_p_inf"),
+        "geometry_type": np.array(force["geometry"]["type"]),
+        "x_range_m": np.asarray(force["geometry"]["x_range_m"], dtype=float),
+        "wall_y_m": np.array(force["geometry"]["wall_y_m"]),
+        "rho_inf_kg_m3": np.array(reference["rho_inf"]),
+        "u_inf_m_s": np.array(reference["u_inf"]),
+        "p_inf_pa": np.array(reference["p_inf"]),
+        "T_inf_k": np.array(reference["T_inf"]),
+        "chord_m": np.array(reference["chord_m"]),
+        "span_m": np.array(reference["span_m"]),
+        "moment_origin_m": np.asarray(
+            reference["moment_origin_m"], dtype=float
+        ),
+        "transport_model": np.array(transport["model"]),
+        "mu_pa_s": np.array(transport["mu_pa_s"]),
+        "k_w_m_k": np.array(transport["k_w_m_k"]),
+        "wall_temperature_k": np.array(transport["wall_temperature_k"]),
+    }
+
+
+def _save_force_wall_npz(path, wall, config, increment_wall=None):
+    """Persist one wall snapshot without object/pickle arrays."""
+    arrays = _force_output_metadata(config)
+    for key, value in wall.items():
+        if isinstance(value, (str, os.PathLike)):
+            arrays[key] = np.array(str(value))
+        elif value is None:
+            continue
+        else:
+            candidate = np.asarray(value)
+            if candidate.dtype != object:
+                arrays[key] = candidate
+    if increment_wall is not None:
+        for key, value in increment_wall.items():
+            if isinstance(value, (str, os.PathLike)):
+                arrays[f"delta_{key}"] = np.array(str(value))
+            elif value is not None:
+                candidate = np.asarray(value)
+                if candidate.dtype != object:
+                    arrays[f"delta_{key}"] = candidate
+    np.savez_compressed(path, **arrays)
+
+
+def _save_boundary_layer_npz(path, profiles, config):
+    arrays = {
+        **_force_output_metadata(config),
+        "station_count": np.array(len(profiles), dtype=int),
+    }
+    for index, profile in enumerate(profiles):
+        prefix = f"station_{index:03d}_"
+        for key, value in profile.items():
+            if isinstance(value, (str, os.PathLike)):
+                arrays[prefix + key] = np.array(str(value))
+            elif value is not None:
+                candidate = np.asarray(value)
+                if candidate.dtype != object:
+                    arrays[prefix + key] = candidate
+    np.savez_compressed(path, **arrays)
+
+
+def _process_single_certified_force(args):
+    """Extract and integrate one certified flat-plate force snapshot."""
+    plotfile_path, config, baseline_wall, paired_baseline_path = args
+    label = os.path.basename(os.fspath(plotfile_path))
+    force_cfg = config["force"]
+    geometry = force_cfg["geometry"]
+    reference = force_cfg["reference"]
+    transport = force_cfg["transport"]
+    wall_fit = force_cfg["wall_fit"]
+    quality = force_cfg["quality"]
+    try:
+        wall = fdb.extract_native_flat_plate_wall(
+            plotfile_path,
+            x_range_m=geometry["x_range_m"],
+            wall_y_m=geometry["wall_y_m"],
+            p_inf_pa=reference["p_inf"],
+            rho_inf_kg_m3=reference["rho_inf"],
+            u_inf_m_s=reference["u_inf"],
+            viscosity_pa_s=transport["mu_pa_s"],
+            pressure_order=wall_fit["pressure_order"],
+            velocity_order=wall_fit["velocity_order"],
+            fluid_points=wall_fit["fluid_points"],
+            viscosity_relative_tolerance=wall_fit[
+                "viscosity_relative_tolerance"
+            ],
+        )
+        force_result = fdb.integrate_flat_plate_wall_forces(
+            wall,
+            _certified_force_reference(config),
+            minimum_coverage=quality["minimum_coverage"],
+            maximum_gap_widths=quality["maximum_gap_widths"],
+        )
+        time_value = float(wall["time_s"])
+        laser_start = float(force_cfg["laser"]["start_time_s"])
+        force_result["time"] = time_value
+        force_result["time_relative_s"] = time_value - laser_start
+        force_result["analysis_classification"] = (
+            "short_transient_validation"
+        )
+        force_result.update({
+            "load_designation": "one_sided_per_unit_span",
+            "pressure_convention": "p_wall_minus_explicit_p_inf",
+            "transport_model": transport["model"],
+            "mu_pa_s": float(transport["mu_pa_s"]),
+            "k_w_m_k": float(transport["k_w_m_k"]),
+            "wall_temperature_k": float(transport["wall_temperature_k"]),
+            "moment_origin_x_m": float(reference["moment_origin_m"][0]),
+            "moment_origin_y_m": float(reference["moment_origin_m"][1]),
+        })
+
+        comparison_wall = baseline_wall
+        if paired_baseline_path is not None:
+            comparison_wall = fdb.extract_native_flat_plate_wall(
+                paired_baseline_path,
+                x_range_m=geometry["x_range_m"],
+                wall_y_m=geometry["wall_y_m"],
+                p_inf_pa=reference["p_inf"],
+                rho_inf_kg_m3=reference["rho_inf"],
+                u_inf_m_s=reference["u_inf"],
+                viscosity_pa_s=transport["mu_pa_s"],
+                pressure_order=wall_fit["pressure_order"],
+                velocity_order=wall_fit["velocity_order"],
+                fluid_points=wall_fit["fluid_points"],
+                viscosity_relative_tolerance=wall_fit[
+                    "viscosity_relative_tolerance"
+                ],
+            )
+
+        increment_wall = None
+        increment_force = None
+        if comparison_wall is not None:
+            increment_wall = fdb.difference_flat_plate_wall_surfaces(
+                wall, comparison_wall
+            )
+            increment_force = fdb.integrate_flat_plate_wall_forces(
+                increment_wall,
+                _certified_force_reference(config, pressure_increment=True),
+                minimum_coverage=quality["minimum_coverage"],
+                maximum_gap_widths=quality["maximum_gap_widths"],
+            )
+            increment_mapping = {
+                "D_pressure_N_m": "delta_D_pressure_N_m",
+                "D_viscous_N_m": "delta_D_viscous_N_m",
+                "D_total_N_m": "delta_D_total_N_m",
+                "N_pressure_N_m": "delta_N_pressure_N_m",
+                "N_viscous_N_m": "delta_N_viscous_N_m",
+                "N_total_N_m": "delta_N_total_N_m",
+                "M_pressure_N": "delta_M_pressure_N",
+                "M_viscous_N": "delta_M_viscous_N",
+                "M_total_N": "delta_M_total_N",
+                "C_D_pressure": "delta_C_D_pressure",
+                "C_D_viscous": "delta_C_D_viscous",
+                "C_D": "delta_C_D",
+                "C_N_pressure_one_sided":
+                    "delta_C_N_pressure_one_sided",
+                "C_N_viscous_one_sided":
+                    "delta_C_N_viscous_one_sided",
+                "C_N_one_sided": "delta_C_N_one_sided",
+                "C_L_one_sided": "delta_C_L_one_sided",
+                "C_M_pressure": "delta_C_M_pressure",
+                "C_M_viscous": "delta_C_M_viscous",
+                "C_M": "delta_C_M",
+            }
+            for source_key, destination_key in increment_mapping.items():
+                force_result[destination_key] = increment_force[source_key]
+            comparison_force = fdb.integrate_flat_plate_wall_forces(
+                comparison_wall,
+                _certified_force_reference(config),
+                minimum_coverage=quality["minimum_coverage"],
+                maximum_gap_widths=quality["maximum_gap_widths"],
+            )
+            for key in (
+                    "D_pressure_N_m", "D_viscous_N_m", "D_total_N_m",
+                    "N_pressure_N_m", "N_viscous_N_m", "N_total_N_m",
+                    "M_pressure_N", "M_viscous_N", "M_total_N",
+                    "C_D_pressure", "C_D_viscous", "C_D",
+                    "C_N_pressure_one_sided", "C_N_viscous_one_sided",
+                    "C_N_one_sided", "C_L_one_sided",
+                    "C_M_pressure", "C_M_viscous", "C_M"):
+                force_result[f"baseline_{key}"] = comparison_force[key]
+            direct_delta = (
+                force_result["D_total_N_m"]
+                - comparison_force["D_total_N_m"]
+            )
+            force_result["delta_drag_consistency_error_N_m"] = (
+                increment_force["D_total_N_m"] - direct_delta
+            )
+            force_result["baseline_source"] = comparison_wall.get("source")
+            force_result["baseline_amr_max_level"] = int(
+                comparison_wall.get("amr_max_level", -1)
+            )
+            force_result["current_amr_max_level"] = int(
+                wall.get("amr_max_level", -1)
+            )
+            force_result["baseline_amr_level_match"] = bool(
+                force_result["baseline_amr_max_level"]
+                == force_result["current_amr_max_level"]
+            )
+
+        profiles = []
+        bl_cfg = force_cfg["boundary_layer"]
+        if bl_cfg.get("enabled", False):
+            profiles = fdb.extract_native_flat_plate_boundary_layers(
+                plotfile_path,
+                stations_m=bl_cfg["stations_m"],
+                maximum_height_m=bl_cfg["maximum_height_m"],
+                wall_y_m=geometry["wall_y_m"],
+                wall_temperature_k=transport["wall_temperature_k"],
+                viscosity_pa_s=transport["mu_pa_s"],
+                conductivity_w_m_k=transport["k_w_m_k"],
+                fluid_points=wall_fit["fluid_points"],
+            )
+
+        output_root = Path(config["output_dir"]) / "ForceAnalysis"
+        wall_dir = output_root / "WallSurfaces"
+        bl_dir = output_root / "BoundaryLayers"
+        wall_dir.mkdir(parents=True, exist_ok=True)
+        _save_force_wall_npz(
+            wall_dir / f"wall_surface_{label}.npz",
+            wall, config, increment_wall=increment_wall,
+        )
+        if profiles:
+            bl_dir.mkdir(parents=True, exist_ok=True)
+            _save_boundary_layer_npz(
+                bl_dir / f"boundary_layer_{label}.npz", profiles, config
+            )
+        return (
+            label, True,
+            {
+                "wall": wall,
+                "force": force_result,
+                "increment_wall": increment_wall,
+                "increment_force": increment_force,
+                "boundary_layers": profiles,
+            },
+        )
+    except Exception as exc:
+        return (label, False, str(exc))
+
+
+def _piecewise_wall_values(wall, key, centers):
+    starts = np.asarray(wall["x_left_m"], dtype=float)
+    ends = np.asarray(wall["x_right_m"], dtype=float)
+    values = np.asarray(wall[key], dtype=float)
+    centers = np.asarray(centers, dtype=float)
+    indices = np.searchsorted(starts, centers, side="right") - 1
+    valid = (
+        (indices >= 0)
+        & (indices < len(starts))
+        & (centers < ends[np.clip(indices, 0, len(ends) - 1)] + 1.0e-12)
+    )
+    output = np.full(centers.shape, np.nan)
+    output[valid] = values[indices[valid]]
+    return output
+
+
+def _run_force_core_self_validation():
+    """Fast manufactured checks included in every force validation report."""
+    edges = np.linspace(0.0, 1.0, 9)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    distance = np.array([0.01, 0.02, 0.03, 0.04])
+    pressure = 120.0 + 3.0 * distance + 2.0 * distance ** 2
+    velocity = 50.0 * distance - 4.0 * distance ** 2
+    wall = fdb.reconstruct_flat_plate_wall_stencils(
+        edges[:-1], edges[1:],
+        np.tile(distance, (len(centers), 1)),
+        np.tile(pressure, (len(centers), 1)),
+        np.tile(velocity, (len(centers), 1)),
+        viscosity_pa_s=2.0,
+        p_inf_pa=100.0, rho_inf_kg_m3=2.0, u_inf_m_s=10.0,
+    )
+    wall["requested_x_range_m"] = np.array([0.0, 1.0])
+    result = fdb.integrate_flat_plate_wall_forces(
+        wall,
+        {
+            "rho_inf": 2.0, "u_inf": 10.0, "p_inf": 100.0,
+            "chord": 1.0, "moment_origin": [0.25, 0.0],
+        },
+    )
+    checks = {
+        "wall_pressure_reconstruction": bool(np.allclose(
+            wall["p_wall_pa"], 120.0, rtol=0.0, atol=1.0e-10
+        )),
+        "wall_shear_reconstruction": bool(np.allclose(
+            wall["tau_wall_pa"], 100.0, rtol=0.0, atol=1.0e-10
+        )),
+        "constant_shear_integration": bool(np.isclose(
+            result["D_total_N_m"], 100.0, rtol=0.0, atol=1.0e-10
+        )),
+        "constant_pressure_sign": bool(np.isclose(
+            result["N_total_N_m"], -20.0, rtol=0.0, atol=1.0e-10
+        )),
+    }
+    return {
+        "status": "pass" if all(checks.values()) else "fail",
+        "checks": checks,
+    }
+
+
+def _evaluate_force_baseline_drift(config, output_dir):
+    baseline_cfg = config["force"]["baseline"]
+    sample_count = int(baseline_cfg.get("drift_sample_count", 0))
+    if sample_count <= 0:
+        return {"status": "not_requested"}
+    source = baseline_cfg.get("drift_data_source") or config["data_source"]
+    paths = fdb.discover_plotfile_paths(
+        source, plot_prefix=baseline_cfg["drift_plot_prefix"]
+    )
+    if not paths:
+        return {"status": "unavailable", "reason": "no drift plotfiles found"}
+    indices = np.unique(np.linspace(
+        0, len(paths) - 1, min(sample_count, len(paths)), dtype=int
+    ))
+    force_cfg = config["force"]
+    geometry = force_cfg["geometry"]
+    reference = force_cfg["reference"]
+    transport = force_cfg["transport"]
+    fit = force_cfg["wall_fit"]
+    quality = force_cfg["quality"]
+    records = []
+    for index in indices:
+        wall = fdb.extract_native_flat_plate_wall(
+            paths[int(index)],
+            x_range_m=geometry["x_range_m"],
+            wall_y_m=geometry["wall_y_m"],
+            p_inf_pa=reference["p_inf"],
+            rho_inf_kg_m3=reference["rho_inf"],
+            u_inf_m_s=reference["u_inf"],
+            viscosity_pa_s=transport["mu_pa_s"],
+            pressure_order=fit["pressure_order"],
+            velocity_order=fit["velocity_order"],
+            fluid_points=fit["fluid_points"],
+            viscosity_relative_tolerance=fit[
+                "viscosity_relative_tolerance"
+            ],
+        )
+        force = fdb.integrate_flat_plate_wall_forces(
+            wall, _certified_force_reference(config),
+            minimum_coverage=quality["minimum_coverage"],
+            maximum_gap_widths=quality["maximum_gap_widths"],
+        )
+        records.append(force)
+    times = np.asarray([item["time"] for item in records])
+    drag = np.asarray([item["D_total_N_m"] for item in records])
+    normal = np.asarray([item["N_total_N_m"] for item in records])
+    moment = np.asarray([item["M_total_N"] for item in records])
+    centered_time = times - times[0]
+
+    def statistics(values):
+        slope = (
+            float(np.polyfit(centered_time, values, 1)[0])
+            if len(values) >= 2 and np.ptp(centered_time) > 0.0 else np.nan
+        )
+        return {
+            "mean": float(np.mean(values)),
+            "standard_deviation": float(np.std(values, ddof=1))
+            if len(values) > 1 else 0.0,
+            "peak_to_peak": float(np.ptp(values)),
+            "slope_per_s": slope,
+        }
+
+    np.savez_compressed(
+        Path(output_dir) / "baseline_drift.npz",
+        **_force_output_metadata(config),
+        source_paths=np.asarray([paths[int(index)] for index in indices]),
+        time_s=times, D_total_N_m=drag, N_total_N_m=normal, M_total_N=moment,
+    )
+    figure, axes = plt.subplots(3, 1, figsize=(11, 9), sharex=True)
+    for axis, values, ylabel in zip(
+            axes, (drag, normal, moment),
+            (r"$D'$ [N/m]", r"$N'_{\mathrm{1s}}$ [N/m]", r"$M'_z$ [N]")):
+        axis.plot(centered_time * 1.0e6, values, "o-")
+        axis.set_ylabel(ylabel)
+        axis.grid(True, alpha=0.25)
+    axes[-1].set_xlabel("Laser-off continuation time [µs]")
+    axes[0].set_title("Laser-off baseline drift")
+    figure.tight_layout()
+    figure.savefig(
+        Path(output_dir) / "baseline_drift.png", dpi=200,
+        bbox_inches="tight",
+    )
+    plt.close(figure)
+    return {
+        "status": "complete",
+        "sample_count": len(records),
+        "time_span_s": float(np.ptp(times)),
+        "drag": statistics(drag),
+        "normal": statistics(normal),
+        "moment": statistics(moment),
+    }
+
+
+def _validate_baseline_against_similarity(config, baseline_wall, profiles):
+    if baseline_wall is None or not profiles:
+        return {"status": "not_available"}
+    force_cfg = config["force"]
+    reference = force_cfg["reference"]
+    transport = force_cfg["transport"]
+    comparisons = []
+    for profile in profiles:
+        x_station = float(profile["x_station_m"])
+        similarity = fdb.compute_compressible_flat_plate_reference_profile(
+            y=np.asarray(profile["wall_distance_m"], dtype=float),
+            x_loc=x_station,
+            u_inf=reference["u_inf"],
+            T_inf=reference["T_inf"],
+            rho_inf=reference["rho_inf"],
+            T_wall=transport["wall_temperature_k"],
+            gamma=1.4,
+            R=reference["R"],
+            Cp=1004.0,
+            transport_model="constant",
+            mu=transport["mu_pa_s"],
+            k=transport["k_w_m_k"],
+        )
+        scalars = similarity["scalars"]
+        comparisons.append({
+            "x_station_m": x_station,
+            "simulation_C_f": float(profile["C_f"]),
+            "reference_C_f": float(scalars["C_f"]),
+            "C_f_relative_error": float(
+                abs(profile["C_f"] - scalars["C_f"])
+                / max(abs(scalars["C_f"]), np.finfo(float).tiny)
+            ),
+            "simulation_delta_99_m": float(profile["delta_99_m"]),
+            "reference_delta_99_m": float(scalars["delta_99"]),
+            "simulation_theta_m": float(profile["theta_m"]),
+            "reference_theta_m": float(scalars["theta"]),
+        })
+
+    x_start = max(
+        0.05, float(force_cfg["geometry"]["x_range_m"][0])
+    )
+    x_end = float(force_cfg["geometry"]["x_range_m"][1])
+    x_left = np.asarray(baseline_wall["x_left_m"])
+    x_right = np.asarray(baseline_wall["x_right_m"])
+    widths = np.maximum(
+        np.minimum(x_right, x_end) - np.maximum(x_left, x_start), 0.0
+    )
+    simulated_drag = float(np.sum(
+        np.asarray(baseline_wall["tau_wall_pa"]) * widths
+    ))
+    similarity_constant = float(np.mean([
+        item["reference_C_f"] * np.sqrt(item["x_station_m"])
+        for item in comparisons
+    ]))
+    q_inf = (
+        0.5 * float(reference["rho_inf"]) * float(reference["u_inf"]) ** 2
+    )
+    reference_drag = float(
+        q_inf * 2.0 * similarity_constant
+        * (np.sqrt(x_end) - np.sqrt(x_start))
+    )
+    maximum_cf_error = max(item["C_f_relative_error"] for item in comparisons)
+    drag_error = abs(simulated_drag - reference_drag) / max(
+        abs(reference_drag), np.finfo(float).tiny
+    )
+    return {
+        "status": (
+            "pass" if maximum_cf_error <= 0.10 and drag_error <= 0.10
+            else "outside_10_percent_target"
+        ),
+        "stations": comparisons,
+        "maximum_C_f_relative_error": maximum_cf_error,
+        "downstream_interval_m": [x_start, x_end],
+        "simulation_viscous_drag_N_m": simulated_drag,
+        "reference_viscous_drag_N_m": reference_drag,
+        "viscous_drag_relative_error": drag_error,
+    }
+
+
+def _clip_wall_to_interval(wall, x_range_m):
+    """Return a wall-face view clipped to one closed integration interval."""
+    left_limit, right_limit = map(float, x_range_m)
+    left = np.maximum(np.asarray(wall["x_left_m"], dtype=float), left_limit)
+    right = np.minimum(np.asarray(wall["x_right_m"], dtype=float), right_limit)
+    keep = right > left
+    clipped = {}
+    face_count = len(keep)
+    for key, value in wall.items():
+        array = np.asarray(value)
+        if array.ndim >= 1 and array.shape[0] == face_count:
+            clipped[key] = array[keep].copy()
+        else:
+            clipped[key] = value
+    clipped["x_left_m"] = left[keep]
+    clipped["x_right_m"] = right[keep]
+    clipped["x_center_m"] = 0.5 * (left[keep] + right[keep])
+    clipped["requested_x_range_m"] = np.array([left_limit, right_limit])
+    return clipped
+
+
+def _evaluate_force_grid_and_fit_sensitivity(config, baseline_wall):
+    validation = config["force"].get("validation", {})
+    if baseline_wall is None:
+        return {"status": "not_available", "reason": "baseline wall is absent"}
+    force_cfg = config["force"]
+    quality = force_cfg["quality"]
+    reference = _certified_force_reference(config)
+    report = {"status": "complete"}
+
+    first_order = dict(baseline_wall)
+    first_order["p_wall_pa"] = np.asarray(
+        baseline_wall["p_wall_linear_pa"], dtype=float
+    )
+    first_order["valid"] = (
+        np.asarray(baseline_wall["valid"], dtype=bool)
+        & np.isfinite(first_order["p_wall_pa"])
+    )
+    first_force = fdb.integrate_flat_plate_wall_forces(
+        first_order, reference,
+        minimum_coverage=quality["minimum_coverage"],
+        maximum_gap_widths=quality["maximum_gap_widths"],
+    )
+    second_force = fdb.integrate_flat_plate_wall_forces(
+        baseline_wall, reference,
+        minimum_coverage=quality["minimum_coverage"],
+        maximum_gap_widths=quality["maximum_gap_widths"],
+    )
+    report["pressure_fit"] = {
+        "first_order_N_pressure_N_m": first_force["N_pressure_N_m"],
+        "second_order_N_pressure_N_m": second_force["N_pressure_N_m"],
+        "absolute_difference_N_m": abs(
+            first_force["N_pressure_N_m"]
+            - second_force["N_pressure_N_m"]
+        ),
+    }
+
+    starts = validation.get("integration_start_locations_m", [])
+    x_end = float(force_cfg["geometry"]["x_range_m"][1])
+    report["integration_start_sensitivity"] = []
+    for start in starts:
+        clipped = _clip_wall_to_interval(
+            baseline_wall, [float(start), x_end]
+        )
+        result = fdb.integrate_flat_plate_wall_forces(
+            clipped, reference,
+            minimum_coverage=quality["minimum_coverage"],
+            maximum_gap_widths=quality["maximum_gap_widths"],
+        )
+        report["integration_start_sensitivity"].append({
+            "start_x_m": float(start),
+            "D_viscous_N_m": result["D_viscous_N_m"],
+            "N_pressure_N_m": result["N_pressure_N_m"],
+        })
+
+    report["wall_stencil_sensitivity"] = {"status": "not_requested"}
+    if validation.get("fit_sensitivity", False):
+        fit = force_cfg["wall_fit"]
+        geometry = force_cfg["geometry"]
+        freestream = force_cfg["reference"]
+        transport = force_cfg["transport"]
+        stencils = []
+        for points in (2, 3):
+            wall = fdb.extract_native_flat_plate_wall(
+                baseline_wall["source"],
+                x_range_m=geometry["x_range_m"],
+                wall_y_m=geometry["wall_y_m"],
+                p_inf_pa=freestream["p_inf"],
+                rho_inf_kg_m3=freestream["rho_inf"],
+                u_inf_m_s=freestream["u_inf"],
+                viscosity_pa_s=transport["mu_pa_s"],
+                pressure_order=min(fit["pressure_order"], points - 1),
+                velocity_order=fit["velocity_order"],
+                fluid_points=points,
+                viscosity_relative_tolerance=fit[
+                    "viscosity_relative_tolerance"
+                ],
+            )
+            stencils.append((points, wall))
+        stencils.append((int(fit["fluid_points"]), baseline_wall))
+        stencil_results = []
+        downstream_drag = []
+        for points, wall in stencils:
+            clipped = _clip_wall_to_interval(wall, [0.05, x_end])
+            force = fdb.integrate_flat_plate_wall_forces(
+                clipped, reference,
+                minimum_coverage=quality["minimum_coverage"],
+                maximum_gap_widths=quality["maximum_gap_widths"],
+            )
+            downstream_drag.append(force["D_viscous_N_m"])
+            stencil_results.append({
+                "fluid_points": points,
+                "downstream_D_viscous_N_m": force["D_viscous_N_m"],
+            })
+        finest_change = abs(downstream_drag[-1] - downstream_drag[-2]) / max(
+            abs(downstream_drag[-1]), np.finfo(float).tiny
+        )
+        report["wall_stencil_sensitivity"] = {
+            "status": (
+                "pass" if finest_change < 0.05
+                else "outside_5_percent_target"
+            ),
+            "treatments": stencil_results,
+            "two_finest_relative_change": finest_change,
+        }
+
+    refined_path = validation.get("grid_comparison_plotfile")
+    report["grid_comparison"] = {"status": "not_requested"}
+    if refined_path:
+        geometry = force_cfg["geometry"]
+        freestream = force_cfg["reference"]
+        transport = force_cfg["transport"]
+        fit = force_cfg["wall_fit"]
+        refined_wall = fdb.extract_native_flat_plate_wall(
+            refined_path,
+            x_range_m=geometry["x_range_m"],
+            wall_y_m=geometry["wall_y_m"],
+            p_inf_pa=freestream["p_inf"],
+            rho_inf_kg_m3=freestream["rho_inf"],
+            u_inf_m_s=freestream["u_inf"],
+            viscosity_pa_s=transport["mu_pa_s"],
+            pressure_order=fit["pressure_order"],
+            velocity_order=fit["velocity_order"],
+            fluid_points=fit["fluid_points"],
+            viscosity_relative_tolerance=fit[
+                "viscosity_relative_tolerance"
+            ],
+        )
+        current = fdb.integrate_flat_plate_wall_forces(
+            _clip_wall_to_interval(baseline_wall, [0.05, x_end]), reference
+        )
+        refined = fdb.integrate_flat_plate_wall_forces(
+            _clip_wall_to_interval(refined_wall, [0.05, x_end]), reference
+        )
+        change = abs(
+            refined["D_viscous_N_m"] - current["D_viscous_N_m"]
+        ) / max(abs(refined["D_viscous_N_m"]), np.finfo(float).tiny)
+        report["grid_comparison"] = {
+            "status": (
+                "pass" if change < 0.05 else "outside_5_percent_target"
+            ),
+            "current_source": baseline_wall["source"],
+            "refined_source": os.fspath(refined_path),
+            "current_downstream_D_viscous_N_m": current["D_viscous_N_m"],
+            "refined_downstream_D_viscous_N_m": refined["D_viscous_N_m"],
+            "relative_change": change,
+        }
+    sensitivity_states = (
+        report["wall_stencil_sensitivity"]["status"],
+        report["grid_comparison"]["status"],
+    )
+    report["status"] = (
+        "pass" if all(
+            state in ("pass", "not_requested") for state in sensitivity_states
+        ) else "requires_attention"
+    )
+    return report
+
+
+def _evaluate_force_control_volume(config, baseline_wall):
+    validation = config["force"].get("validation", {})
+    cv_cfg = validation.get("control_volume", {})
+    if not cv_cfg.get("enabled", False):
+        return {"status": "not_requested"}
+    if baseline_wall is None:
+        return {"status": "not_available", "reason": "baseline wall is absent"}
+    plotfile = cv_cfg.get("plotfile") or baseline_wall.get("source")
+    dataset = fdb.load_pelec_plotfile(
+        plotfile,
+        field_names=[
+            "density", "pressure", "x_velocity", "y_velocity"
+        ],
+        convert_to_mks=True,
+        maximum_level=cv_cfg.get("maximum_level"),
+    )
+    balance = fdb.compute_flat_plate_control_volume_force(
+        dataset,
+        x_range_m=cv_cfg["x_range_m"],
+        y_top_m=cv_cfg["top_y_m"],
+        viscosity_pa_s=config["force"]["transport"]["mu_pa_s"],
+    )
+    wall = _clip_wall_to_interval(baseline_wall, cv_cfg["x_range_m"])
+    wall_force = fdb.integrate_flat_plate_wall_forces(
+        wall, _certified_force_reference(config)
+    )
+    residual_vector = np.array([
+        wall_force["D_total_N_m"] - balance["D_control_volume_N_m"],
+        wall_force["N_total_N_m"] - balance["N_control_volume_N_m"],
+    ])
+    wall_vector = np.array([
+        wall_force["D_total_N_m"], wall_force["N_total_N_m"]
+    ])
+    reference = config["force"]["reference"]
+    q_inf = 0.5 * reference["rho_inf"] * reference["u_inf"] ** 2
+    cv_chord = float(np.diff(np.asarray(cv_cfg["x_range_m"]))[0])
+    closure = float(
+        np.linalg.norm(residual_vector)
+        / max(np.linalg.norm(wall_vector), q_inf * cv_chord)
+    )
+    return {
+        "status": "pass" if closure <= 0.05 else "outside_5_percent_target",
+        "normalized_closure_residual": closure,
+        "target": 0.05,
+        "wall_force": {
+            "D_N_m": wall_force["D_total_N_m"],
+            "N_N_m": wall_force["N_total_N_m"],
+        },
+        "momentum_balance": balance,
+        "covering_grid_level": dataset["amr_max_level"],
+        "source": os.fspath(plotfile),
+    }
+
+
+def _write_certified_force_products(
+        config, forces_dict, wall_dict, increment_wall_dict,
+        boundary_layer_results, baseline_wall=None, baseline_profiles=None):
+    """Write force histories, distributed loads, linkage, and quality report."""
+    force_dir = Path(config["output_dir"]) / "ForceAnalysis"
+    force_dir.mkdir(parents=True, exist_ok=True)
+    labels = sorted(
+        forces_dict,
+        key=lambda label: float(forces_dict[label].get("time", np.inf)),
+    )
+    entries = [forces_dict[label] for label in labels]
+    times = np.asarray([item["time"] for item in entries], dtype=float)
+    force_cfg = config["force"]
+    laser_cfg = force_cfg["laser"]
+    time_relative = times - float(laser_cfg["start_time_s"])
+
+    pdb.plot_certified_force_timeseries(
+        forces_dict,
+        output_path=str(force_dir / "forces_vs_time.png"),
+        laser_start_time=laser_cfg["start_time_s"],
+    )
+
+    scalar_keys = sorted({
+        key for item in entries for key, value in item.items()
+        if np.asarray(value).ndim == 0
+        and not isinstance(value, (dict, list, tuple, np.ndarray))
+        and key != "plot_label"
+    })
+    # Explicitly retain numeric and short string metadata; array-valued wall
+    # distributions are stored separately.
+    columns = ["plot_label", *scalar_keys]
+    with (force_dir / "force_timeseries.csv").open(
+            "w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=columns)
+        writer.writeheader()
+        for label, item in zip(labels, entries):
+            row = {"plot_label": label}
+            for key in scalar_keys:
+                value = item.get(key, "")
+                if isinstance(value, (str, int, float, np.integer, np.floating, bool)):
+                    row[key] = value
+            writer.writerow(row)
+
+    arrays = {
+        **_force_output_metadata(config),
+        "labels": np.asarray(labels),
+        "time_s": times,
+        "time_relative_s": time_relative,
+    }
+    for key in scalar_keys:
+        values = [item.get(key, np.nan) for item in entries]
+        if all(isinstance(value, (int, float, np.integer, np.floating, bool))
+               for value in values):
+            arrays[key] = np.asarray(values)
+
+    impulse_summary = {}
+    peak_summary = {}
+    for key, output_name in (
+        ("delta_D_total_N_m", "drag"),
+        ("delta_N_total_N_m", "normal"),
+        ("delta_M_total_N", "moment"),
+    ):
+        values = np.asarray([item.get(key, np.nan) for item in entries])
+        finite = np.flatnonzero(np.isfinite(values))
+        if finite.size:
+            peak_index = int(finite[np.argmax(np.abs(values[finite]))])
+            peak_summary[output_name] = {
+                "signed_peak": float(values[peak_index]),
+                "absolute_peak": float(abs(values[peak_index])),
+                "absolute_time_s": float(times[peak_index]),
+                "laser_relative_time_s": float(time_relative[peak_index]),
+            }
+            arrays[f"{output_name}_signed_peak"] = np.array(
+                values[peak_index]
+            )
+            arrays[f"{output_name}_peak_time_s"] = np.array(
+                times[peak_index]
+            )
+            arrays[f"{output_name}_peak_delay_s"] = np.array(
+                time_relative[peak_index]
+            )
+    impulse_interval = laser_cfg.get("impulse_interval_s")
+    if impulse_interval is None:
+        impulse_mask = np.ones(len(times), dtype=bool)
+    else:
+        impulse_mask = (
+            (times >= float(impulse_interval[0]))
+            & (times <= float(impulse_interval[1]))
+        )
+    if np.count_nonzero(impulse_mask) >= 2:
+        for key, output_key in (
+            ("delta_D_total_N_m", "drag_impulse_N_s_m"),
+            ("delta_N_total_N_m", "normal_impulse_N_s_m"),
+            ("delta_M_total_N", "moment_impulse_N_s"),
+        ):
+            values = np.asarray([item.get(key, np.nan) for item in entries])
+            selected = values[impulse_mask]
+            selected_time = times[impulse_mask]
+            if np.all(np.isfinite(selected)):
+                impulse_summary[output_key] = float(
+                    np.trapz(selected, selected_time)
+                )
+                arrays[output_key] = np.array(impulse_summary[output_key])
+        impulse_summary["interval_s"] = [
+            float(times[impulse_mask][0]), float(times[impulse_mask][-1])
+        ]
+    np.savez_compressed(force_dir / "force_timeseries.npz", **arrays)
+
+    surface_history = None
+    if increment_wall_dict:
+        geometry = force_cfg["geometry"]
+        edges = np.linspace(
+            float(geometry["x_range_m"][0]),
+            float(geometry["x_range_m"][1]),
+            2001,
+        )
+        x_centers = 0.5 * (edges[:-1] + edges[1:])
+        selected_labels = [
+            label for label in labels if label in increment_wall_dict
+        ]
+        selected_times = np.asarray([
+            forces_dict[label]["time"] for label in selected_labels
+        ])
+        delta_pressure = np.vstack([
+            _piecewise_wall_values(
+                increment_wall_dict[label], "p_wall_pa", x_centers
+            )
+            for label in selected_labels
+        ])
+        delta_shear = np.vstack([
+            _piecewise_wall_values(
+                increment_wall_dict[label], "tau_wall_pa", x_centers
+            )
+            for label in selected_labels
+        ])
+        dx = np.diff(edges)
+        delta_drag_density = delta_shear
+        delta_normal_density = -delta_pressure
+        cumulative_drag = np.cumsum(delta_drag_density * dx[None, :], axis=1)
+        cumulative_normal = np.cumsum(
+            delta_normal_density * dx[None, :], axis=1
+        )
+        surface_history = {
+            **_force_output_metadata(config),
+            "labels": np.asarray(selected_labels),
+            "time_s": selected_times,
+            "time_relative_s": (
+                selected_times - float(laser_cfg["start_time_s"])
+            ),
+            "x_m": x_centers,
+            "delta_pressure_pa": delta_pressure,
+            "delta_shear_pa": delta_shear,
+            "delta_dD_dx_N_m2": delta_drag_density,
+            "delta_dN_dx_N_m2": delta_normal_density,
+            "delta_D_cumulative_N_m": cumulative_drag,
+            "delta_N_cumulative_N_m": cumulative_normal,
+        }
+        np.savez_compressed(
+            force_dir / "force_surface_history.npz", **surface_history
+        )
+        pdb.plot_force_surface_history(
+            surface_history["time_relative_s"], x_centers,
+            delta_drag_density, r"$\Delta(dD'/dx)$ [N/m$^2$]",
+            output_path=str(force_dir / "distributed_drag_history.png"),
+        )
+        pdb.plot_force_surface_history(
+            surface_history["time_relative_s"], x_centers,
+            delta_normal_density, r"$\Delta(dN'/dx)$ [N/m$^2$]",
+            output_path=str(force_dir / "distributed_normal_history.png"),
+        )
+
+    if boundary_layer_results:
+        bl_labels = [label for label in labels if label in boundary_layer_results]
+        station_values = np.asarray(
+            force_cfg["boundary_layer"]["stations_m"], dtype=float
+        )
+        bl_arrays = {
+            **_force_output_metadata(config),
+            "labels": np.asarray(bl_labels),
+            "time_s": np.asarray([forces_dict[label]["time"] for label in bl_labels]),
+            "stations_m": station_values,
+        }
+        for profile_key, output_key in (
+            ("delta_99_m", "delta_99_m"),
+            ("delta_star_m", "delta_star_m"),
+            ("theta_m", "theta_m"),
+            ("H", "H"),
+            ("tau_wall_pa", "tau_wall_pa"),
+            ("C_f", "C_f"),
+            ("Re_theta", "Re_theta"),
+            ("q_wall_w_m2", "q_wall_w_m2"),
+            ("edge_velocity_m_s", "edge_velocity_m_s"),
+            ("edge_density_kg_m3", "edge_density_kg_m3"),
+            ("fit_condition_velocity", "fit_condition_velocity"),
+            ("fit_condition_pressure", "fit_condition_pressure"),
+        ):
+            bl_arrays[output_key] = np.asarray([
+                [profile.get(profile_key, np.nan) for profile in
+                 boundary_layer_results[label]]
+                for label in bl_labels
+            ])
+        all_profiles = [
+            profile for label in bl_labels
+            for profile in boundary_layer_results[label]
+        ]
+        maximum_points = max(
+            (len(profile["wall_distance_m"]) for profile in all_profiles),
+            default=0,
+        )
+        profile_shape = (
+            len(bl_labels), len(station_values), maximum_points
+        )
+        for profile_key, output_key in (
+            ("wall_distance_m", "wall_distance_profile_m"),
+            ("u_t_m_s", "u_t_profile_m_s"),
+            ("rho_kg_m3", "rho_profile_kg_m3"),
+            ("temperature_k", "temperature_profile_k"),
+            ("pressure_pa", "pressure_profile_pa"),
+            ("mu_pa_s", "mu_profile_pa_s"),
+            ("amr_level", "amr_level_profile"),
+        ):
+            fill = -1 if profile_key == "amr_level" else np.nan
+            dtype = int if profile_key == "amr_level" else float
+            values = np.full(profile_shape, fill, dtype=dtype)
+            for time_index, label in enumerate(bl_labels):
+                for station_index, profile in enumerate(
+                        boundary_layer_results[label]):
+                    source = np.asarray(profile[profile_key], dtype=dtype)
+                    values[
+                        time_index, station_index, :len(source)
+                    ] = source
+            bl_arrays[output_key] = values
+        bl_arrays["profile_point_count"] = np.asarray([
+            [len(profile["wall_distance_m"]) for profile in
+             boundary_layer_results[label]]
+            for label in bl_labels
+        ], dtype=int)
+        np.savez_compressed(
+            force_dir / "boundary_layer_profiles.npz", **bl_arrays
+        )
+
+    linkage_time = times
+    linkage_responses = {}
+    if all("delta_D_total_N_m" in item for item in entries):
+        linkage_responses = {
+            "drag": np.asarray([
+                item["delta_D_total_N_m"] for item in entries
+            ]),
+            "normal": np.asarray([
+                item["delta_N_total_N_m"] for item in entries
+            ]),
+            "moment": np.asarray([
+                item["delta_M_total_N"] for item in entries
+            ]),
+        }
+    compact_agreement = {"status": "not_available"}
+    compact_path = force_cfg["history"].get("path")
+    if compact_path:
+        compact = fdb.load_compact_wall_force_history(
+            compact_path, _certified_force_reference(config)
+        )
+        baseline_force = (
+            fdb.integrate_flat_plate_wall_forces(
+                baseline_wall, _certified_force_reference(config),
+                minimum_coverage=force_cfg["quality"]["minimum_coverage"],
+                maximum_gap_widths=force_cfg["quality"][
+                    "maximum_gap_widths"
+                ],
+            ) if baseline_wall is not None else None
+        )
+        linkage_time = np.asarray(compact["time_s"], dtype=float)
+        linkage_responses = {
+            "drag": np.asarray(compact["D_total_N_m"], dtype=float),
+            "normal": np.asarray(compact["N_total_N_m"], dtype=float),
+            "moment": np.asarray(compact["M_total_N"], dtype=float),
+        }
+        if baseline_force is not None:
+            linkage_responses["drag"] -= baseline_force["D_total_N_m"]
+            linkage_responses["normal"] -= baseline_force["N_total_N_m"]
+            linkage_responses["moment"] -= baseline_force["M_total_N"]
+        compact_arrays = _force_output_metadata(config)
+        compact_arrays.update({
+            key: value for key, value in compact.items()
+            if not isinstance(value, (str, dict))
+            and np.asarray(value).dtype != object
+        })
+        np.savez_compressed(
+            force_dir / "compact_force_history.npz", **compact_arrays
+        )
+        matching = (
+            (times >= linkage_time[0]) & (times <= linkage_time[-1])
+        )
+        if np.any(matching):
+            relative_errors = {}
+            offline_keys = {
+                "drag": "D_total_N_m",
+                "normal": "N_total_N_m",
+                "moment": "M_total_N",
+            }
+            for name, offline_key in offline_keys.items():
+                compact_at_plot = np.interp(
+                    times[matching], linkage_time,
+                    (
+                        linkage_responses[name]
+                        + (
+                            0.0 if baseline_force is None else
+                            baseline_force[offline_key]
+                        )
+                    ),
+                )
+                offline = np.asarray([
+                    item[offline_key] for item in entries
+                ])[matching]
+                scale = np.maximum(
+                    np.abs(offline),
+                    1.0e-12 * float(force_cfg["reference"]["p_inf"])
+                    * float(force_cfg["reference"]["chord_m"]),
+                )
+                relative_errors[name] = float(np.max(
+                    np.abs(compact_at_plot - offline) / scale
+                ))
+            compact_agreement = {
+                "status": (
+                    "pass" if max(relative_errors.values()) <= 0.02
+                    else "outside_2_percent_target"
+                ),
+                "maximum_relative_errors": relative_errors,
+                "matching_plotfile_count": int(np.count_nonzero(matching)),
+            }
+
+    duration_s = (
+        float(np.ptp(linkage_time)) if len(linkage_time) > 1 else 0.0
+    )
+    forcing_period_s = 1.0 / float(laser_cfg["frequency_hz"])
+    forcing_periods = duration_s / forcing_period_s
+    minimum_periods = float(
+        force_cfg["quality"]["minimum_forcing_periods"]
+    )
+    linkage = {
+        "status": "insufficient_data",
+        "reason": (
+            f"record contains {forcing_periods:.3f} forcing periods; "
+            f"{minimum_periods:g} required"
+        ),
+        "duration_s": duration_s,
+        "forcing_periods": forcing_periods,
+    }
+    if len(linkage_time) >= 3 and linkage_responses:
+        uniform_time = np.linspace(
+            linkage_time[0], linkage_time[-1], len(linkage_time)
+        )
+        pulse = fdb.gaussian_pulse_train(
+            uniform_time,
+            start_time_s=laser_cfg["start_time_s"],
+            frequency_hz=laser_cfg["frequency_hz"],
+            pulse_fwhm_s=laser_cfg["pulse_fwhm_s"],
+            duration_s=laser_cfg["duration_s"],
+        )
+        linkage_arrays = {
+            **_force_output_metadata(config),
+            "time_s": uniform_time,
+            "laser_input_normalized": pulse["signal"],
+        }
+        for short_name in ("drag", "normal", "moment"):
+            response = np.interp(
+                uniform_time, linkage_time, linkage_responses[short_name],
+            )
+            correlation = fdb.normalized_cross_correlation(
+                pulse["signal"], response,
+                uniform_time[1] - uniform_time[0],
+            )
+            linkage_arrays[f"{short_name}_response"] = response
+            linkage_arrays[f"{short_name}_lag_s"] = correlation["lag_s"]
+            linkage_arrays[f"{short_name}_correlation"] = correlation[
+                "correlation"
+            ]
+            linkage[f"{short_name}_peak_lag_s"] = correlation["peak_lag_s"]
+            linkage[f"{short_name}_peak_correlation"] = correlation[
+                "peak_correlation"
+            ]
+
+        if forcing_periods >= minimum_periods:
+            dt = float(uniform_time[1] - uniform_time[0])
+            history_cfg = force_cfg["history"]
+            spectral_outputs = {}
+            try:
+                for short_name in ("drag", "normal", "moment"):
+                    spectral = fdb.compute_input_output_spectra(
+                        pulse["signal"],
+                        linkage_arrays[f"{short_name}_response"],
+                        sample_rate_hz=1.0 / dt,
+                        nperseg=history_cfg["spectral_nperseg"],
+                        noverlap=history_cfg["spectral_noverlap"],
+                        minimum_segments=force_cfg["quality"][
+                            "minimum_welch_segments"
+                        ],
+                    )
+                    for key, value in spectral.items():
+                        spectral_outputs[f"{short_name}_{key}"] = value
+                linkage_arrays.update(spectral_outputs)
+                linkage["status"] = "spectral_analysis_complete"
+                linkage["reason"] = None
+            except ValueError as exc:
+                linkage["reason"] = str(exc)
+        np.savez_compressed(
+            force_dir / "force_linkage.npz", **linkage_arrays
+        )
+
+    probe_force_linkage = {"status": "not_requested"}
+    probe_paths = force_cfg["history"].get("probe_bin_files") or []
+    if probe_paths and linkage_responses:
+        try:
+            probe_config = dict(config)
+            probe_config["probe_bin_files"] = list(probe_paths)
+            probe_data = _load_probe_timeseries(
+                probe_config,
+                force_cfg["history"].get("probe_pressure_var_col", 3),
+                nt_skip=0,
+                max_probes=force_cfg["history"].get("probe_max_probes"),
+            )
+            probe_time, probe_matrix, _, _ = _probe_matrix_on_common_time(
+                probe_data, resample=False
+            )
+            # PeleC probe pressure and coordinates are stored in cgs units.
+            pressure_pa = np.asarray(probe_matrix, dtype=float) * 0.1
+            pressure_pa -= np.mean(pressure_pa, axis=0, keepdims=True)
+            probe_x_m = np.asarray(
+                [item.get("x", item.get("x_req")) for item in probe_data],
+                dtype=float,
+            ) * 0.01
+            linkage_output = {
+                **_force_output_metadata(config),
+                "probe_x_m": probe_x_m,
+                "pressure_convention": np.array(
+                    "pressure fluctuation about common-interval mean"
+                ),
+            }
+            linkage_status = []
+            for response_name, response_values in linkage_responses.items():
+                result = fdb.compute_probe_force_linkage(
+                    linkage_time, response_values,
+                    probe_time, pressure_pa, probe_x_m,
+                    forcing_frequency_hz=laser_cfg["frequency_hz"],
+                    minimum_forcing_periods=minimum_periods,
+                    nperseg=force_cfg["history"]["spectral_nperseg"],
+                    noverlap=force_cfg["history"]["spectral_noverlap"],
+                    minimum_segments=force_cfg["quality"][
+                        "minimum_welch_segments"
+                    ],
+                )
+                for key, value in result.items():
+                    if isinstance(value, str):
+                        linkage_output[f"{response_name}_{key}"] = np.array(value)
+                    elif value is not None:
+                        linkage_output[f"{response_name}_{key}"] = value
+                linkage_status.append(result["spectral_status"])
+            np.savez_compressed(
+                force_dir / "pressure_force_linkage.npz", **linkage_output
+            )
+            probe_force_linkage = {
+                "status": (
+                    "spectral_analysis_complete"
+                    if all(value == "complete" for value in linkage_status)
+                    else "time_domain_only"
+                ),
+                "probe_count": len(probe_data),
+                "source_files": [os.fspath(path) for path in probe_paths],
+                "pressure_units": "Pa",
+                "coordinate_units": "m",
+            }
+        except Exception as exc:
+            probe_force_linkage = {
+                "status": "failed",
+                "reason": str(exc),
+                "source_files": [os.fspath(path) for path in probe_paths],
+            }
+
+    pressure_fit_difference = []
+    coverage_values = []
+    consistency_values = []
+    baseline_level_matches = []
+    for label in labels:
+        wall = wall_dict[label]
+        finite = np.isfinite(wall["p_wall_linear_pa"])
+        if np.any(finite):
+            pressure_fit_difference.append(float(np.nanmax(np.abs(
+                wall["p_wall_pa"][finite] - wall["p_wall_linear_pa"][finite]
+            ))))
+        coverage_values.append(float(forces_dict[label]["coverage_fraction"]))
+        if "delta_drag_consistency_error_N_m" in forces_dict[label]:
+            consistency_values.append(abs(float(
+                forces_dict[label]["delta_drag_consistency_error_N_m"]
+            )))
+        if "baseline_amr_level_match" in forces_dict[label]:
+            baseline_level_matches.append(bool(
+                forces_dict[label]["baseline_amr_level_match"]
+            ))
+    coverage_pass = (
+        min(coverage_values) >= force_cfg["quality"]["minimum_coverage"]
+    )
+    baseline_level_pass = (
+        all(baseline_level_matches) if baseline_level_matches else True
+    )
+    similarity_validation = _validate_baseline_against_similarity(
+        config, baseline_wall, baseline_profiles or []
+    )
+    try:
+        baseline_drift = _evaluate_force_baseline_drift(config, force_dir)
+    except Exception as exc:
+        baseline_drift = {"status": "failed", "reason": str(exc)}
+    try:
+        grid_and_fit = _evaluate_force_grid_and_fit_sensitivity(
+            config, baseline_wall
+        )
+    except Exception as exc:
+        grid_and_fit = {"status": "failed", "reason": str(exc)}
+    try:
+        control_volume = _evaluate_force_control_volume(
+            config, baseline_wall
+        )
+    except Exception as exc:
+        control_volume = {"status": "failed", "reason": str(exc)}
+    accepted_auxiliary_states = {
+        "pass", "complete", "not_requested", "not_available"
+    }
+    numerical_layers_pass = (
+        coverage_pass
+        and baseline_level_pass
+        and similarity_validation.get("status") in accepted_auxiliary_states
+        and grid_and_fit.get("status") in accepted_auxiliary_states
+        and control_volume.get("status") in accepted_auxiliary_states
+        and compact_agreement.get("status") in accepted_auxiliary_states
+        and baseline_drift.get("status") in accepted_auxiliary_states
+    )
+    analysis_classification = (
+        "production_second_order_force_analysis"
+        if linkage["status"] == "spectral_analysis_complete"
+        else "short_transient_validation"
+    )
+    report = {
+        "schema_version": 1,
+        "certified_scope": "stationary_one_sided_flat_plate",
+        "code_provenance": _git_provenance(),
+        "source_plotfiles": [
+            os.fspath(item["source"]) for item in entries
+            if item.get("source") is not None
+        ],
+        "baseline_source": (
+            None if baseline_wall is None
+            else os.fspath(baseline_wall.get("source"))
+        ),
+        "code_correctness": _run_force_core_self_validation(),
+        "numerical_quality": {
+            "status": (
+                "pass" if numerical_layers_pass
+                else "requires_attention"
+            ),
+            "minimum_wall_coverage": min(coverage_values),
+            "baseline_amr_level_match": baseline_level_pass,
+            "baseline_amr_warning": (
+                None if baseline_level_pass else
+                "laser and baseline plotfiles have different maximum AMR "
+                "levels; viscous force increments include grid-change bias"
+            ),
+            "maximum_pressure_fit_difference_pa": max(
+                pressure_fit_difference, default=np.nan
+            ),
+            "maximum_delta_integration_consistency_error_N_m": max(
+                consistency_values, default=np.nan
+            ),
+            "compressible_similarity": similarity_validation,
+            "compact_history_agreement": compact_agreement,
+            "grid_and_fit_sensitivity": grid_and_fit,
+            "control_volume_closure": control_volume,
+            "baseline_drift": baseline_drift,
+        },
+        "scientific_adequacy": {
+            "classification": analysis_classification,
+            "duration_s": duration_s,
+            "forcing_periods": forcing_periods,
+            "spectral_inference_allowed": bool(
+                linkage["status"] == "spectral_analysis_complete"
+            ),
+            "linkage": linkage,
+            "probe_force_linkage": probe_force_linkage,
+        },
+        "impulses": impulse_summary,
+        "peak_response": peak_summary,
+        "reference": _json_safe(force_cfg["reference"]),
+        "transport": _json_safe(force_cfg["transport"]),
+        "geometry": _json_safe(force_cfg["geometry"]),
+    }
+    report_path = force_dir / "force_validation.json"
+    temporary = force_dir / ".force_validation.json.tmp"
+    with temporary.open("w", encoding="utf-8") as stream:
+        json.dump(_json_safe(report), stream, indent=2, sort_keys=True)
+        stream.write("\n")
+    os.replace(temporary, report_path)
+    return report
 
 
 # ---------------------------------------------------------------------------
@@ -2341,14 +4029,18 @@ def _process_fft_probes(config, probe_data=None):
 
         if config.get("make_modal_analysis", False):
             modal_indices_cfg = config.get("modal_probe_indices")
-            modal_indices = export_indices if modal_indices_cfg is None else sorted(set(
-                int(value) for value in modal_indices_cfg
-            ))
+            modal_indices = (
+                list(range(
+                    0, n_valid, int(config.get("modal_probe_stride", 1))
+                ))
+                if modal_indices_cfg is None
+                else sorted(set(int(value) for value in modal_indices_cfg))
+            )
             if len(modal_indices) < 2:
                 raise ValueError("Modal analysis requires at least two probe stations")
             if modal_indices[0] < 0 or modal_indices[-1] >= n_valid:
                 raise ValueError("modal_probe_indices contains an invalid index")
-            coordinates = np.column_stack((
+            coordinates_m = 0.01 * np.column_stack((
                 np.asarray(probe_x)[modal_indices],
                 np.asarray(probe_y)[modal_indices],
             ))
@@ -2356,11 +4048,29 @@ def _process_fft_probes(config, probe_data=None):
             # Give modal algorithms that explicit uniform coordinate rather
             # than pretending the ppm-level native clock jitter is exact.
             modal_time = time_uniform[0] + np.arange(L, dtype=float) * dt_actual
+            modal_variable = var_labels.get(var_col, f"column_{var_col}")
+            modal_weight_info = {
+                "weights": mdb.trapezoidal_spatial_weights(coordinates_m),
+                "quadrature_weights": mdb.trapezoidal_spatial_weights(
+                    coordinates_m
+                ),
+                "norm_definition": "spatial L2 quadrature",
+                "scope": "single measured scalar",
+            }
+            if config.get("modal_use_compressible_energy_weights", True):
+                modal_weight_info = mdb.scalar_compressible_energy_weights(
+                    coordinates_m, modal_variable,
+                    rho_base=config["modal_base_rho_kg_m3"],
+                    temperature_base=config["modal_base_temperature_k"],
+                    gamma=config["modal_gamma"],
+                    gas_constant=config["modal_gas_constant_j_kg_k"],
+                )
             snapshots = mdb.SnapshotMatrix(
                 modal_time,
                 raw_matrix[:, modal_indices],
-                coordinates,
-                variable=var_labels.get(var_col, f"column_{var_col}"),
+                coordinates_m,
+                variable=modal_variable,
+                weights=modal_weight_info["weights"],
             )
             modal_count = min(
                 int(config.get("modal_n_modes", 4)), len(modal_indices)
@@ -2389,12 +4099,31 @@ def _process_fft_probes(config, probe_data=None):
                 frequency_indices=spod_indices,
             )
             dmd_result = mdb.compute_dmd(snapshots, n_modes=modal_count)
+            modal_sensitivity = mdb.compute_modal_sensitivity(
+                snapshots,
+                pod_modes=min(2, modal_count),
+                dmd_ranks=config.get(
+                    "modal_sensitivity_dmd_ranks", [2, 4, 8]
+                ),
+                window_fractions=config.get(
+                    "modal_sensitivity_windows",
+                    [[0.0, 0.5], [0.5, 1.0]],
+                ),
+            )
             modal_dir = output_dir / "ModalAnalysis"
             modal_dir.mkdir(parents=True, exist_ok=True)
             np.savez_compressed(
                 modal_dir / "modal_results.npz",
                 probe_indices=np.asarray(modal_indices, dtype=int),
-                coordinates_cm=coordinates,
+                coordinates_m=coordinates_m,
+                spatial_quadrature_weights=modal_weight_info[
+                    "quadrature_weights"
+                ],
+                modal_energy_weights=modal_weight_info["weights"],
+                modal_norm_definition=np.array(
+                    modal_weight_info["norm_definition"]
+                ),
+                modal_norm_scope=np.array(modal_weight_info["scope"]),
                 pod_modes=pod_result["modes"],
                 pod_energy_fraction=pod_result["energy_fraction"],
                 pod_temporal_coefficients=pod_result["temporal_coefficients"],
@@ -2405,6 +4134,20 @@ def _process_fft_probes(config, probe_data=None):
                 dmd_frequency_hz=dmd_result["frequency_hz"],
                 dmd_growth_rate_per_s=dmd_result["growth_rate_per_s"],
                 dmd_modes=dmd_result["modes"],
+                dmd_retained_singular_values=dmd_result[
+                    "retained_singular_values"
+                ],
+                dmd_retained_condition_number=np.array(
+                    dmd_result["retained_condition_number"]
+                ),
+                **{
+                    f"sensitivity_{key}": value
+                    for key, value in modal_sensitivity.items()
+                    if not isinstance(value, str)
+                },
+                sensitivity_interpretation=np.array(
+                    modal_sensitivity["interpretation"]
+                ),
             )
             pdb.plot_modal_summary(
                 pod_result, spod_result, dmd_result,
@@ -3586,6 +5329,21 @@ def _process_transient_analysis(config, probe_data=None):
         nperseg = config.get("transient_stft_nperseg", 256)
         noverlap_frac = config.get("transient_stft_noverlap", 0.75)
         plot_probes = config.get("transient_plot_probe_indices", [0, 49, 99])
+        spectrogram_scale = config.get(
+            "transient_spectrogram_scale", "db"
+        )
+        spectrogram_vmin = config.get(
+            "transient_spectrogram_vmin"
+        )
+        spectrogram_vmax = config.get(
+            "transient_spectrogram_vmax"
+        )
+        spectrogram_fmax = config.get(
+            "transient_spectrogram_fmax_hz", 2.0 * float(band[1])
+        )
+        make_fft_stft_comparison = config.get(
+            "transient_make_fft_stft_comparison", False
+        )
 
         if probe_data is None:
             probe_data = _load_probe_timeseries(
@@ -3624,14 +5382,57 @@ def _process_transient_analysis(config, probe_data=None):
                 pdb.plot_spectrogram(
                     time_uniform, sig_ms, fs,
                     output_path=str(out_stft),
-                    fmax=band[1] * 2,
+                    fmax=spectrogram_fmax,
                     title=f"STFT spectrogram — Probe {idx} — x={p['x']:.3f} cm",
                     nperseg=nperseg,
                     noverlap=noverlap,
+                    scale=spectrogram_scale,
+                    vmin=spectrogram_vmin,
+                    vmax=spectrogram_vmax,
                 )
                 _ts(f"  [TA] Saved spectrogram: {out_stft}")
             except Exception as exc:
                 _ts(f"  [TA] Spectrogram failed for probe {idx}: {exc}")
+
+            if make_fft_stft_comparison:
+                try:
+                    comparison_output = (
+                        output_dir
+                        / f"fft_stft_comparison_probe{idx:03d}.png"
+                    )
+                    signal_labels = {
+                        1: r"$\rho-\overline{\rho}$",
+                        2: r"$u-\overline{u}$",
+                        3: r"$p-\overline{p}$",
+                        4: r"$T-\overline{T}$",
+                    }
+                    pdb.plot_fft_stft_comparison(
+                        time_uniform, sig, fs,
+                        output_path=str(comparison_output),
+                        fmax=spectrogram_fmax,
+                        title=(
+                            f"Probe {idx} — x={p['x']:.3f} cm: "
+                            "mean-subtracted history, FFT, and STFT"
+                        ),
+                        signal_label=signal_labels.get(
+                            var_col, "Mean-subtracted signal"
+                        ),
+                        nperseg=nperseg,
+                        noverlap=noverlap,
+                        spectrogram_scale=spectrogram_scale,
+                        spectrogram_vmin=spectrogram_vmin,
+                        spectrogram_vmax=spectrogram_vmax,
+                        fft_window=config.get("fft_window", "hann"),
+                    )
+                    _ts(
+                        "  [TA] Saved FFT/STFT comparison: "
+                        f"{comparison_output}"
+                    )
+                except Exception as exc:
+                    _ts(
+                        f"  [TA] FFT/STFT comparison failed for probe "
+                        f"{idx}: {exc}"
+                    )
 
             # Hilbert envelope
             try:
@@ -3653,6 +5454,7 @@ def _process_transient_analysis(config, probe_data=None):
 
         # Batch envelope stats vs x
         packet_stats_list = []
+        packet_envelopes = []
         packet_stride = max(1, int(config.get("transient_probe_stride", 1)))
         packet_indices = sorted(
             set(range(0, n_valid, packet_stride)) | {
@@ -3668,11 +5470,15 @@ def _process_transient_analysis(config, probe_data=None):
                 )
                 pstats = fdb.extract_packet_stats(envelope, time_uniform)
                 packet_stats_list.append(pstats)
+                packet_envelopes.append(envelope)
             except Exception:
                 packet_stats_list.append({
                     "peak_amplitude": np.nan, "peak_time": np.nan,
                     "arrival_time": np.nan, "integrated_energy": np.nan,
                 })
+                packet_envelopes.append(
+                    np.full(time_uniform.shape, np.nan)
+                )
 
         if len(packet_stats_list) > 1:
             try:
@@ -3701,6 +5507,86 @@ def _process_transient_analysis(config, probe_data=None):
             },
         )
         _ts(f"  [TA] Saved packet statistics: {output_dir / 'packet_statistics.npz'}")
+
+        propagation = None
+        if packet_envelopes:
+            if np.all(np.isfinite(packet_envelopes)):
+                propagation = fdb.estimate_packet_propagation(
+                    np.asarray(packet_x, dtype=float) * 0.01,
+                    time_uniform,
+                    np.column_stack(packet_envelopes),
+                    baseline_end_time_s=config.get(
+                        "transient_baseline_end_time_s"
+                    ),
+                    noise_sigma=config.get(
+                        "transient_arrival_noise_sigma", 6.0
+                    ),
+                    peak_fraction=config.get(
+                        "transient_arrival_peak_fraction", 0.05
+                    ),
+                    persistent_samples=config.get(
+                        "transient_arrival_persistent_samples", 4
+                    ),
+                    filter_edge_fraction=config.get(
+                        "transient_filter_edge_fraction", 0.01
+                    ),
+                )
+            else:
+                failed_envelopes = int(sum(
+                    not np.all(np.isfinite(values))
+                    for values in packet_envelopes
+                ))
+                propagation = {
+                    "status": "insufficient_data",
+                    "reason": (
+                        f"{failed_envelopes} of {len(packet_envelopes)} "
+                        "band-limited probe envelopes failed"
+                    ),
+                    "baseline_source": "not_evaluated",
+                }
+            np.savez_compressed(
+                output_dir / "packet_propagation.npz",
+                **{
+                    key: value for key, value in propagation.items()
+                    if not isinstance(value, str) and value is not None
+                },
+                status=np.array(propagation["status"]),
+                baseline_source=np.array(
+                    propagation.get("baseline_source", "unknown")
+                ),
+                band_hz=np.asarray(band, dtype=float),
+                filtering=np.array(
+                    "fourth-order zero-phase Butterworth bandpass"
+                ),
+            )
+            if propagation["status"] == "complete":
+                pdb.plot_packet_propagation(
+                    propagation,
+                    output_path=str(
+                        output_dir / "packet_propagation.png"
+                    ),
+                )
+            propagation_report = {
+                key: _json_safe(value) for key, value in propagation.items()
+                if np.asarray(value).ndim == 0
+            }
+            propagation_report.update({
+                "band_hz": list(map(float, band)),
+                "interpretation": (
+                    "Band-limited packet kinematics; not an LST group-"
+                    "velocity calculation"
+                ),
+            })
+            report_path = output_dir / "packet_propagation.json"
+            temporary = output_dir / ".packet_propagation.json.tmp"
+            with temporary.open("w", encoding="utf-8") as stream:
+                json.dump(propagation_report, stream, indent=2, sort_keys=True)
+                stream.write("\n")
+            os.replace(temporary, report_path)
+            _ts(
+                "  [TA] Saved robust packet propagation and group-velocity "
+                "analysis"
+            )
 
         return (label, True, None)
     except Exception as exc:
@@ -3791,6 +5677,7 @@ def _process_nonlinear_diagnostics(config, probe_data=None):
 
         # Bicoherence maps for selected probes
         bicoherence_data = []
+        significance_results = []
         for idx in plot_probes:
             if idx >= n_valid:
                 continue
@@ -3813,9 +5700,131 @@ def _process_nonlinear_diagnostics(config, probe_data=None):
 
                 triad_bic = fdb.extract_triad_bicoherence(freq_bic, bicoh, target_freqs)
                 bicoherence_data.append((idx, p["x"], triad_bic))
+                if config.get("nonlinear_surrogate_validation", True):
+                    try:
+                        significance = (
+                            fdb.compute_surrogate_triad_significance(
+                                sig_ms, fs, target_freqs,
+                                nperseg=nperseg, noverlap=noverlap,
+                                n_surrogates=config.get(
+                                    "nonlinear_surrogate_count", 200
+                                ),
+                                fdr_alpha=config.get(
+                                    "nonlinear_surrogate_alpha", 0.05
+                                ),
+                                minimum_independent_segments=config.get(
+                                    "nonlinear_minimum_independent_segments",
+                                    8,
+                                ),
+                                random_seed=(
+                                    int(config.get(
+                                        "nonlinear_surrogate_seed", 271828
+                                    )) + int(idx)
+                                ),
+                                laser_frequency_hz=config.get(
+                                    "nonlinear_laser_frequency_hz"
+                                ),
+                            )
+                        )
+                        significance_results.append({
+                            "probe_index": int(idx),
+                            "probe_x_m": float(p["x"]) * 0.01,
+                            "status": "complete",
+                            "result": significance,
+                        })
+                    except ValueError as exc:
+                        significance_results.append({
+                            "probe_index": int(idx),
+                            "probe_x_m": float(p["x"]) * 0.01,
+                            "status": "insufficient_data",
+                            "reason": str(exc),
+                        })
             except Exception as exc:
                 _ts(f"  [NL] Bicoherence failed for probe {idx}: {exc}")
                 bicoherence_data.append((idx, p["x"], {}))
+
+        if config.get("nonlinear_surrogate_validation", True):
+            completed = [
+                item for item in significance_results
+                if item["status"] == "complete"
+            ]
+            significance_report = {
+                "analysis": "phase_randomized_bicoherence_significance",
+                "status": (
+                    "complete" if completed else "insufficient_data"
+                ),
+                "probe_results": [
+                    {
+                        "probe_index": item["probe_index"],
+                        "probe_x_m": item["probe_x_m"],
+                        "status": item["status"],
+                        "reason": item.get("reason"),
+                        "significant_nonlaser_triad_count": (
+                            int(np.sum(
+                                item["result"]["significant_fdr"]
+                                & ~item["result"]["laser_harmonic_related"]
+                            )) if item["status"] == "complete" else 0
+                        ),
+                        "significant_laser_related_triad_count": (
+                            int(np.sum(
+                                item["result"]["significant_fdr"]
+                                & item["result"]["laser_harmonic_related"]
+                            )) if item["status"] == "complete" else 0
+                        ),
+                    }
+                    for item in significance_results
+                ],
+                "interpretation": (
+                    "Significant laser-related triads are separated from "
+                    "candidate downstream mode-mode coupling."
+                ),
+            }
+            temporary = output_dir / ".nonlinear_significance.json.tmp"
+            with temporary.open("w", encoding="utf-8") as stream:
+                json.dump(
+                    significance_report, stream, indent=2, sort_keys=True
+                )
+                stream.write("\n")
+            os.replace(
+                temporary, output_dir / "nonlinear_significance.json"
+            )
+            if completed:
+                labels = completed[0]["result"]["triad_labels"]
+                np.savez_compressed(
+                    output_dir / "nonlinear_significance.npz",
+                    probe_indices=np.asarray([
+                        item["probe_index"] for item in completed
+                    ], dtype=int),
+                    probe_x_m=np.asarray([
+                        item["probe_x_m"] for item in completed
+                    ]),
+                    triad_labels=labels,
+                    observed_bicoherence_squared=np.vstack([
+                        item["result"]["observed_bicoherence_squared"]
+                        for item in completed
+                    ]),
+                    surrogate_median_bicoherence_squared=np.vstack([
+                        item["result"][
+                            "surrogate_median_bicoherence_squared"
+                        ] for item in completed
+                    ]),
+                    empirical_p_value=np.vstack([
+                        item["result"]["empirical_p_value"]
+                        for item in completed
+                    ]),
+                    fdr_adjusted_p_value=np.vstack([
+                        item["result"]["fdr_adjusted_p_value"]
+                        for item in completed
+                    ]),
+                    significant_fdr=np.vstack([
+                        item["result"]["significant_fdr"]
+                        for item in completed
+                    ]),
+                    laser_harmonic_related=np.vstack([
+                        item["result"]["laser_harmonic_related"]
+                        for item in completed
+                    ]),
+                )
 
         # Triad bicoherence vs x for all probes
         try:
@@ -4027,6 +6036,111 @@ def main(config=None):
             baseline_dataset = None
             baseline_error = str(exc)
 
+    # --- Certified flat-plate force baseline ---
+    force_baseline_wall = None
+    force_baseline_profiles = []
+    force_baseline_error = None
+    paired_force_paths = {}
+    force_baseline_inputs = []
+    if config.get("make_force_analysis", False):
+        force_cfg = config["force"]
+        baseline_cfg = force_cfg["baseline"]
+        baseline_mode = baseline_cfg.get("mode", "none")
+        geometry = force_cfg["geometry"]
+        reference = force_cfg["reference"]
+        transport = force_cfg["transport"]
+        wall_fit = force_cfg["wall_fit"]
+        try:
+            if baseline_mode == "static":
+                baseline_source = (
+                    baseline_cfg.get("data_source") or config["data_source"]
+                )
+                baseline_path = os.path.join(
+                    baseline_source, baseline_cfg["plotfile"]
+                )
+                _ts(
+                    "Loading certified static force baseline: "
+                    f"{baseline_cfg['plotfile']}"
+                )
+                force_baseline_wall = fdb.extract_native_flat_plate_wall(
+                    baseline_path,
+                    x_range_m=geometry["x_range_m"],
+                    wall_y_m=geometry["wall_y_m"],
+                    p_inf_pa=reference["p_inf"],
+                    rho_inf_kg_m3=reference["rho_inf"],
+                    u_inf_m_s=reference["u_inf"],
+                    viscosity_pa_s=transport["mu_pa_s"],
+                    pressure_order=wall_fit["pressure_order"],
+                    velocity_order=wall_fit["velocity_order"],
+                    fluid_points=wall_fit["fluid_points"],
+                    viscosity_relative_tolerance=wall_fit[
+                        "viscosity_relative_tolerance"
+                    ],
+                )
+                # Fail before the production loop if baseline wall coverage or
+                # reference conventions are invalid.
+                fdb.integrate_flat_plate_wall_forces(
+                    force_baseline_wall,
+                    _certified_force_reference(config),
+                    minimum_coverage=force_cfg["quality"]["minimum_coverage"],
+                    maximum_gap_widths=force_cfg["quality"][
+                        "maximum_gap_widths"
+                    ],
+                )
+                force_baseline_inputs.append(baseline_path)
+                bl_cfg = force_cfg["boundary_layer"]
+                if bl_cfg.get("enabled", False):
+                    force_baseline_profiles = (
+                        fdb.extract_native_flat_plate_boundary_layers(
+                            baseline_path,
+                            stations_m=bl_cfg["stations_m"],
+                            maximum_height_m=bl_cfg["maximum_height_m"],
+                            wall_y_m=geometry["wall_y_m"],
+                            wall_temperature_k=transport[
+                                "wall_temperature_k"
+                            ],
+                            viscosity_pa_s=transport["mu_pa_s"],
+                            conductivity_w_m_k=transport["k_w_m_k"],
+                            fluid_points=wall_fit["fluid_points"],
+                        )
+                    )
+                _ts("Certified static force baseline loaded.")
+            elif baseline_mode == "paired":
+                paired_paths = fdb.discover_plotfile_paths(
+                    baseline_cfg["paired_data_source"],
+                    plot_prefix=baseline_cfg["paired_plot_prefix"],
+                )
+                paired_times = np.asarray([
+                    fdb.read_amrex_plotfile_time(path) for path in paired_paths
+                ])
+                tolerance = float(baseline_cfg["time_tolerance_s"])
+                used_paired_indices = set()
+                for current_path in plotfile_paths:
+                    current_time = fdb.read_amrex_plotfile_time(current_path)
+                    candidates = np.flatnonzero(
+                        np.abs(paired_times - current_time) <= tolerance
+                    )
+                    if candidates.size != 1:
+                        raise ValueError(
+                            f"expected exactly one paired force baseline for "
+                            f"{os.path.basename(current_path)} within "
+                            f"{tolerance:g} s; found {candidates.size}"
+                        )
+                    index = int(candidates[0])
+                    if index in used_paired_indices:
+                        raise ValueError(
+                            "paired force baseline mapping is not one-to-one"
+                        )
+                    used_paired_indices.add(index)
+                    paired_force_paths[current_path] = paired_paths[index]
+                force_baseline_inputs.extend(paired_paths)
+                _ts(
+                    f"Matched {len(paired_force_paths)} paired force baselines."
+                )
+        except Exception as exc:
+            force_baseline_error = str(exc)
+            fdb._log_error("Certified force baseline failed", exc)
+
     # ------------------------------------------------------------------
     # 2. Process each plotfile individually
     # ------------------------------------------------------------------
@@ -4037,11 +6151,19 @@ def main(config=None):
     line_results = []
     streamline_results = []
     surface_results = []
+    force_results = []
+    force_wall_dict = {}
+    force_increment_wall_dict = {}
+    boundary_layer_results = {}
     surface_data_dict = {}
     forces_dict = {}
     analysis_results = []
     if baseline_error is not None:
         pprime_results.append(("pprime_baseline", False, baseline_error))
+    if force_baseline_error is not None:
+        force_results.append((
+            "force_baseline", False, force_baseline_error
+        ))
 
     # Count enabled workflows for progress reporting
     enabled_workflows = sum([
@@ -4049,6 +6171,7 @@ def main(config=None):
         1 if config["make_line_profiles"] else 0,
         1 if config["make_streamlines"] else 0,
         1 if config["make_surface_analysis"] else 0,
+        1 if config.get("make_force_analysis", False) else 0,
         1 if config.get("make_pprime_contour", False) else 0,
     ])
 
@@ -4087,6 +6210,8 @@ def main(config=None):
                 streamline_results.append(failed)
             if config["make_surface_analysis"]:
                 surface_results.append(failed)
+            if config.get("make_force_analysis", False):
+                force_results.append(failed)
             continue
 
         _ts(f"├─ Loaded in {time.time() - t_load:.1f} s  "
@@ -4186,6 +6311,40 @@ def main(config=None):
             except Exception as exc:
                 surface_results.append((label, False, str(exc)))
                 _ts(f"├─ ✗ Surface analysis → FAIL — {exc}")
+
+        # --- Certified one-sided flat-plate force analysis ---
+        if (
+            config.get("make_force_analysis", False)
+            and force_baseline_error is None
+        ):
+            t_force = time.time()
+            paired_path = paired_force_paths.get(pfile)
+            try:
+                r = _process_single_certified_force((
+                    pfile, config, force_baseline_wall, paired_path
+                ))
+                force_results.append(r)
+                if r[1]:
+                    payload = r[2]
+                    forces_dict[label] = payload["force"]
+                    force_wall_dict[label] = payload["wall"]
+                    if payload.get("increment_wall") is not None:
+                        force_increment_wall_dict[label] = payload[
+                            "increment_wall"
+                        ]
+                    if payload.get("boundary_layers"):
+                        boundary_layer_results[label] = payload[
+                            "boundary_layers"
+                        ]
+                    _ts(
+                        f"├─ Certified forces → OK "
+                        f"({time.time() - t_force:.1f} s)"
+                    )
+                else:
+                    _ts(f"├─ ✗ Certified forces → FAIL — {r[2]}")
+            except Exception as exc:
+                force_results.append((label, False, str(exc)))
+                _ts(f"├─ ✗ Certified forces → FAIL — {exc}")
 
         # Per-snapshot timing summary
         t_snap_elapsed = time.time() - t_snap
@@ -4376,6 +6535,8 @@ def main(config=None):
         _print_results(streamline_results, "Streamlines")
     if config["make_surface_analysis"]:
         _print_results(surface_results, "Surface analysis")
+    if config.get("make_force_analysis", False):
+        _print_results(force_results, "Certified force analysis")
     if analysis_results:
         _print_results(analysis_results, "Probe/stability analysis")
 
@@ -4405,34 +6566,49 @@ def main(config=None):
     # ------------------------------------------------------------------
     _section(9, 10, "Generating force time-series plots ...")
 
+    force_report = None
     if config["make_force_analysis"] and forces_dict:
         try:
-            force_out = out_dir / "forces_vs_time.png"
-            pdb.plot_forces_vs_time(
-                forces_dict,
-                output_path=str(force_out),
-                laser_start_time=config.get("laser_start_time"),
+            force_report = _write_certified_force_products(
+                config, forces_dict, force_wall_dict,
+                force_increment_wall_dict, boundary_layer_results,
+                baseline_wall=force_baseline_wall,
+                baseline_profiles=force_baseline_profiles,
             )
-            _ts(f"Force time-series saved: {force_out}")
-
-            # Also save raw data as .npz for external analysis
-            npz_out = out_dir / "forces_timeseries.npz"
-            snap_labels = sorted(forces_dict.keys())
-            n = len(snap_labels)
-            f0 = forces_dict[snap_labels[0]]
-            # Build arrays
-            arrays = {"labels": snap_labels}
-            scalar_keys = ["time", "C_D", "C_L", "C_Dp", "C_Dv", "C_Lp", "C_Lv",
-                           "D_total", "L_total", "D_p", "D_v", "L_p", "L_v"]
-            for k in scalar_keys:
-                if k in f0:
-                    arrays[k] = np.array([forces_dict[lbl].get(k, np.nan) for lbl in snap_labels])
-            np.savez(npz_out, **arrays)
-            _ts(f"Force data saved: {npz_out}")
+            _ts(
+                "Certified force products saved to "
+                f"{out_dir / 'ForceAnalysis'}"
+            )
+            if not force_report["scientific_adequacy"][
+                    "spectral_inference_allowed"]:
+                _ts(
+                    "Force spectra withheld: "
+                    + force_report["scientific_adequacy"]["linkage"]["reason"]
+                )
         except Exception as exc:
             fdb._log_error("Force time-series plot failed", exc)
+            force_results.append(("force_products", False, str(exc)))
     else:
         _ts("Force analysis not requested or no force data available.")
+
+    if config.get("make_evidence_classification", True):
+        try:
+            evidence_report = _write_analysis_evidence_report(
+                config, analysis_results, force_report=force_report
+            )
+            analysis_results.append(("evidence", True, None))
+            _ts(
+                "Measurement evidence matrix saved: "
+                f"{out_dir / 'AnalysisEvidence'}"
+            )
+            if not evidence_report["supported_classifications"]:
+                _ts(
+                    "  Evidence matrix contains no supported classification; "
+                    "inspect its unavailable/insufficient-data entries."
+                )
+        except Exception as exc:
+            analysis_results.append(("evidence", False, str(exc)))
+            fdb._log_error("Analysis evidence classification failed", exc)
 
     # ------------------------------------------------------------------
     # 12. Space-time plots
@@ -4556,7 +6732,7 @@ def main(config=None):
     total_elapsed = time.time() - _t_start_global
     result_groups = [
         contour_results, pprime_results, line_results,
-        streamline_results, surface_results, analysis_results,
+        streamline_results, surface_results, force_results, analysis_results,
     ]
     failed_results = [r for group in result_groups for r in group if not r[1]]
     completion_title = "Complete" if not failed_results else "Completed with failures"
@@ -4572,7 +6748,7 @@ def main(config=None):
     _write_run_manifest(
         out_dir, config,
         "failed" if failed_results else "completed",
-        plotfiles=plotfile_paths,
+        plotfiles=[*plotfile_paths, *force_baseline_inputs],
         failures=[{"workflow": r[0], "reason": r[2]} for r in failed_results],
         started_at=started_at,
     )

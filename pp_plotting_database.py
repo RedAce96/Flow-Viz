@@ -12,6 +12,7 @@
 # =============================================================================
 
 import os
+from pathlib import Path
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -1090,6 +1091,151 @@ def plot_forces_vs_time(forces_dict, output_path=None, figsize=(14, 10),
         plt.savefig(output_path, dpi=200, bbox_inches="tight")
         plt.close(fig)
     return fig
+
+
+def plot_certified_force_timeseries(
+        forces_dict, output_path=None, laser_start_time=None,
+        figsize=(13, 11)):
+    """Plot certified one-sided drag, normal load, and moment histories."""
+    if not forces_dict:
+        raise ValueError("forces_dict is empty")
+    entries = sorted(
+        forces_dict.values(), key=lambda item: float(item.get("time", 0.0))
+    )
+    absolute_time = np.asarray([item["time"] for item in entries], dtype=float)
+    origin = (
+        float(laser_start_time)
+        if laser_start_time is not None else float(absolute_time[0])
+    )
+    time_ns = (absolute_time - origin) * 1.0e9
+    has_increment = all("delta_D_total_N_m" in item for item in entries)
+    prefix = "delta_" if has_increment else ""
+
+    def values(key):
+        return np.asarray([
+            item.get(prefix + key, np.nan) for item in entries
+        ], dtype=float)
+
+    figure, axes = plt.subplots(3, 1, figsize=figsize, sharex=True)
+    axes[0].plot(time_ns, values("D_total_N_m"), color="C3", label="total")
+    axes[0].plot(
+        time_ns, values("D_pressure_N_m"), color="C2", linestyle="--",
+        label="pressure",
+    )
+    axes[0].plot(
+        time_ns, values("D_viscous_N_m"), color="C4", linestyle=":",
+        label="viscous",
+    )
+    axes[0].set_ylabel(
+        r"$\Delta D'$ [N/m]" if has_increment else r"$D'$ [N/m]"
+    )
+    axes[0].legend(frameon=False, ncol=3)
+
+    axes[1].plot(time_ns, values("N_total_N_m"), color="C0", label="total")
+    axes[1].plot(
+        time_ns, values("N_pressure_N_m"), color="C1", linestyle="--",
+        label="pressure",
+    )
+    axes[1].plot(
+        time_ns, values("N_viscous_N_m"), color="C5", linestyle=":",
+        label="viscous",
+    )
+    axes[1].set_ylabel(
+        r"$\Delta N'_{\mathrm{1s}}$ [N/m]"
+        if has_increment else r"$N'_{\mathrm{1s}}$ [N/m]"
+    )
+    axes[1].legend(frameon=False, ncol=3)
+
+    axes[2].plot(time_ns, values("M_total_N"), color="C6")
+    axes[2].set_ylabel(
+        r"$\Delta M'_z$ [N]" if has_increment else r"$M'_z$ [N]"
+    )
+    axes[2].set_xlabel(r"Time from laser start [ns]")
+    for axis in axes:
+        axis.grid(True, alpha=0.25)
+    title = (
+        "Certified one-sided flat-plate load increments"
+        if has_increment else "Certified one-sided flat-plate loads"
+    )
+    axes[0].set_title(title)
+    figure.tight_layout()
+    if output_path is not None:
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(output_path, dpi=200, bbox_inches="tight")
+        plt.close(figure)
+    return figure
+
+
+def plot_force_surface_history(
+        time_relative_s, x_m, values, label, output_path=None,
+        cmap="RdBu_r", figsize=(13, 6)):
+    """Plot a signed distributed force quantity over x and time."""
+    time_relative_s = np.asarray(time_relative_s, dtype=float)
+    x_m = np.asarray(x_m, dtype=float)
+    values = np.asarray(values, dtype=float)
+    if values.shape != (time_relative_s.size, x_m.size):
+        raise ValueError("surface-history values must have shape (time, x)")
+    bound = float(np.nanpercentile(np.abs(values), 99.0))
+    if not np.isfinite(bound) or bound <= 0.0:
+        bound = 1.0
+    figure, axis = plt.subplots(figsize=figsize)
+    mesh = axis.pcolormesh(
+        x_m, time_relative_s * 1.0e9, values,
+        shading="auto", cmap=cmap, vmin=-bound, vmax=bound,
+    )
+    colorbar = figure.colorbar(mesh, ax=axis)
+    colorbar.set_label(label)
+    axis.set_xlabel(r"$x$ [m]")
+    axis.set_ylabel("Time from laser start [ns]")
+    axis.set_title("Laser-induced distributed one-sided wall loading")
+    figure.tight_layout()
+    if output_path is not None:
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(output_path, dpi=200, bbox_inches="tight")
+        plt.close(figure)
+    return figure
+
+
+def plot_packet_propagation(propagation, output_path=None):
+    """Plot robust packet arrival, envelope energy, and peak response."""
+    x = np.asarray(propagation["probe_x_m"], dtype=float)
+    valid = np.asarray(propagation["valid"], dtype=bool)
+    arrival = np.asarray(propagation["arrival_time_s"], dtype=float)
+    energy = np.asarray(propagation["envelope_energy"], dtype=float)
+    peak = np.asarray(propagation["peak_amplitude"], dtype=float)
+    figure, axes = plt.subplots(3, 1, figsize=(9, 10), sharex=True)
+    axes[0].plot(x[valid], arrival[valid] * 1.0e6, "o", label="Detected arrival")
+    if np.any(valid) and np.isfinite(
+            propagation.get("arrival_fit_slope_s_m", np.nan)):
+        fit = (
+            float(propagation["arrival_fit_intercept_s"])
+            + float(propagation["arrival_fit_slope_s_m"]) * x
+        )
+        axes[0].plot(
+            x, fit * 1.0e6, "-",
+            label=(
+                f"Theil–Sen fit, $U_g$="
+                f"{propagation['group_velocity_m_s']:.1f} m/s"
+            ),
+        )
+    axes[0].set_ylabel("Arrival time [µs]")
+    axes[0].legend(frameon=False)
+    axes[1].semilogy(
+        x, np.maximum(energy, np.finfo(float).tiny), "o-"
+    )
+    axes[1].set_ylabel("Envelope energy [signal² s]")
+    axes[2].plot(x, peak, "o-")
+    axes[2].set_ylabel("Peak envelope")
+    axes[2].set_xlabel("x [m]")
+    for axis in axes:
+        axis.grid(True, alpha=0.25)
+    figure.suptitle("Band-limited transient packet propagation")
+    figure.tight_layout()
+    if output_path is not None:
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(output_path, dpi=200, bbox_inches="tight")
+        plt.close(figure)
+    return figure
 
 
 # ---------------------------------------------------------------------------
@@ -2829,7 +2975,7 @@ def plot_harmonic_recon_comparison(time_uniform, signal_matrix, probe_data,
 
 def plot_spectrogram(time, signal, fs, output_path=None, fmax=None,
                      title="Spectrogram", figsize=(12, 5), nperseg=256,
-                     noverlap=None):
+                     noverlap=None, scale="db", vmin=None, vmax=None):
     """Plot STFT spectrogram of a probe signal.
 
     Parameters
@@ -2843,30 +2989,40 @@ def plot_spectrogram(time, signal, fs, output_path=None, fmax=None,
     figsize : tuple, default (12, 5)
     nperseg, noverlap : int, optional
         STFT segment length and overlap passed to the spectral estimator.
+    scale : {'linear', 'db'}
+        Display linear PSD or PSD in decibels. Linear PSD uses a zero lower
+        colour limit unless ``vmin`` is supplied.
+    vmin, vmax : float, optional
+        Colour limits in the units selected by ``scale``.
 
     Returns
     -------
     matplotlib.figure.Figure
     """
-    try:
-        from scipy import signal as scipy_signal
-    except ImportError:
-        raise ImportError("scipy.signal required for plot_spectrogram")
-
     signal = np.asarray(signal, dtype=float).ravel()
     time = np.asarray(time, dtype=float).ravel()
     if len(time) != len(signal):
         raise ValueError("time and signal must have the same length")
-    f, t_relative, Sxx_dB = fdb_mod.compute_spectrogram(
-        signal, fs, nperseg=nperseg, noverlap=noverlap
+    scale = str(scale).lower()
+    f, t_relative, spectral_values = fdb_mod.compute_spectrogram(
+        signal, fs, nperseg=nperseg, noverlap=noverlap,
+        output_scale=scale,
     )
     t = t_relative + float(time[0])
+    if scale == "linear":
+        if vmin is None:
+            vmin = 0.0
+        colorbar_label = r"PSD [signal$^2$/Hz]"
+    else:
+        colorbar_label = r"PSD [dB re signal$^2$/Hz]"
 
     fig, ax = plt.subplots(figsize=figsize)
-    im = ax.pcolormesh(t, f, Sxx_dB, shading="auto", cmap="inferno",
-                       rasterized=True)
+    im = ax.pcolormesh(
+        t, f, spectral_values, shading="auto", cmap="inferno",
+        rasterized=True, vmin=vmin, vmax=vmax,
+    )
     cb = fig.colorbar(im, ax=ax, pad=0.02, shrink=0.85)
-    cb.set_label(r"PSD [dB re signal$^2$/Hz]", fontsize=10)
+    cb.set_label(colorbar_label, fontsize=10)
 
     ax.set_xlabel("Flow time [s]", fontsize=11)
     ax.set_ylabel("Frequency [Hz]", fontsize=11)
@@ -2880,6 +3036,112 @@ def plot_spectrogram(time, signal, fs, output_path=None, fmax=None,
         plt.savefig(output_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
     return fig
+
+
+def plot_fft_stft_comparison(
+        time, signal, fs, output_path=None, fmax=None,
+        title="Full-record FFT and STFT comparison",
+        signal_label="Mean-subtracted signal", nperseg=256,
+        noverlap=None, spectrogram_scale="linear",
+        spectrogram_vmin=0.0, spectrogram_vmax=None,
+        fft_window="hann", figsize=(12, 11)):
+    """Plot one probe's mean-subtracted history, FFT, and STFT together."""
+    time = np.asarray(time, dtype=float).ravel()
+    signal = np.asarray(signal, dtype=float).ravel()
+    fs = float(fs)
+    if time.size != signal.size or time.size < 8:
+        raise ValueError(
+            "time and signal must have the same length of at least 8"
+        )
+    if not np.all(np.isfinite(time)) or not np.all(np.isfinite(signal)):
+        raise ValueError("time and signal must be finite")
+    signal_mean_subtracted = signal - np.mean(signal)
+    window_name = str(fft_window).lower()
+    if window_name == "hann":
+        window = np.hanning(signal.size)
+    elif window_name == "hamming":
+        window = np.hamming(signal.size)
+    elif window_name == "blackman":
+        window = np.blackman(signal.size)
+    elif window_name in ("none", "rect", "rectangular"):
+        window = np.ones(signal.size)
+        window_name = "rectangular"
+    else:
+        raise ValueError(
+            "fft_window must be hann, hamming, blackman, or rectangular"
+        )
+    amplitude_scale = signal.size / max(np.sum(window), 1.0e-300)
+    fft_frequency = np.fft.rfftfreq(signal.size, 1.0 / fs)
+    fft_amplitude = (
+        np.abs(np.fft.rfft(signal_mean_subtracted * window))
+        / signal.size * amplitude_scale
+    )
+    if signal.size > 2:
+        fft_amplitude[1:-1] *= 2.0
+
+    spectrogram_scale = str(spectrogram_scale).lower()
+    stft_frequency, stft_time_relative, spectral_values = (
+        fdb_mod.compute_spectrogram(
+            signal_mean_subtracted, fs, nperseg=nperseg,
+            noverlap=noverlap, output_scale=spectrogram_scale,
+        )
+    )
+    if spectrogram_scale == "linear":
+        colorbar_label = r"STFT PSD [signal$^2$/Hz]"
+    else:
+        colorbar_label = r"STFT PSD [dB re signal$^2$/Hz]"
+
+    record_time_us = (time - time[0]) * 1.0e6
+    stft_time_us = stft_time_relative * 1.0e6
+    figure, axes = plt.subplots(3, 1, figsize=figsize)
+    axes[0].plot(record_time_us, signal_mean_subtracted, linewidth=0.75)
+    axes[0].set_xlabel(r"Time from record start [$\mu$s]")
+    axes[0].set_ylabel(signal_label)
+    axes[0].set_title("Mean-subtracted probe history")
+
+    positive = fft_frequency > 0.0
+    if fmax is not None:
+        positive &= fft_frequency <= float(fmax)
+    axes[1].semilogy(
+        fft_frequency[positive] * 1.0e-6,
+        np.maximum(
+            fft_amplitude[positive], np.finfo(float).tiny
+        ),
+        linewidth=0.8,
+    )
+    axes[1].set_xlabel("Frequency [MHz]")
+    axes[1].set_ylabel("One-sided FFT amplitude")
+    axes[1].set_title(
+        f"Full-record FFT ({window_name} window, amplitude corrected)"
+    )
+    if fmax is not None:
+        axes[1].set_xlim(0.0, float(fmax) * 1.0e-6)
+
+    mesh = axes[2].pcolormesh(
+        stft_time_us, stft_frequency * 1.0e-6, spectral_values,
+        shading="auto", cmap="inferno", rasterized=True,
+        vmin=spectrogram_vmin, vmax=spectrogram_vmax,
+    )
+    colorbar = figure.colorbar(mesh, ax=axes[2], pad=0.02)
+    colorbar.set_label(colorbar_label)
+    axes[2].set_xlabel(r"Time from record start [$\mu$s]")
+    axes[2].set_ylabel("Frequency [MHz]")
+    axes[2].set_title(
+        f"STFT spectrogram ({nperseg} samples per segment)"
+    )
+    if fmax is not None:
+        axes[2].set_ylim(0.0, float(fmax) * 1.0e-6)
+    for axis in axes:
+        axis.grid(True, alpha=0.25)
+    figure.suptitle(
+        f"{title}\nAbsolute record start: {time[0]:.9f} s"
+    )
+    figure.tight_layout()
+    if output_path is not None:
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(output_path, dpi=175, bbox_inches="tight")
+        plt.close(figure)
+    return figure
 
 
 def plot_envelope_with_signal(time, signal_raw, signal_filtered, envelope,
