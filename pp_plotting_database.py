@@ -228,11 +228,32 @@ def resolve_cmap(cmap):
 # 1.  BASIC CONTOUR PLOTS
 # ---------------------------------------------------------------------------
 
+def _resolve_colorbar_shrink(value, x, xlim=None, reference_span=0.3):
+    """Resolve a fixed or streamwise-span-aware colorbar height fraction."""
+    if not isinstance(value, str):
+        shrink = float(value)
+        if not 0.0 < shrink <= 1.0:
+            raise ValueError("colorbar_shrink must lie in (0, 1]")
+        return shrink
+    if value.lower() != "auto":
+        raise ValueError("colorbar_shrink must be 'auto' or a number")
+    reference_span = float(reference_span)
+    if not np.isfinite(reference_span) or reference_span <= 0.0:
+        raise ValueError("colorbar_reference_span must be positive")
+    limits = np.asarray(xlim if xlim is not None else [np.min(x), np.max(x)])
+    displayed_span = abs(float(limits[1]) - float(limits[0]))
+    if not np.isfinite(displayed_span) or displayed_span <= 0.0:
+        return 0.5
+    # A <= reference-span view uses a half-height colorbar. Wider views
+    # decrease smoothly, reaching the 0.2 lower bound at 2.5 reference spans.
+    return float(np.clip(0.5 * reference_span / displayed_span, 0.2, 0.5))
+
 def plot_contour(dataset, field_key, output_path=None, figsize=(14, 4),
                  cmap="viridis", vmin=None, vmax=None, title=None,
                  xlabel=r"$x$ [m]", ylabel=r"$y$ [m]", colorbar_label=None,
                  xlim=None, ylim=None, ax=None, rasterized=True,
-                 norm="linear"):
+                 norm="linear", colorbar_shrink="auto",
+                 colorbar_reference_span=0.3):
     """Plot a single 2-D field as a pcolormesh contour.
 
     Parameters
@@ -258,6 +279,11 @@ def plot_contour(dataset, field_key, output_path=None, figsize=(14, 4),
         Rasterize the pcolormesh for smaller file sizes.
     norm : str or Normalize, default "linear"
         Color scaling: "linear", "log" (LogNorm), or "symlog" (SymLogNorm).
+    colorbar_shrink : "auto" or float, default "auto"
+        Colorbar height fraction. Automatic mode decreases the fraction as
+        the displayed x-span grows.
+    colorbar_reference_span : float, default 0.3
+        X-span receiving the maximum automatic colorbar height.
 
     Returns
     -------
@@ -311,7 +337,13 @@ def plot_contour(dataset, field_key, output_path=None, figsize=(14, 4),
         vmax=vmax if p_norm is None else None,
         rasterized=rasterized,
     )
-    cb = ax.figure.colorbar(p, ax=ax, pad=0.02, shrink=0.2)
+    resolved_shrink = _resolve_colorbar_shrink(
+        colorbar_shrink, x, xlim=xlim,
+        reference_span=colorbar_reference_span,
+    )
+    cb = ax.figure.colorbar(
+        p, ax=ax, pad=0.02, shrink=resolved_shrink
+    )
     cb.set_label(colorbar_label if colorbar_label is not None else field_label(field_key))
 
     ax.set_xlabel(xlabel)

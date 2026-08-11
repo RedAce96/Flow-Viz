@@ -100,8 +100,26 @@ def validate_config(config):
     if config.get("plot_time_mode") == "flow_through" and float(
             config.get("plot_flow_through_u_inf", 0.0)) <= 0:
         raise ValueError("plot_flow_through_u_inf must be positive")
+    colorbar_shrink = config.get("contour_colorbar_shrink", "auto")
+    if isinstance(colorbar_shrink, str):
+        if colorbar_shrink.lower() != "auto":
+            raise ValueError(
+                "contour_colorbar_shrink must be 'auto' or a number"
+            )
+    elif not 0.0 < float(colorbar_shrink) <= 1.0:
+        raise ValueError("contour_colorbar_shrink must lie in (0, 1]")
+    if float(config.get("contour_colorbar_reference_span", 0.3)) <= 0.0:
+        raise ValueError("contour_colorbar_reference_span must be positive")
     if int(config.get("fft_batch_size", 1)) < 1:
         raise ValueError("fft_batch_size must be at least 1")
+    coordinate_policy = str(
+        config.get("probe_coordinate_policy", "strict")
+    ).lower()
+    if coordinate_policy not in ("strict", "nominal", "longest_epoch"):
+        raise ValueError(
+            "probe_coordinate_policy must be 'strict', 'nominal', or "
+            "'longest_epoch'"
+        )
     if config.get("reconstruction_method") not in (
             "harmonics", "band", "top_frequencies"):
         raise ValueError("reconstruction_method is invalid")

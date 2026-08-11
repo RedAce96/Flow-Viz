@@ -14,6 +14,7 @@ import argparse
 import csv
 import glob
 import gc
+import hashlib
 import importlib.metadata
 import json
 import os
@@ -381,8 +382,8 @@ CONFIG = {
 
     # --- Snapshot range ---
     # Set to None to process all discovered plotfiles.
-    "snapshot_start": 211500,
-    "snapshot_end": 250500,
+    "snapshot_start": 240000,
+    "snapshot_end": 250000,
     "snapshot_step": 1000,
 
     # --- Field aliases ---
@@ -400,11 +401,11 @@ CONFIG = {
     "make_group_plots": False,
 
     "make_probe_plots": False,   # set True only if you need time-history plots (requires ASCII conversion)
-    "make_fft_probes": True,       # FFT/coherence plus weighted POD/SPOD/DMD
-    "make_pprime_contour": False,       # symmetric perturbation contours
+    "make_fft_probes": False,       # FFT/coherence plus weighted POD/SPOD/DMD
+    "make_pprime_contour": True,       # symmetric perturbation contours
     # Legacy workflow name; the enabled result is a measurement-first,
     # coherence-gated wave analysis and does not perform LST/PSE.
-    "make_stability_diagnostics": True,
+    "make_stability_diagnostics": False,
 
 
     # --- Contour plot settings ---
@@ -415,6 +416,10 @@ CONFIG = {
     ],
     "contour_cmap": "turbo",           # Perceptually uniform scalar-field map
     "contour_norm": "linear",               # Color scaling: "linear", "log", "symlog", or a matplotlib Normalize object
+    # "auto" shortens the colorbar as the displayed streamwise span grows.
+    # A numeric value in (0, 1] overrides the automatic calculation.
+    "contour_colorbar_shrink": "auto",
+    "contour_colorbar_reference_span": 0.3,  # [m], gives the maximum shrink
     # Field-specific choices override the global fallbacks above. Signed
     # vorticity needs a zero-centred diverging map; magnitude is non-negative
     # and spans several orders of magnitude.
@@ -639,6 +644,12 @@ CONFIG = {
     "fft_nt_skip": 0,
     "fft_max_probes": None,
     "probe_dedup_tol": 1e-12,
+    # AMR can move the cell centre sampled for a fixed requested location.
+    # "strict" rejects such changes, "nominal" retains the complete record
+    # and its compact mapping history while labelling probes by their fixed
+    # requested positions, and "longest_epoch" keeps only the longest
+    # contiguous interval with one stationary sampling map.
+    "probe_coordinate_policy": "strict",
     "fft_resample": False,
     "fft_target_dt": None,
     "fft_mean_subtraction": "mean",   # "mean" | "linear" | "none" — remove DC before FFT
@@ -702,7 +713,7 @@ CONFIG = {
     ),
     "pprime_field": "pressure",
     "pprime_cmap": "RdBu_r",
-    "pprime_vlims": [-50, 50],
+    "pprime_vlims": [-1, 1],
 
     # --- Stability diagnostics (2nd Mack mode) ---
     # Existing pre-event/base-flow plotfile; use an independently verified
@@ -1259,6 +1270,12 @@ def _process_single_contour(args):
                 vmax=vlims[1],
                 xlim=config.get("contour_xlim"),
                 ylim=config.get("contour_ylim"),
+                colorbar_shrink=config.get(
+                    "contour_colorbar_shrink", "auto"
+                ),
+                colorbar_reference_span=config.get(
+                    "contour_colorbar_reference_span", 0.3
+                ),
             )
         return (label, True, None)
     except Exception as exc:
@@ -2515,7 +2532,7 @@ def _write_certified_force_products(
             selected_time = times[impulse_mask]
             if np.all(np.isfinite(selected)):
                 impulse_summary[output_key] = float(
-                    np.trapz(selected, selected_time)
+                    fdb.trapezoidal_integral(selected, selected_time)
                 )
                 arrays[output_key] = np.array(impulse_summary[output_key])
         impulse_summary["interval_s"] = [
@@ -3064,6 +3081,14 @@ def _process_pprime_contour(args):
             vmax=vmax,
             colorbar_label=r"$p'$ [Pa]" if field_key == "pressure"
             else rf"$\Delta$ {pdb.field_label(field_key)}",
+            xlim=config.get("contour_xlim"),
+            ylim=config.get("contour_ylim"),
+            colorbar_shrink=config.get(
+                "contour_colorbar_shrink", "auto"
+            ),
+            colorbar_reference_span=config.get(
+                "contour_colorbar_reference_span", 0.3
+            ),
         )
         return (label, True, None)
     except Exception as exc:
@@ -3271,9 +3296,112 @@ def _scan_probe_v2_chunks(stream, header, path):
     return chunks
 
 
+def _probe_mapping_digest(sample_x, sample_y, level, valid):
+    """Return a stable digest for one selected probe-to-cell mapping."""
+    digest = hashlib.blake2b(digest_size=16)
+    for values in (sample_x, sample_y, level, valid):
+        array = np.ascontiguousarray(values)
+        digest.update(array.dtype.str.encode("ascii"))
+        digest.update(struct.pack("<q", array.size))
+        digest.update(array.tobytes())
+    return digest.digest()
+
+
+def _same_probe_mapping(first, second):
+    """Return whether two mappings are exactly identical."""
+    return (
+        np.array_equal(first["sample_x"], second["sample_x"], equal_nan=True)
+        and np.array_equal(
+            first["sample_y"], second["sample_y"], equal_nan=True
+        )
+        and np.array_equal(first["level"], second["level"])
+        and np.array_equal(first["valid"], second["valid"])
+    )
+
+
+def _mapping_epoch_runs(mapping_id, steps, times, mappings):
+    """Compress a per-sample mapping identifier into contiguous epochs."""
+    if mapping_id.size == 0:
+        return []
+    starts = np.r_[0, np.flatnonzero(np.diff(mapping_id) != 0) + 1]
+    stops = np.r_[starts[1:], mapping_id.size]
+    epochs = []
+    for epoch_index, (start, stop) in enumerate(zip(starts, stops)):
+        registry_id = int(mapping_id[start])
+        mapping = mappings[registry_id]
+        epochs.append({
+            "epoch": epoch_index,
+            "mapping_id": registry_id,
+            "start_index": int(start),
+            "stop_index": int(stop),
+            "sample_count": int(stop - start),
+            "first_step": int(steps[start]),
+            "last_step": int(steps[stop - 1]),
+            "first_time": float(times[start]),
+            "last_time": float(times[stop - 1]),
+            "sample_x": mapping["sample_x"],
+            "sample_y": mapping["sample_y"],
+            "level": mapping["level"],
+            "valid": mapping["valid"],
+        })
+    return epochs
+
+
+def _probe_mapping_report(epochs, requested_x, requested_y):
+    """Summarize coordinate motion and validity without expanding by time."""
+    n_probes = requested_x.size
+    maximum_shift = np.zeros(n_probes, dtype=float)
+    invalid_samples = np.zeros(n_probes, dtype=np.int64)
+    total_samples = sum(epoch["sample_count"] for epoch in epochs)
+    levels = [set() for _ in range(n_probes)]
+    for epoch in epochs:
+        shift = np.hypot(
+            epoch["sample_x"] - requested_x,
+            epoch["sample_y"] - requested_y,
+        )
+        maximum_shift = np.maximum(maximum_shift, shift)
+        invalid_samples += epoch["sample_count"] * (~epoch["valid"])
+        for probe_id, level in enumerate(epoch["level"]):
+            levels[probe_id].add(int(level))
+    invalid_fraction = (
+        invalid_samples.astype(float) / total_samples
+        if total_samples else np.zeros(n_probes, dtype=float)
+    )
+    return {
+        "epoch_count": len(epochs),
+        "unique_mapping_count": len({
+            epoch["mapping_id"] for epoch in epochs
+        }),
+        "transition_count": max(0, len(epochs) - 1),
+        "sample_count": int(total_samples),
+        "maximum_shift_cm": maximum_shift,
+        "maximum_shift_overall_cm": (
+            float(np.max(maximum_shift)) if n_probes else 0.0
+        ),
+        "invalid_fraction": invalid_fraction,
+        "maximum_invalid_fraction": (
+            float(np.max(invalid_fraction)) if n_probes else 0.0
+        ),
+        "sampled_levels": [tuple(sorted(values)) for values in levels],
+    }
+
+
 def _load_probe_data_from_chunked_binary(
-        bin_files, var_col, dedup_tol=1e-12, nt_skip=0, max_probes=None):
-    """Load one physical field from variable-major probe-v2 chunks."""
+        bin_files, var_col, dedup_tol=1e-12, nt_skip=0, max_probes=None,
+        coordinate_policy="strict"):
+    """Load one field while preserving compact AMR mapping epochs.
+
+    ``coordinate_policy='strict'`` rejects a mapping transition. ``nominal``
+    retains the full record and uses the fixed requested position as the
+    nominal spatial coordinate. ``longest_epoch`` selects the longest
+    contiguous interval with a stationary coordinate/level/validity map.
+    """
+    coordinate_policy = str(coordinate_policy).lower()
+    if coordinate_policy not in ("strict", "nominal", "longest_epoch"):
+        raise ValueError(
+            "coordinate_policy must be 'strict', 'nominal', or "
+            "'longest_epoch'"
+        )
     expected_names = ("rho", "u", "p", "T")
     if not 1 <= int(var_col) <= len(expected_names):
         raise ValueError("Chunked probe files support var_col values 1 through 4")
@@ -3316,8 +3444,9 @@ def _load_probe_data_from_chunked_binary(
         return []
     n_probes = file_info[0]["header"]["n_probes"]
     n_load = n_probes if max_probes is None else min(int(max_probes), n_probes)
-    times_parts, steps_parts, signal_parts = [], [], []
-    x_sample = y_sample = sample_valid = None
+    times_parts, steps_parts, signal_parts, mapping_parts = [], [], [], []
+    mappings = []
+    mapping_ids_by_digest = {}
 
     try:
         for item in file_info:
@@ -3345,21 +3474,38 @@ def _load_probe_data_from_chunked_binary(
                 chunk_y = np.frombuffer(
                     stream.read(coordinates_bytes), dtype=f"{endian}f8"
                 ).astype(float)
-                stream.seek(levels_bytes, os.SEEK_CUR)
+                level = np.frombuffer(
+                    stream.read(levels_bytes), dtype=f"{endian}i4"
+                ).astype(np.int32)
                 valid = np.frombuffer(
                     stream.read(validity_bytes), dtype=np.uint8
                 ).astype(bool)
 
-                if x_sample is None:
-                    x_sample = chunk_x[:n_load].copy()
-                    y_sample = chunk_y[:n_load].copy()
-                    sample_valid = valid[:n_load].copy()
-                elif (not np.array_equal(valid[:n_load], sample_valid)
-                      or not np.allclose(chunk_x[:n_load], x_sample, equal_nan=True)
-                      or not np.allclose(chunk_y[:n_load], y_sample, equal_nan=True)):
-                    raise ValueError(
-                        "Probe sampling coordinates changed between chunks; "
-                        "split the analysis by mapping epoch"
+                mapping = {
+                    "sample_x": chunk_x[:n_load].copy(),
+                    "sample_y": chunk_y[:n_load].copy(),
+                    "level": level[:n_load].copy(),
+                    "valid": valid[:n_load].copy(),
+                }
+                digest = _probe_mapping_digest(**mapping)
+                mapping_id = None
+                for candidate in mapping_ids_by_digest.get(digest, []):
+                    if _same_probe_mapping(mapping, mappings[candidate]):
+                        mapping_id = candidate
+                        break
+                if mapping_id is None:
+                    if coordinate_policy == "strict" and mappings:
+                        raise ValueError(
+                            "Probe sampling map changed while scanning chunk "
+                            f"{chunk['index']} in {item['path']}; use "
+                            "probe_coordinate_policy='nominal' to retain the "
+                            "mapping history or 'longest_epoch' for a "
+                            "stationary interval"
+                        )
+                    mapping_id = len(mappings)
+                    mappings.append(mapping)
+                    mapping_ids_by_digest.setdefault(digest, []).append(
+                        mapping_id
                     )
 
                 field_base = (
@@ -3382,6 +3528,9 @@ def _load_probe_data_from_chunked_binary(
                 steps_parts.append(steps)
                 times_parts.append(times)
                 signal_parts.append(values)
+                mapping_parts.append(np.full(
+                    n_samples, mapping_id, dtype=np.int32
+                ))
     finally:
         for item in file_info:
             item["stream"].close()
@@ -3391,10 +3540,12 @@ def _load_probe_data_from_chunked_binary(
     steps = np.concatenate(steps_parts)
     time_buf = np.concatenate(times_parts)
     signal_buf = np.vstack(signal_parts)
+    mapping_id = np.concatenate(mapping_parts)
     order = np.lexsort((steps, time_buf))
     steps = steps[order]
     time_buf = time_buf[order]
     signal_buf = signal_buf[order, :]
+    mapping_id = mapping_id[order]
 
     if dedup_tol >= 0 and time_buf.size:
         keep = [0]
@@ -3405,6 +3556,11 @@ def _load_probe_data_from_chunked_binary(
                 or abs(time_buf[idx] - time_buf[previous]) < dedup_tol
             )
             if duplicate:
+                if mapping_id[idx] != mapping_id[previous]:
+                    raise ValueError(
+                        "Conflicting duplicate probe mappings were found at "
+                        f"step={steps[idx]}, time={time_buf[idx]:.17g}"
+                    )
                 if not np.allclose(
                         signal_buf[idx], signal_buf[previous],
                         rtol=1.0e-12, atol=0.0, equal_nan=True):
@@ -3418,20 +3574,70 @@ def _load_probe_data_from_chunked_binary(
         steps = steps[keep]
         time_buf = time_buf[keep]
         signal_buf = signal_buf[keep, :]
+        mapping_id = mapping_id[keep]
 
     if nt_skip > 0:
         steps = steps[nt_skip:]
         time_buf = time_buf[nt_skip:]
         signal_buf = signal_buf[nt_skip:, :]
+        mapping_id = mapping_id[nt_skip:]
+
+    all_epochs = _mapping_epoch_runs(mapping_id, steps, time_buf, mappings)
+    analysis_epochs = all_epochs
+    if coordinate_policy == "strict" and len(all_epochs) > 1:
+        raise ValueError(
+            f"Probe sampling map changed {len(all_epochs) - 1} time(s); use "
+            "probe_coordinate_policy='nominal' to retain the mapping history "
+            "or 'longest_epoch' for a stationary interval"
+        )
+    if coordinate_policy == "longest_epoch" and len(all_epochs) > 1:
+        selected_epoch = max(
+            all_epochs, key=lambda epoch: epoch["sample_count"]
+        )
+        selected = slice(
+            selected_epoch["start_index"], selected_epoch["stop_index"]
+        )
+        steps = steps[selected]
+        time_buf = time_buf[selected]
+        signal_buf = signal_buf[selected, :]
+        mapping_id = mapping_id[selected]
+        analysis_epochs = _mapping_epoch_runs(
+            mapping_id, steps, time_buf, mappings
+        )
+
+    if time_buf.size == 0:
+        return []
 
     header = file_info[0]["header"]
+    requested_x = header["requested_x"][:n_load]
+    requested_y = header["requested_y"][:n_load]
+    report = _probe_mapping_report(all_epochs, requested_x, requested_y)
+    report["analysis_epoch_count"] = len(analysis_epochs)
+    report["analysis_sample_count"] = int(time_buf.size)
+    if coordinate_policy == "nominal" and report["transition_count"]:
+        _ts(
+            "  [W] Retaining probe samples across "
+            f"{report['epoch_count']} AMR mapping epochs; maximum sampled-"
+            f"location shift is {report['maximum_shift_overall_cm']:.6g} cm"
+        )
+    stationary_mapping = mappings[int(mapping_id[0])]
+    if coordinate_policy == "nominal":
+        x_output, y_output = requested_x, requested_y
+    else:
+        x_output = stationary_mapping["sample_x"]
+        y_output = stationary_mapping["sample_y"]
     probe_data = []
     for probe_id in range(n_load):
         probe_data.append({
-            "x": float(x_sample[probe_id]),
-            "y": float(y_sample[probe_id]),
-            "x_req": float(header["requested_x"][probe_id]),
-            "y_req": float(header["requested_y"][probe_id]),
+            "x": float(x_output[probe_id]),
+            "y": float(y_output[probe_id]),
+            "x_req": float(requested_x[probe_id]),
+            "y_req": float(requested_y[probe_id]),
+            "mapping_max_shift_cm": float(
+                report["maximum_shift_cm"][probe_id]
+            ),
+            "invalid_fraction": float(report["invalid_fraction"][probe_id]),
+            "sampled_levels": report["sampled_levels"][probe_id],
             "time": time_buf,
             "step": steps,
             "signal": signal_buf[:, probe_id],
@@ -3441,7 +3647,98 @@ def _load_probe_data_from_chunked_binary(
     if probe_data:
         probe_data[0]["_shared_signal_matrix"] = signal_buf
         probe_data[0]["_shared_uniform_time"] = True
+        probe_data[0]["_mapping_epoch_id"] = mapping_id
+        probe_data[0]["_mapping_epochs"] = all_epochs
+        probe_data[0]["_analysis_mapping_epochs"] = analysis_epochs
+        probe_data[0]["_mapping_report"] = report
+        probe_data[0]["_coordinate_policy"] = coordinate_policy
     return probe_data
+
+
+def _write_probe_mapping_products(probe_data, output_root):
+    """Persist compact AMR mapping provenance and a readable quality report."""
+    if not probe_data or "_mapping_report" not in probe_data[0]:
+        return None
+    first = probe_data[0]
+    report = first["_mapping_report"]
+    epochs = first["_mapping_epochs"]
+    mapping_dir = Path(output_root) / "ProbeMapping"
+    mapping_dir.mkdir(parents=True, exist_ok=True)
+
+    maximum_shift = np.asarray(report["maximum_shift_cm"], dtype=float)
+    invalid_fraction = np.asarray(report["invalid_fraction"], dtype=float)
+    summary = {
+        "coordinate_policy": first["_coordinate_policy"],
+        "probe_count": len(probe_data),
+        "sample_count": report["sample_count"],
+        "analysis_sample_count": report["analysis_sample_count"],
+        "epoch_count": report["epoch_count"],
+        "analysis_epoch_count": report["analysis_epoch_count"],
+        "unique_mapping_count": report["unique_mapping_count"],
+        "transition_count": report["transition_count"],
+        "maximum_shift_overall_cm": report["maximum_shift_overall_cm"],
+        "shift_percentiles_cm": {
+            str(percentile): float(np.percentile(maximum_shift, percentile))
+            for percentile in (50, 90, 95, 99, 100)
+        },
+        "maximum_invalid_fraction": report["maximum_invalid_fraction"],
+        "probes_with_invalid_samples": int(np.count_nonzero(
+            invalid_fraction > 0.0
+        )),
+        "epoch_intervals": [{
+            key: epoch[key] for key in (
+                "epoch", "mapping_id", "start_index", "stop_index",
+                "sample_count", "first_step", "last_step", "first_time",
+                "last_time",
+            )
+        } for epoch in epochs],
+    }
+    summary_path = mapping_dir / "mapping_report.json"
+    temporary_summary = mapping_dir / ".mapping_report.json.tmp"
+    with temporary_summary.open("w", encoding="utf-8") as stream:
+        json.dump(summary, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+    os.replace(temporary_summary, summary_path)
+
+    unique = {}
+    for epoch in epochs:
+        unique.setdefault(epoch["mapping_id"], epoch)
+    mapping_ids = sorted(unique)
+    mapping_row = {mapping_id: row for row, mapping_id in enumerate(mapping_ids)}
+    detail_path = mapping_dir / "mapping_epochs.npz"
+    temporary_detail = mapping_dir / ".mapping_epochs.npz.tmp"
+    with temporary_detail.open("wb") as stream:
+        np.savez_compressed(
+            stream,
+            requested_x_cm=np.asarray([item["x_req"] for item in probe_data]),
+            requested_y_cm=np.asarray([item["y_req"] for item in probe_data]),
+            maximum_shift_cm=maximum_shift,
+            invalid_fraction=invalid_fraction,
+            epoch_start=np.asarray([
+                epoch["start_index"] for epoch in epochs
+            ], dtype=np.int64),
+            epoch_stop=np.asarray([
+                epoch["stop_index"] for epoch in epochs
+            ], dtype=np.int64),
+            epoch_mapping_row=np.asarray([
+                mapping_row[epoch["mapping_id"]] for epoch in epochs
+            ], dtype=np.int32),
+            mapping_id=np.asarray(mapping_ids, dtype=np.int32),
+            sample_x_cm=np.vstack([
+                unique[mapping_id]["sample_x"] for mapping_id in mapping_ids
+            ]),
+            sample_y_cm=np.vstack([
+                unique[mapping_id]["sample_y"] for mapping_id in mapping_ids
+            ]),
+            level=np.vstack([
+                unique[mapping_id]["level"] for mapping_id in mapping_ids
+            ]),
+            valid=np.vstack([
+                unique[mapping_id]["valid"] for mapping_id in mapping_ids
+            ]),
+        )
+    os.replace(temporary_detail, detail_path)
+    return summary_path, detail_path
 
 
 def _build_probe_binary_index(bin_files, dedup_tol=1e-12):
@@ -3520,6 +3817,9 @@ def _load_probe_data_from_binary(config, var_col, nt_skip=0, max_probes=None):
             bin_files, var_col,
             dedup_tol=config.get("probe_dedup_tol", 1e-12),
             nt_skip=nt_skip, max_probes=max_probes,
+            coordinate_policy=config.get(
+                "probe_coordinate_policy", "strict"
+            ),
         )
     if versions != {1}:
         raise ValueError("Legacy and chunked probe files cannot be mixed")
@@ -6452,6 +6752,14 @@ def main(config=None):
                 f"Shared probe dataset ready: {len(shared_probe_data)} probes; "
                 "subsequent workflows will not rescan the binaries"
             )
+            mapping_products = _write_probe_mapping_products(
+                shared_probe_data, out_dir
+            )
+            if mapping_products is not None:
+                _ts(
+                    "Probe AMR mapping report saved: "
+                    f"{mapping_products[0]}"
+                )
         except Exception as exc:
             analysis_results.append(("probe_data", False, str(exc)))
             _ts(f"✗ Shared probe-data load failed — {exc}")

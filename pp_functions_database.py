@@ -19,6 +19,14 @@ import traceback
 import warnings
 import numpy as np
 
+
+def trapezoidal_integral(values, coordinates=None, axis=-1):
+    """Integrate compatibly across NumPy versions without monkey-patching it."""
+    implementation = getattr(np, "trapezoid", None)
+    if implementation is None:
+        implementation = np.trapz
+    return implementation(values, x=coordinates, axis=axis)
+
 # ---------------------------------------------------------------------------
 # 0.  LOGGING / ERROR HANDLING
 # ---------------------------------------------------------------------------
@@ -1533,8 +1541,8 @@ def calculate_BL_thicknesses(y_wall_normal, U_Uinf):
     idx = np.where(U >= 0.99)[0]
     delta_99 = y[idx[0]] if len(idx) > 0 else y[-1]
 
-    delta_star = np.trapz(1.0 - U, y)
-    theta = np.trapz(U * (1.0 - U), y)
+    delta_star = trapezoidal_integral(1.0 - U, y)
+    theta = trapezoidal_integral(U * (1.0 - U), y)
     H = delta_star / theta if theta > 0 else np.nan
 
     return delta_99, delta_star, theta, H
@@ -1575,8 +1583,8 @@ def calculate_compressible_BL_thicknesses(
 
     u_ratio = u / U_e
     mass_flux_ratio = rho * u / (rho_e * U_e)
-    delta_star = float(np.trapz(1.0 - mass_flux_ratio, n))
-    theta = float(np.trapz(
+    delta_star = float(trapezoidal_integral(1.0 - mass_flux_ratio, n))
+    theta = float(trapezoidal_integral(
         mass_flux_ratio * (1.0 - u_ratio), n
     ))
     shape_factor = delta_star / theta if theta > 0.0 else np.nan
@@ -2722,8 +2730,10 @@ def compute_compressible_flat_plate_reference_profile(
     delta_99 = (float(np.interp(0.99, u_ratio, y_similarity)) if idx99.size
                 else float(y_similarity[-1]))
     mass_velocity_ratio = density * u_ratio / float(rho_inf)
-    delta_star = float(np.trapz(1.0 - mass_velocity_ratio, y_similarity))
-    theta_momentum = float(np.trapz(
+    delta_star = float(trapezoidal_integral(
+        1.0 - mass_velocity_ratio, y_similarity
+    ))
+    theta_momentum = float(trapezoidal_integral(
         mass_velocity_ratio * (1.0 - u_ratio), y_similarity
     ))
     shape_factor = delta_star / theta_momentum if theta_momentum > 0 else np.nan
@@ -3732,40 +3742,44 @@ def compute_flat_plate_control_volume_force(
     x_values = x[x_slice]
 
     momentum_x = (
-        np.trapz(-rho[i_left, y_slice] * u[i_left, y_slice] ** 2, y_values)
-        + np.trapz(rho[i_right, y_slice] * u[i_right, y_slice] ** 2, y_values)
-        + np.trapz(
+        trapezoidal_integral(
+            -rho[i_left, y_slice] * u[i_left, y_slice] ** 2, y_values
+        )
+        + trapezoidal_integral(
+            rho[i_right, y_slice] * u[i_right, y_slice] ** 2, y_values
+        )
+        + trapezoidal_integral(
             rho[x_slice, j_top] * u[x_slice, j_top] * v[x_slice, j_top],
             x_values,
         )
     )
     momentum_y = (
-        np.trapz(
+        trapezoidal_integral(
             -rho[i_left, y_slice] * u[i_left, y_slice] * v[i_left, y_slice],
             y_values,
         )
-        + np.trapz(
+        + trapezoidal_integral(
             rho[i_right, y_slice] * u[i_right, y_slice] * v[i_right, y_slice],
             y_values,
         )
-        + np.trapz(
+        + trapezoidal_integral(
             rho[x_slice, j_top] * v[x_slice, j_top] ** 2,
             x_values,
         )
     )
     other_stress_x = (
-        np.trapz(
+        trapezoidal_integral(
             pressure[i_left, y_slice] - tau_xx[i_left, y_slice], y_values
         )
-        + np.trapz(
+        + trapezoidal_integral(
             -pressure[i_right, y_slice] + tau_xx[i_right, y_slice], y_values
         )
-        + np.trapz(tau_xy[x_slice, j_top], x_values)
+        + trapezoidal_integral(tau_xy[x_slice, j_top], x_values)
     )
     other_stress_y = (
-        np.trapz(-tau_xy[i_left, y_slice], y_values)
-        + np.trapz(tau_xy[i_right, y_slice], y_values)
-        + np.trapz(
+        trapezoidal_integral(-tau_xy[i_left, y_slice], y_values)
+        + trapezoidal_integral(tau_xy[i_right, y_slice], y_values)
+        + trapezoidal_integral(
             -pressure[x_slice, j_top] + tau_yy[x_slice, j_top],
             x_values,
         )
@@ -3974,10 +3988,10 @@ def compute_sectional_forces(surface_data, side="upper", rho_inf=1.0):
     L_total = float(L_cum[-1])
 
     # Pressure vs viscous breakdown
-    D_p = float(np.trapz(dF_p_x, s))
-    D_v = float(np.trapz(dF_v_x, s))
-    L_p = float(np.trapz(dF_p_y, s))
-    L_v = float(np.trapz(dF_v_y, s))
+    D_p = float(trapezoidal_integral(dF_p_x, s))
+    D_v = float(trapezoidal_integral(dF_v_x, s))
+    L_p = float(trapezoidal_integral(dF_p_y, s))
+    L_v = float(trapezoidal_integral(dF_v_y, s))
 
     return {
         "side": side,
@@ -6394,7 +6408,7 @@ def extract_packet_stats(envelope, time):
     half_leading = np.where(envelope[:peak_idx] >= half_threshold)[0]
     hwhm = float(peak_time - time[half_leading[0]]) if len(half_leading) > 0 else None
 
-    energy = float(np.trapz(envelope**2, time))
+    energy = float(trapezoidal_integral(envelope**2, time))
 
     return {
         "peak_amplitude": peak_amp,
@@ -6558,7 +6572,7 @@ def estimate_packet_propagation(
             (time >= arrival[index])
             & (time <= arrival[index] + packet_duration)
         )
-        energy[index] = float(np.trapz(
+        energy[index] = float(trapezoidal_integral(
             np.maximum(
                 envelope[packet_mask, index] - noise_floor[index], 0.0
             ) ** 2,
