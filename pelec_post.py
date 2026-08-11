@@ -370,20 +370,17 @@ def _write_analysis_evidence_report(
 
 CONFIG = {
     # --- Data source ---
-    "data_source": "../TS-Driver/FP-Extended-Domain/pltFile",   # Directory with plotfiles
+    "data_source": "../TS-Driver/FP_0-8m_1/pltFile",   # Directory with plotfiles
     "plot_prefix": "pltFlatPlatePost",                         # Plotfile directory prefix
-    # Focused recommendations 6--10 demonstration. This directory is kept
-    # separate from the force-certification and legacy contour products.
     "output_dir": (
-        "../TS-Driver/FP-Extended-Domain/3-Plot-Outputs/"
-        "Analysis-Recommendations-6-10"
+        "../TS-Driver/FP_0-8m_1/Plot-Output-2"
     ),
 
     # --- Snapshot range ---
     # Set to None to process all discovered plotfiles.
-    "snapshot_start": 211500,
-    "snapshot_end": 250500,
-    "snapshot_step": 1000,
+    "snapshot_start": 730000,
+    "snapshot_end": 762000,
+    "snapshot_step": 2000,
 
     # --- Field aliases ---
     # Map solver raw names -> canonical names.  If omitted, default PeleC
@@ -404,33 +401,34 @@ CONFIG = {
     "make_pprime_contour": False,       # symmetric perturbation contours
     # Legacy workflow name; the enabled result is a measurement-first,
     # coherence-gated wave analysis and does not perform LST/PSE.
-    "make_stability_diagnostics": True,
+    "make_stability_diagnostics": False,
 
 
     # --- Contour plot settings ---
     # List of canonical field names to plot.  Any field present in the
     # dataset (including derived fields) can be used.
     "contour_fields": [
-        "vorticity", "vorticity_magnitude"
+        "mach_number", "temperature",
     ],
     "contour_cmap": "turbo",           # Perceptually uniform scalar-field map
     "contour_norm": "linear",               # Color scaling: "linear", "log", "symlog", or a matplotlib Normalize object
+
     # Field-specific choices override the global fallbacks above. Signed
     # vorticity needs a zero-centred diverging map; magnitude is non-negative
     # and spans several orders of magnitude.
     "contour_cmaps": {
-        "vorticity": "RdBu_r",
-        "vorticity_magnitude": "magma",
+        "mach_number": "turbo",
+        "temperature": "magma",
     },
     "contour_norms": {
-        "vorticity": "linear",
-        "vorticity_magnitude": "linear",
+        "mach_number": "linear",
+        "temperature": "log",
     },
     "contour_vlims": {                       # Per-field color limits [vmin, vmax]
-        "vorticity": [-10000, 10000],       # symmetric signed range [s^-1]
-        "vorticity_magnitude": [0, 10000], # emphasize outer-flow detail [s^-1]
+        "mach_number": [0,7],       # symmetric signed range [s^-1]
+        "temperature": [125, 2000], # emphasize outer-flow detail [K]
     },
-    "contour_xlim": [-0.001, 0.4],           # full 0.4 m plate
+    "contour_xlim": [0.4, 0.8],           # full 0.8 m plate
     "contour_ylim": None,                    # [ymin, ymax] or None for full domain
     # Time shown in figures. Flow-through time is t_FT = L_x / U_inf, where
     # L_x is the full AMReX domain length (independent of contour x-limits).
@@ -440,17 +438,17 @@ CONFIG = {
     "plot_time_origin": 0.0,
 
     # --- Line profile settings ---
-    "line_x_stations": [0.05, 0.3],                  # x-locations to extract profiles [m]
+    "line_x_stations": [0.05, 0.3, 0.75],                  # x-locations to extract profiles [m]
     "line_fields": ["x_velocity", "temperature", "density"],
-    "line_ylim": [0, 0.005],                              # [ymin, ymax] or None for full domain height
-    "line_normalize_by_delta99": True,                    # plot y/delta_99 instead of y [m]
+    "line_ylim": [0, 0.01],                              # [ymin, ymax] or None for full domain height
+    "line_normalize_by_delta99": False,                    # plot y/delta_99 instead of y [m]
     "line_normalized_coordinate_limits": [0.0, 2.0],      # focus on BL + near-edge region
     "line_similarity_eta_limits": [0.0, 10.0],            # eta range for compressible-similarity comparisons
 
     # --- Laminar flat-plate reference overlay (for line profiles) ---
     # The default is an independently solved, compressible similarity profile.
     # It is a steady base-flow reference, not a model of the laser disturbance.
-    "line_reference_overlay": True,
+    "line_reference_overlay": False,
     "line_reference_model": "compressible_similarity",
     "line_reference_fields": ["x_velocity", "temperature", "density"],
     "line_reference": {
@@ -487,10 +485,10 @@ CONFIG = {
     # Deprecated: the prior post-hoc transformed-coordinate overlay has been
     # removed because it is not an independent compressible reference.
     "line_blasius_compressible_overlay": False,
-    "line_compare_overlay": False,
-    
-    "line_compare_plotfile": "/lustre/isaac24/scratch/sbrollia/TS-Driver/FP-ED-Refined-1/pltFile/pltFlatPlateFlow260631",   # Optional external plotfile directory to overlay against current simulation
-    "line_compare_label": "Refined-ED",
+
+    "line_compare_overlay": True,
+    "line_compare_plotfile": "../TS-Driver/FP_0-8m_1/pltFile/pltFlatPlateFlow500000",   # Optional external plotfile directory to overlay against current simulation
+    "line_compare_label": "500k plotfile",  # Label for the comparison overlay in the legend
     "line_compare_color": "C6",
     "line_compare_linestyle": "--",
 
@@ -614,7 +612,7 @@ CONFIG = {
     },
 
     # --- Laser annotation (for time-series / animation) ---
-    "laser_start_time": 0.005,            # [s] time when laser turns on
+    "laser_start_time": 0.007,            # [s] time when laser turns on
 
     # --- Multiprocessing ---
     "use_multiprocessing": True,
@@ -622,23 +620,22 @@ CONFIG = {
 
     # --- Probe processing settings ---
     "probe_bin_files": [
-        "../TS-Driver/FP-Extended-Domain/probes/flow-probe.bin",
-        "../TS-Driver/FP-Extended-Domain/probes/flow-probe2.bin",
-        "../TS-Driver/FP-Extended-Domain/probes/flow-probe3.bin",
+        "../TS-Driver/FP_0-8m_1/probes/flow-probes.segment000[0-4].pbin",
     ],
-    "probe_output_dir": "../TS-Driver/FP-Extended-Domain/probes/flow-probe",
+    "probe_output_dir": "../TS-Driver/FP_0-8m_1/probes",
     "probe_max": 2000,
     "probe_fields": ["rho", "u", "p", "T"],
     "probe_convert_to_mks": False,
 
     # --- FFT probe analysis settings ---
     "fft_use_binary": True,        # read probes directly from binary for FFT/stability
-    "probe_dir": "../TS-Driver/FP-Extended-Domain/probes/flow-probe",
-    "probe_prefix": "flow_probe",
+    "probe_dir": "../TS-Driver/FP_0-8m_1/probes",
+    "probe_prefix": "flow-probe",
     "fft_var_col": 3,
     "fft_nt_skip": 0,
     "fft_max_probes": None,
     "probe_dedup_tol": 1e-12,
+    "probe_allow_coordinate_changes": True,
     "fft_resample": False,
     "fft_target_dt": None,
     "fft_mean_subtraction": "mean",   # "mean" | "linear" | "none" — remove DC before FFT
@@ -648,11 +645,11 @@ CONFIG = {
     "fft_plot_last_probe": False,
     # Use the same streamwise stations in the FFT and STFT comparison.
     "fft_plot_probe_indices": [
-        0, 249, 499, 749, 999, 1249, 1499, 1749, 1999,
+        499, 999, 1999
     ],
     # The full 2000-probe FFT contour is not needed for this demonstration
     # and materially increases memory and plotting cost.
-    "fft_plot_contour": False,
+    "fft_plot_contour": True,
     "fft_contour_normalize": True,  # True can create bright artifacts where the reference probe has a node
     "fft_contour_ref_probe": 749,
     "fft_contour_scale": "linear",  # "linear" gives 0-to-max amplitude; "db" gives the legacy dB plot
@@ -695,7 +692,7 @@ CONFIG = {
     "modal_sensitivity_windows": [[0.0, 0.5], [0.5, 1.0]],
 
     # --- Pressure perturbation (p') contour ---
-    "pprime_baseline_plotfile": "pltFlatPlateFlow210000",
+    "pprime_baseline_plotfile": "pltFlatPlateFlow500000",
     "base_flow_definition": (
         "Independent pre-laser instantaneous plotfile; replace with a "
         "verified steady/Favre/ensemble base before making LST attribution"
@@ -720,7 +717,7 @@ CONFIG = {
     # Frequency-resolved, measurement-first complex-wavenumber analysis.
     # This estimates the dominant coherent wave in each local (x, f) window;
     # it does not assign definitive LST F/S eigenmode labels.
-    "stability_make_wavenumber_analysis": True,
+    "stability_make_wavenumber_analysis": False,
     "stability_analysis_time_window": None,  # [start_s, end_s] or None
     "stability_wavenumber_nperseg": 16384,
     "stability_wavenumber_noverlap": 0.5,
@@ -3272,7 +3269,8 @@ def _scan_probe_v2_chunks(stream, header, path):
 
 
 def _load_probe_data_from_chunked_binary(
-        bin_files, var_col, dedup_tol=1e-12, nt_skip=0, max_probes=None):
+    bin_files, var_col, dedup_tol=1e-12, nt_skip=0, max_probes=None,
+    allow_coordinate_changes=False):
     """Load one physical field from variable-major probe-v2 chunks."""
     expected_names = ("rho", "u", "p", "T")
     if not 1 <= int(var_col) <= len(expected_names):
@@ -3357,10 +3355,11 @@ def _load_probe_data_from_chunked_binary(
                 elif (not np.array_equal(valid[:n_load], sample_valid)
                       or not np.allclose(chunk_x[:n_load], x_sample, equal_nan=True)
                       or not np.allclose(chunk_y[:n_load], y_sample, equal_nan=True)):
-                    raise ValueError(
-                        "Probe sampling coordinates changed between chunks; "
-                        "split the analysis by mapping epoch"
-                    )
+                    if not allow_coordinate_changes:
+                        raise ValueError(
+                            "Probe sampling coordinates changed between chunks; "
+                            "split the analysis by mapping epoch"
+                        )
 
                 field_base = (
                     payload + steps_bytes + times_bytes
@@ -3425,11 +3424,13 @@ def _load_probe_data_from_chunked_binary(
         signal_buf = signal_buf[nt_skip:, :]
 
     header = file_info[0]["header"]
+    x_output = header["requested_x"][:n_load] if allow_coordinate_changes else x_sample
+    y_output = header["requested_y"][:n_load] if allow_coordinate_changes else y_sample
     probe_data = []
     for probe_id in range(n_load):
         probe_data.append({
-            "x": float(x_sample[probe_id]),
-            "y": float(y_sample[probe_id]),
+            "x": float(x_output[probe_id]),
+            "y": float(y_output[probe_id]),
             "x_req": float(header["requested_x"][probe_id]),
             "y_req": float(header["requested_y"][probe_id]),
             "time": time_buf,
@@ -3520,6 +3521,9 @@ def _load_probe_data_from_binary(config, var_col, nt_skip=0, max_probes=None):
             bin_files, var_col,
             dedup_tol=config.get("probe_dedup_tol", 1e-12),
             nt_skip=nt_skip, max_probes=max_probes,
+            allow_coordinate_changes=config.get(
+                "probe_allow_coordinate_changes", False
+            ),
         )
     if versions != {1}:
         raise ValueError("Legacy and chunked probe files cannot be mixed")

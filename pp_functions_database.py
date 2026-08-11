@@ -19,6 +19,9 @@ import traceback
 import warnings
 import numpy as np
 
+if not hasattr(np, "trapz"):
+    np.trapz = np.trapezoid
+
 # ---------------------------------------------------------------------------
 # 0.  LOGGING / ERROR HANDLING
 # ---------------------------------------------------------------------------
@@ -1533,8 +1536,8 @@ def calculate_BL_thicknesses(y_wall_normal, U_Uinf):
     idx = np.where(U >= 0.99)[0]
     delta_99 = y[idx[0]] if len(idx) > 0 else y[-1]
 
-    delta_star = np.trapz(1.0 - U, y)
-    theta = np.trapz(U * (1.0 - U), y)
+    delta_star = np.trapezoid(1.0 - U, y)
+    theta = np.trapezoid(U * (1.0 - U), y)
     H = delta_star / theta if theta > 0 else np.nan
 
     return delta_99, delta_star, theta, H
@@ -1575,8 +1578,8 @@ def calculate_compressible_BL_thicknesses(
 
     u_ratio = u / U_e
     mass_flux_ratio = rho * u / (rho_e * U_e)
-    delta_star = float(np.trapz(1.0 - mass_flux_ratio, n))
-    theta = float(np.trapz(
+    delta_star = float(np.trapezoid(1.0 - mass_flux_ratio, n))
+    theta = float(np.trapezoid(
         mass_flux_ratio * (1.0 - u_ratio), n
     ))
     shape_factor = delta_star / theta if theta > 0.0 else np.nan
@@ -2722,8 +2725,8 @@ def compute_compressible_flat_plate_reference_profile(
     delta_99 = (float(np.interp(0.99, u_ratio, y_similarity)) if idx99.size
                 else float(y_similarity[-1]))
     mass_velocity_ratio = density * u_ratio / float(rho_inf)
-    delta_star = float(np.trapz(1.0 - mass_velocity_ratio, y_similarity))
-    theta_momentum = float(np.trapz(
+    delta_star = float(np.trapezoid(1.0 - mass_velocity_ratio, y_similarity))
+    theta_momentum = float(np.trapezoid(
         mass_velocity_ratio * (1.0 - u_ratio), y_similarity
     ))
     shape_factor = delta_star / theta_momentum if theta_momentum > 0 else np.nan

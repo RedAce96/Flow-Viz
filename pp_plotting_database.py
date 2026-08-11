@@ -311,7 +311,7 @@ def plot_contour(dataset, field_key, output_path=None, figsize=(14, 4),
         vmax=vmax if p_norm is None else None,
         rasterized=rasterized,
     )
-    cb = ax.figure.colorbar(p, ax=ax, pad=0.02, shrink=0.2)
+    cb = ax.figure.colorbar(p, ax=ax, pad=0.02, shrink=0.5)
     cb.set_label(colorbar_label if colorbar_label is not None else field_label(field_key))
 
     ax.set_xlabel(xlabel)
