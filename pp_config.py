@@ -110,6 +110,31 @@ def validate_config(config):
         raise ValueError("contour_colorbar_shrink must lie in (0, 1]")
     if float(config.get("contour_colorbar_reference_span", 0.3)) <= 0.0:
         raise ValueError("contour_colorbar_reference_span must be positive")
+    contour_font_scale = config.get("contour_font_scale", "auto")
+    if isinstance(contour_font_scale, str):
+        if contour_font_scale.lower() != "auto":
+            raise ValueError(
+                "contour_font_scale must be 'auto' or a positive number"
+            )
+    elif float(contour_font_scale) <= 0.0:
+        raise ValueError("contour_font_scale must be positive")
+    if float(config.get("contour_font_reference_span", 0.2)) <= 0.0:
+        raise ValueError("contour_font_reference_span must be positive")
+    if float(config.get("contour_colorbar_font_scale", 0.85)) <= 0.0:
+        raise ValueError("contour_colorbar_font_scale must be positive")
+    for key in (
+            "plot_font_size", "plot_axes_label_size",
+            "plot_tick_label_size", "plot_legend_size"):
+        if float(config.get(key, 1.0)) <= 0.0:
+            raise ValueError(f"{key} must be positive")
+    annotation_location = config.get(
+        "plot_time_annotation_location", "upper left"
+    )
+    if annotation_location not in (
+            "upper left", "upper right", "lower left", "lower right"):
+        raise ValueError(
+            "plot_time_annotation_location must be upper/lower left/right"
+        )
     if int(config.get("fft_batch_size", 1)) < 1:
         raise ValueError("fft_batch_size must be at least 1")
     coordinate_policy = str(
@@ -119,6 +144,13 @@ def validate_config(config):
         raise ValueError(
             "probe_coordinate_policy must be 'strict', 'nominal', or "
             "'longest_epoch'"
+        )
+    overlap_policy = str(
+        config.get("probe_overlap_policy", "latest_segment")
+    ).lower()
+    if overlap_policy not in ("latest_segment", "error"):
+        raise ValueError(
+            "probe_overlap_policy must be 'latest_segment' or 'error'"
         )
     if config.get("reconstruction_method") not in (
             "harmonics", "band", "top_frequencies"):

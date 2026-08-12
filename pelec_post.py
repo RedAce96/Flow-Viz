@@ -77,7 +77,9 @@ def _section(n: int, total: int, label: str) -> None:
 
 
 def _plot_title(dataset, subject, config):
-    """Return a consistent title containing configured time coordinates."""
+    """Return an optional legacy title; presentation plots default to none."""
+    if not config.get("plot_show_titles", False):
+        return None
     return pdb.dataset_title(
         dataset,
         subject,
@@ -101,6 +103,17 @@ def _plot_time_label(dataset, config):
         reference_time=config.get("plot_time_reference"),
         origin=config.get("plot_time_origin", 0.0),
     )
+
+
+def _configure_plot_style(config):
+    """Apply configurable minimum presentation font sizes."""
+    pdb.configure_plot_style({
+        "font.size": float(config.get("plot_font_size", 14)),
+        "axes.labelsize": float(config.get("plot_axes_label_size", 16)),
+        "xtick.labelsize": float(config.get("plot_tick_label_size", 14)),
+        "ytick.labelsize": float(config.get("plot_tick_label_size", 14)),
+        "legend.fontsize": float(config.get("plot_legend_size", 14)),
+    })
 
 
 def _required_plotfile_fields(config):
@@ -419,7 +432,12 @@ CONFIG = {
     # "auto" shortens the colorbar as the displayed streamwise span grows.
     # A numeric value in (0, 1] overrides the automatic calculation.
     "contour_colorbar_shrink": "auto",
-    "contour_colorbar_reference_span": 0.3,  # [m], gives the maximum shrink
+    "contour_colorbar_reference_span": 0.25,  # [m], gives the maximum shrink
+    # Contour text scales gently below the global presentation sizes for wide
+    # x-ranges. A 0.4 m view is about 84% of the 0.2 m reference typography.
+    "contour_font_scale": "auto",
+    "contour_font_reference_span": 0.2,
+    "contour_colorbar_font_scale": 0.85,
     # Field-specific choices override the global fallbacks above. Signed
     # vorticity needs a zero-centred diverging map; magnitude is non-negative
     # and spans several orders of magnitude.
@@ -443,6 +461,15 @@ CONFIG = {
     "plot_flow_through_u_inf": 1726.0,      # U_inf [m/s]
     "plot_time_reference": None,
     "plot_time_origin": 0.0,
+    # Presentation defaults: no external title; time is a note inside the
+    # axes. Font sizes are intended to remain readable on projected slides.
+    "plot_show_titles": False,
+    "plot_show_time_annotation": True,
+    "plot_time_annotation_location": "upper left",
+    "plot_font_size": 14,
+    "plot_axes_label_size": 16,
+    "plot_tick_label_size": 14,
+    "plot_legend_size": 14,
 
     # --- Line profile settings ---
     "line_x_stations": [0.05, 0.3],                  # x-locations to extract profiles [m]
@@ -644,6 +671,10 @@ CONFIG = {
     "fft_nt_skip": 0,
     "fft_max_probes": None,
     "probe_dedup_tol": 1e-12,
+    # Restart segments can repeat their final/initial sample.  If a repeated
+    # step was recomputed after restart, prefer the newer segment and retain
+    # an audit summary; conflicting repeats within one segment remain errors.
+    "probe_overlap_policy": "latest_segment",  # "latest_segment" | "error"
     # AMR can move the cell centre sampled for a fixed requested location.
     # "strict" rejects such changes, "nominal" retains the complete record
     # and its compact mapping history while labelling probes by their fixed
@@ -1243,6 +1274,7 @@ def _process_single_contour(args):
     """Worker: plot contours for one snapshot."""
     dataset, config = args
     try:
+        _configure_plot_style(config)
         output_dir = Path(config["output_dir"]) / "Contours"
         output_dir.mkdir(parents=True, exist_ok=True)
         label = dataset.get("plot_label", "snapshot")
@@ -1264,6 +1296,14 @@ def _process_single_contour(args):
                 dataset, field_key,
                 output_path=str(out),
                 title=_plot_title(dataset, field_key, config),
+                time_annotation=(
+                    _plot_time_label(dataset, config)
+                    if config.get("plot_show_time_annotation", False)
+                    else None
+                ),
+                time_annotation_location=config.get(
+                    "plot_time_annotation_location", "upper left"
+                ),
                 cmap=pdb.resolve_cmap(cmap),
                 norm=norm,
                 vmin=vlims[0],
@@ -1274,7 +1314,14 @@ def _process_single_contour(args):
                     "contour_colorbar_shrink", "auto"
                 ),
                 colorbar_reference_span=config.get(
-                    "contour_colorbar_reference_span", 0.3
+                    "contour_colorbar_reference_span", 0.25
+                ),
+                font_scale=config.get("contour_font_scale", "auto"),
+                font_reference_span=config.get(
+                    "contour_font_reference_span", 0.2
+                ),
+                colorbar_font_scale=config.get(
+                    "contour_colorbar_font_scale", 0.85
                 ),
             )
         return (label, True, None)
@@ -1286,6 +1333,7 @@ def _process_single_line(args):
     """Worker: extract and plot line profiles for one snapshot."""
     dataset, config = args
     try:
+        _configure_plot_style(config)
         output_dir = Path(config["output_dir"]) / "LineProfiles"
         output_dir.mkdir(parents=True, exist_ok=True)
         label = dataset.get("plot_label", "snapshot")
@@ -1592,6 +1640,14 @@ def _process_single_line(args):
                     ),
                     output_path=str(out),
                     title=_plot_title(dataset, field_key, config),
+                    time_annotation=(
+                        _plot_time_label(dataset, config)
+                        if config.get("plot_show_time_annotation", False)
+                        else None
+                    ),
+                    time_annotation_location=config.get(
+                        "plot_time_annotation_location", "upper left"
+                    ),
                     swap_axes=True,
                     xlabel=(
                         r"$\eta$" if similarity_plot else
@@ -1619,6 +1675,7 @@ def _process_single_streamline(args):
     """Worker: plot streamlines for one snapshot."""
     dataset, config = args
     try:
+        _configure_plot_style(config)
         output_dir = Path(config["output_dir"]) / "Streamlines"
         output_dir.mkdir(parents=True, exist_ok=True)
         label = dataset.get("plot_label", "snapshot")
@@ -1634,8 +1691,15 @@ def _process_single_streamline(args):
             [sl],
             output_path=str(out),
             title=(
-                "Streamlines — "
-                + _plot_time_label(dataset, config)
+                "Streamlines — " + _plot_time_label(dataset, config)
+                if config.get("plot_show_titles", False) else None
+            ),
+            time_annotation=(
+                _plot_time_label(dataset, config)
+                if config.get("plot_show_time_annotation", False) else None
+            ),
+            time_annotation_location=config.get(
+                "plot_time_annotation_location", "upper left"
             ),
         )
         return (label, True, None)
@@ -3074,6 +3138,14 @@ def _process_pprime_contour(args):
             title=(
                 "Pressure perturbation — "
                 + _plot_time_label(dataset, config)
+                if config.get("plot_show_titles", False) else None
+            ),
+            time_annotation=(
+                _plot_time_label(dataset, config)
+                if config.get("plot_show_time_annotation", False) else None
+            ),
+            time_annotation_location=config.get(
+                "plot_time_annotation_location", "upper left"
             ),
             cmap=pdb.resolve_cmap(cmap),
             norm="linear",
@@ -3087,7 +3159,14 @@ def _process_pprime_contour(args):
                 "contour_colorbar_shrink", "auto"
             ),
             colorbar_reference_span=config.get(
-                "contour_colorbar_reference_span", 0.3
+                "contour_colorbar_reference_span", 0.25
+            ),
+            font_scale=config.get("contour_font_scale", "auto"),
+            font_reference_span=config.get(
+                "contour_font_reference_span", 0.2
+            ),
+            colorbar_font_scale=config.get(
+                "contour_colorbar_font_scale", 0.85
             ),
         )
         return (label, True, None)
@@ -3388,7 +3467,7 @@ def _probe_mapping_report(epochs, requested_x, requested_y):
 
 def _load_probe_data_from_chunked_binary(
         bin_files, var_col, dedup_tol=1e-12, nt_skip=0, max_probes=None,
-        coordinate_policy="strict"):
+        coordinate_policy="strict", overlap_policy="latest_segment"):
     """Load one field while preserving compact AMR mapping epochs.
 
     ``coordinate_policy='strict'`` rejects a mapping transition. ``nominal``
@@ -3401,6 +3480,11 @@ def _load_probe_data_from_chunked_binary(
         raise ValueError(
             "coordinate_policy must be 'strict', 'nominal', or "
             "'longest_epoch'"
+        )
+    overlap_policy = str(overlap_policy).lower()
+    if overlap_policy not in ("latest_segment", "error"):
+        raise ValueError(
+            "overlap_policy must be 'latest_segment' or 'error'"
         )
     expected_names = ("rho", "u", "p", "T")
     if not 1 <= int(var_col) <= len(expected_names):
@@ -3445,11 +3529,12 @@ def _load_probe_data_from_chunked_binary(
     n_probes = file_info[0]["header"]["n_probes"]
     n_load = n_probes if max_probes is None else min(int(max_probes), n_probes)
     times_parts, steps_parts, signal_parts, mapping_parts = [], [], [], []
+    source_parts = []
     mappings = []
     mapping_ids_by_digest = {}
 
     try:
-        for item in file_info:
+        for source_index, item in enumerate(file_info):
             stream = item["stream"]
             endian = item["header"]["endian"]
             for chunk in item["chunks"]:
@@ -3494,14 +3579,6 @@ def _load_probe_data_from_chunked_binary(
                         mapping_id = candidate
                         break
                 if mapping_id is None:
-                    if coordinate_policy == "strict" and mappings:
-                        raise ValueError(
-                            "Probe sampling map changed while scanning chunk "
-                            f"{chunk['index']} in {item['path']}; use "
-                            "probe_coordinate_policy='nominal' to retain the "
-                            "mapping history or 'longest_epoch' for a "
-                            "stationary interval"
-                        )
                     mapping_id = len(mappings)
                     mappings.append(mapping)
                     mapping_ids_by_digest.setdefault(digest, []).append(
@@ -3531,6 +3608,9 @@ def _load_probe_data_from_chunked_binary(
                 mapping_parts.append(np.full(
                     n_samples, mapping_id, dtype=np.int32
                 ))
+                source_parts.append(np.full(
+                    n_samples, source_index, dtype=np.int32
+                ))
     finally:
         for item in file_info:
             item["stream"].close()
@@ -3541,12 +3621,27 @@ def _load_probe_data_from_chunked_binary(
     time_buf = np.concatenate(times_parts)
     signal_buf = np.vstack(signal_parts)
     mapping_id = np.concatenate(mapping_parts)
-    order = np.lexsort((steps, time_buf))
+    source_id = np.concatenate(source_parts)
+    order = np.lexsort((source_id, steps, time_buf))
     steps = steps[order]
     time_buf = time_buf[order]
     signal_buf = signal_buf[order, :]
     mapping_id = mapping_id[order]
+    source_id = source_id[order]
 
+    overlap_report = {
+        "policy": overlap_policy,
+        "field": requested_name,
+        "field_unit": file_info[0]["header"]["field_units"][
+            file_info[0]["field_index"]
+        ],
+        "duplicate_sample_count": 0,
+        "conflicting_sample_count": 0,
+        "conflicting_mapping_count": 0,
+        "replaced_by_later_segment_count": 0,
+        "maximum_absolute_signal_difference": 0.0,
+        "conflict_examples": [],
+    }
     if dedup_tol >= 0 and time_buf.size:
         keep = [0]
         for idx in range(1, time_buf.size):
@@ -3556,18 +3651,70 @@ def _load_probe_data_from_chunked_binary(
                 or abs(time_buf[idx] - time_buf[previous]) < dedup_tol
             )
             if duplicate:
-                if mapping_id[idx] != mapping_id[previous]:
-                    raise ValueError(
-                        "Conflicting duplicate probe mappings were found at "
-                        f"step={steps[idx]}, time={time_buf[idx]:.17g}"
-                    )
-                if not np.allclose(
+                same_mapping = mapping_id[idx] == mapping_id[previous]
+                same_signal = np.allclose(
                         signal_buf[idx], signal_buf[previous],
-                        rtol=1.0e-12, atol=0.0, equal_nan=True):
+                        rtol=1.0e-12, atol=0.0, equal_nan=True)
+                same_source = source_id[idx] == source_id[previous]
+                if same_source and (not same_mapping or not same_signal):
                     raise ValueError(
-                        "Conflicting duplicate probe samples were found at "
+                        "Conflicting duplicate probe samples were found "
+                        "within one segment at "
+                        f"step={steps[idx]}, time={time_buf[idx]:.17g}, "
+                        f"segment={file_info[int(source_id[idx])]['path']}"
+                    )
+                overlap_report["duplicate_sample_count"] += 1
+                if not same_mapping:
+                    overlap_report["conflicting_mapping_count"] += 1
+                sample_difference = 0.0
+                if not same_signal:
+                    overlap_report["conflicting_sample_count"] += 1
+                    difference = np.abs(
+                        signal_buf[idx] - signal_buf[previous]
+                    )
+                    finite = difference[np.isfinite(difference)]
+                    if finite.size:
+                        sample_difference = float(np.max(finite))
+                        overlap_report[
+                            "maximum_absolute_signal_difference"
+                        ] = max(
+                            overlap_report[
+                                "maximum_absolute_signal_difference"
+                            ],
+                            sample_difference,
+                        )
+                if ((not same_mapping or not same_signal)
+                        and not same_source
+                        and len(overlap_report["conflict_examples"]) < 10):
+                    earlier_source = min(
+                        int(source_id[previous]), int(source_id[idx])
+                    )
+                    later_source = max(
+                        int(source_id[previous]), int(source_id[idx])
+                    )
+                    overlap_report["conflict_examples"].append({
+                        "step": int(steps[idx]),
+                        "time": float(time_buf[idx]),
+                        "earlier_segment": file_info[earlier_source]["path"],
+                        "later_segment": file_info[later_source]["path"],
+                        "mapping_differs": bool(not same_mapping),
+                        "maximum_absolute_signal_difference": (
+                            sample_difference
+                        ),
+                    })
+                if (overlap_policy == "error"
+                        and (not same_mapping or not same_signal)):
+                    raise ValueError(
+                        "Conflicting duplicate probe samples were found "
+                        "across restart segments at "
                         f"step={steps[idx]}, time={time_buf[idx]:.17g}"
                     )
+                if (overlap_policy == "latest_segment"
+                        and source_id[idx] > source_id[previous]):
+                    keep[-1] = idx
+                    overlap_report[
+                        "replaced_by_later_segment_count"
+                    ] += 1
                 continue
             keep.append(idx)
         keep = np.asarray(keep, dtype=int)
@@ -3575,12 +3722,26 @@ def _load_probe_data_from_chunked_binary(
         time_buf = time_buf[keep]
         signal_buf = signal_buf[keep, :]
         mapping_id = mapping_id[keep]
+        source_id = source_id[keep]
+
+    if overlap_report["duplicate_sample_count"]:
+        _ts(
+            "  [W] Resolved "
+            f"{overlap_report['duplicate_sample_count']} restart-overlap "
+            "sample(s); "
+            f"{overlap_report['conflicting_sample_count']} had differing "
+            f"{requested_name} values. Policy={overlap_policy!r}; maximum "
+            "absolute difference="
+            f"{overlap_report['maximum_absolute_signal_difference']:.6g} "
+            f"{overlap_report['field_unit']}"
+        )
 
     if nt_skip > 0:
         steps = steps[nt_skip:]
         time_buf = time_buf[nt_skip:]
         signal_buf = signal_buf[nt_skip:, :]
         mapping_id = mapping_id[nt_skip:]
+        source_id = source_id[nt_skip:]
 
     all_epochs = _mapping_epoch_runs(mapping_id, steps, time_buf, mappings)
     analysis_epochs = all_epochs
@@ -3612,6 +3773,7 @@ def _load_probe_data_from_chunked_binary(
     requested_x = header["requested_x"][:n_load]
     requested_y = header["requested_y"][:n_load]
     report = _probe_mapping_report(all_epochs, requested_x, requested_y)
+    report["restart_overlap"] = overlap_report
     report["analysis_epoch_count"] = len(analysis_epochs)
     report["analysis_sample_count"] = int(time_buf.size)
     if coordinate_policy == "nominal" and report["transition_count"]:
@@ -3652,6 +3814,7 @@ def _load_probe_data_from_chunked_binary(
         probe_data[0]["_analysis_mapping_epochs"] = analysis_epochs
         probe_data[0]["_mapping_report"] = report
         probe_data[0]["_coordinate_policy"] = coordinate_policy
+        probe_data[0]["_restart_overlap_report"] = overlap_report
     return probe_data
 
 
@@ -3682,6 +3845,7 @@ def _write_probe_mapping_products(probe_data, output_root):
             for percentile in (50, 90, 95, 99, 100)
         },
         "maximum_invalid_fraction": report["maximum_invalid_fraction"],
+        "restart_overlap": report.get("restart_overlap", {}),
         "probes_with_invalid_samples": int(np.count_nonzero(
             invalid_fraction > 0.0
         )),
@@ -3819,6 +3983,9 @@ def _load_probe_data_from_binary(config, var_col, nt_skip=0, max_probes=None):
             nt_skip=nt_skip, max_probes=max_probes,
             coordinate_policy=config.get(
                 "probe_coordinate_policy", "strict"
+            ),
+            overlap_policy=config.get(
+                "probe_overlap_policy", "latest_segment"
             ),
         )
     if versions != {1}:
@@ -6232,6 +6399,8 @@ def main(config=None):
     """
     if config is None:
         config = CONFIG
+
+    _configure_plot_style(config)
 
     # Set debug mode
     fdb.set_debug_mode(config.get("debug_mode", False))

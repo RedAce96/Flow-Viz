@@ -45,8 +45,43 @@ class PlottingTests(unittest.TestCase):
         label = plotting.format_dataset_time(
             dataset, mode="flow_through", freestream_velocity=100.0
         )
-        self.assertIn("FT", label)
-        self.assertIn("1", label)
+        self.assertEqual(label, r"$t = 1.00\,L/U_\infty$")
+
+    def test_snapshot_time_is_an_in_axes_note_without_a_title(self):
+        dataset = {
+            "x": np.linspace(0.0, 0.4, 5),
+            "y": np.linspace(0.0, 0.1, 3),
+            "time": 0.005,
+            "fields": {"pressure": np.ones((5, 3))},
+        }
+        time_label = plotting.format_dataset_time(
+            dataset, mode="flow_through", freestream_velocity=1726.0
+        )
+        ax = plotting.plot_contour(
+            dataset, "pressure", time_annotation=time_label
+        )
+        self.assertEqual(ax.get_title(), "")
+        self.assertIn(time_label, [text.get_text() for text in ax.texts])
+
+    def test_presentation_fonts_are_readable_by_default(self):
+        profiles = [{
+            "y": np.array([0.0, 1.0]),
+            "values": np.array([0.0, 1.0]),
+            "field_key": "x_velocity",
+            "label": "Simulation",
+        }]
+        ax = plotting.plot_line_profiles(
+            profiles, time_annotation=r"$t = 21.45\,L/U_\infty$"
+        )
+        self.assertEqual(ax.get_title(), "")
+        self.assertGreaterEqual(ax.xaxis.label.get_fontsize(), 16)
+        self.assertTrue(all(
+            tick.get_fontsize() >= 14 for tick in ax.get_xticklabels()
+        ))
+        self.assertTrue(all(
+            text.get_fontsize() >= 14
+            for text in ax.get_legend().get_texts()
+        ))
 
     def test_profile_coordinate_can_use_delta99(self):
         profile = {
@@ -121,6 +156,42 @@ class PlottingTests(unittest.TestCase):
                 "auto", x, xlim=[0.0, 1.0], reference_span=0.3
             ),
             0.2,
+        )
+
+    def test_wide_contour_uses_gentle_font_scaling(self):
+        x = np.linspace(0.0, 0.4, 5)
+        self.assertAlmostEqual(
+            plotting._resolve_contour_font_scale(
+                "auto", x, xlim=[0.0, 0.2], reference_span=0.2
+            ),
+            1.0,
+        )
+        self.assertAlmostEqual(
+            plotting._resolve_contour_font_scale(
+                "auto", x, xlim=[0.0, 0.4], reference_span=0.2
+            ),
+            2.0 ** -0.25,
+        )
+
+        dataset = {
+            "x": x,
+            "y": np.linspace(0.0, 0.02, 3),
+            "time": 0.0,
+            "fields": {"pressure": np.arange(15.0).reshape(5, 3)},
+        }
+        ax = plotting.plot_contour(
+            dataset, "pressure", xlim=[0.0, 0.4],
+            font_scale="auto", font_reference_span=0.2,
+            colorbar_font_scale=0.85,
+        )
+        self.assertLess(
+            ax.xaxis.label.get_fontsize(),
+            plt.rcParams["axes.labelsize"],
+        )
+        colorbar_axis = ax.figure.axes[1]
+        self.assertLess(
+            colorbar_axis.yaxis.label.get_fontsize(),
+            ax.xaxis.label.get_fontsize(),
         )
 
     def test_contour_and_surface_values_animate_in_lockstep(self):
@@ -344,6 +415,94 @@ class BinaryProbeLoaderTests(unittest.TestCase):
         self.assertTrue(np.shares_memory(
             loaded[0]["_shared_signal_matrix"], loaded[1]["signal"]
         ))
+
+    def test_chunked_loader_prefers_recomputed_restart_sample(self):
+        n_probes = 2
+        requested_x = np.array([1.0, 2.0])
+        requested_y = np.array([0.1, 0.2])
+
+        def write_segment(path, steps, times, pressure_offset):
+            steps = np.asarray(steps, dtype="<i8")
+            times = np.asarray(times, dtype="<f8")
+            n_samples = len(steps)
+            sample_x = requested_x + 0.001
+            sample_y = requested_y + 0.001
+            levels = np.ones(n_probes, dtype="<i4")
+            valid = np.ones(n_probes, dtype=np.uint8)
+            fields = []
+            for field in range(4):
+                values = (
+                    1000.0 * field + 10.0 * steps[:, None]
+                    + np.arange(n_probes)[None, :]
+                )
+                if field == 2:
+                    values += pressure_offset
+                fields.append(values.astype("<f8"))
+            payload = b"".join([
+                steps.tobytes(), times.tobytes(),
+                sample_x.astype("<f8").tobytes(),
+                sample_y.astype("<f8").tobytes(), levels.tobytes(),
+                valid.tobytes(), *(values.tobytes() for values in fields),
+            ])
+            with path.open("wb") as stream:
+                stream.write(b"PROBES2\0")
+                stream.write(struct.pack(
+                    "<8q", 2, 0x0102030405060708, n_probes, 4,
+                    512, 1, 16, 24,
+                ))
+                for value in ("rho", "u", "p", "T"):
+                    stream.write(value.encode().ljust(16, b"\0"))
+                for value in ("g/cm^3", "cm/s", "dyne/cm^2", "K"):
+                    stream.write(value.encode().ljust(24, b"\0"))
+                stream.write(requested_x.astype("<f8").tobytes())
+                stream.write(requested_y.astype("<f8").tobytes())
+                stream.write(b"PRBCHNK2")
+                stream.write(struct.pack(
+                    "<7q2d", 0, n_samples, n_probes, 4, len(payload),
+                    int(steps[0]), int(steps[-1]), times[0], times[-1],
+                ))
+                stream.write(payload)
+                stream.write(struct.pack(
+                    "<8sqQq", b"PRBEND2\0", 0, 0, len(payload)
+                ))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_segment(
+                root / "probe.segment0000.pbin",
+                [0, 1], [0.0, 0.1], 0.0,
+            )
+            write_segment(
+                root / "probe.segment0001.pbin",
+                [1, 2], [0.1, 0.2], 5.0,
+            )
+            base = {
+                "probe_bin_files": [str(root / "probe.segment*.pbin")],
+                "probe_dedup_tol": 1.0e-12,
+            }
+            loaded = pelec_post._load_probe_data_from_binary(
+                base, var_col=3
+            )
+            with self.assertRaisesRegex(ValueError, "restart segments"):
+                pelec_post._load_probe_data_from_binary(
+                    {**base, "probe_overlap_policy": "error"}, var_col=3
+                )
+
+        np.testing.assert_array_equal(loaded[0]["step"], [0, 1, 2])
+        np.testing.assert_allclose(
+            loaded[0]["signal"], [2000.0, 2015.0, 2025.0]
+        )
+        overlap = loaded[0]["_restart_overlap_report"]
+        self.assertEqual(overlap["duplicate_sample_count"], 1)
+        self.assertEqual(overlap["conflicting_sample_count"], 1)
+        self.assertEqual(overlap["replaced_by_later_segment_count"], 1)
+        self.assertEqual(overlap["maximum_absolute_signal_difference"], 5.0)
+        self.assertEqual(overlap["conflict_examples"][0]["step"], 1)
+        self.assertTrue(
+            overlap["conflict_examples"][0]["later_segment"].endswith(
+                "segment0001.pbin"
+            )
+        )
 
     def test_chunked_loader_preserves_amr_mapping_epochs(self):
         n_probes = 2
@@ -1431,6 +1590,18 @@ class ConfigurationTests(unittest.TestCase):
         config = dict(pelec_post.CONFIG)
         config["probe_coordinate_policy"] = "ignore"
         with self.assertRaisesRegex(ValueError, "probe_coordinate_policy"):
+            pp_config.build_config(config)
+
+    def test_probe_overlap_policy_is_validated(self):
+        config = dict(pelec_post.CONFIG)
+        config["probe_overlap_policy"] = "average"
+        with self.assertRaisesRegex(ValueError, "probe_overlap_policy"):
+            pp_config.build_config(config)
+
+    def test_plot_annotation_location_is_validated(self):
+        config = dict(pelec_post.CONFIG)
+        config["plot_time_annotation_location"] = "center"
+        with self.assertRaisesRegex(ValueError, "annotation_location"):
             pp_config.build_config(config)
 
     def test_json_overlay_rejects_unknown_keys(self):

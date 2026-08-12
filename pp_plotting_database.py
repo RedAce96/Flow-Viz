@@ -55,16 +55,16 @@ _FIELD_LABELS = {
 
 
 def configure_plot_style(overrides=None):
-    """Apply one restrained, publication-oriented style to all figures."""
+    """Apply one presentation-readable, publication-oriented figure style."""
     style = {
-        "font.family": "DejaVu Sans", "font.size": 10,
-        "axes.titlesize": 12, "axes.labelsize": 11, "axes.linewidth": 0.8,
-        "xtick.labelsize": 9, "ytick.labelsize": 9,
+        "font.family": "DejaVu Sans", "font.size": 14,
+        "axes.titlesize": 16, "axes.labelsize": 16, "axes.linewidth": 1.0,
+        "xtick.labelsize": 14, "ytick.labelsize": 14,
         "xtick.direction": "in", "ytick.direction": "in",
         "xtick.top": True, "ytick.right": True,
-        "legend.fontsize": 9, "legend.frameon": False,
+        "legend.fontsize": 14, "legend.frameon": False,
         "legend.labelcolor": "linecolor",
-        "lines.linewidth": 1.6, "savefig.dpi": 300,
+        "lines.linewidth": 2.0, "savefig.dpi": 300,
         "savefig.bbox": "tight", "figure.dpi": 120,
     }
     if overrides:
@@ -122,7 +122,7 @@ def format_dataset_time(dataset, mode="physical", freestream_velocity=None,
             raise ValueError("A positive freestream_velocity is required")
         t_flow_through = streamwise_domain_length(dataset) / float(freestream_velocity)
         value = (float(time_seconds) - float(origin)) / t_flow_through
-        return rf"$t/t_{{\mathrm{{FT}}}} = {value:.4g}$"
+        return rf"$t = {value:.2f}\,L/U_\infty$"
     if mode not in ("physical", "reference"):
         raise ValueError(f"Unknown time display mode: {mode}")
     return format_flow_time(
@@ -143,6 +143,39 @@ def dataset_title(dataset, subject, reference_time=None, time_origin=0.0,
         origin=time_origin,
     )
     return f"{field_title(subject)} — {time_text}" if time_text else field_title(subject)
+
+
+def annotate_plot_time(ax, time_text, location="upper left", fontsize=None):
+    """Place a time coordinate inside an axes without using a plot title."""
+    if not time_text:
+        return None
+    locations = {
+        "upper left": (0.025, 0.965, "left", "top"),
+        "upper right": (0.975, 0.965, "right", "top"),
+        "lower left": (0.025, 0.035, "left", "bottom"),
+        "lower right": (0.975, 0.035, "right", "bottom"),
+    }
+    if location not in locations:
+        raise ValueError(
+            "time annotation location must be upper/lower left/right"
+        )
+    x_pos, y_pos, horizontal, vertical = locations[location]
+    return ax.text(
+        x_pos, y_pos, time_text,
+        transform=ax.transAxes,
+        ha=horizontal, va=vertical,
+        fontsize=(
+            plt.rcParams["font.size"] if fontsize is None else fontsize
+        ),
+        zorder=20,
+        bbox={
+            "boxstyle": "round,pad=0.25",
+            "facecolor": "white",
+            "edgecolor": "0.35",
+            "linewidth": 0.7,
+            "alpha": 0.85,
+        },
+    )
 
 
 configure_plot_style()
@@ -248,12 +281,38 @@ def _resolve_colorbar_shrink(value, x, xlim=None, reference_span=0.3):
     # decrease smoothly, reaching the 0.2 lower bound at 2.5 reference spans.
     return float(np.clip(0.5 * reference_span / displayed_span, 0.2, 0.5))
 
+
+def _resolve_contour_font_scale(value, x, xlim=None, reference_span=0.2):
+    """Scale contour typography gently for unusually wide displayed spans."""
+    if not isinstance(value, str):
+        scale = float(value)
+        if scale <= 0.0:
+            raise ValueError("contour font scale must be positive")
+        return scale
+    if value.lower() != "auto":
+        raise ValueError("contour font scale must be 'auto' or a number")
+    reference_span = float(reference_span)
+    if not np.isfinite(reference_span) or reference_span <= 0.0:
+        raise ValueError("contour font reference span must be positive")
+    limits = np.asarray(xlim if xlim is not None else [np.min(x), np.max(x)])
+    displayed_span = abs(float(limits[1]) - float(limits[0]))
+    if not np.isfinite(displayed_span) or displayed_span <= reference_span:
+        return 1.0
+    # Fourth-root scaling is deliberately gentle: a 0.4 m view referenced to
+    # 0.2 m uses 84% fonts, while very wide plots never fall below 75%.
+    return float(np.clip(
+        (reference_span / displayed_span) ** 0.25, 0.75, 1.0
+    ))
+
 def plot_contour(dataset, field_key, output_path=None, figsize=(14, 4),
                  cmap="viridis", vmin=None, vmax=None, title=None,
                  xlabel=r"$x$ [m]", ylabel=r"$y$ [m]", colorbar_label=None,
                  xlim=None, ylim=None, ax=None, rasterized=True,
                  norm="linear", colorbar_shrink="auto",
-                 colorbar_reference_span=0.3):
+                 colorbar_reference_span=0.3, time_annotation=None,
+                 time_annotation_location="upper left",
+                 font_scale="auto", font_reference_span=0.2,
+                 colorbar_font_scale=0.85):
     """Plot a single 2-D field as a pcolormesh contour.
 
     Parameters
@@ -269,6 +328,8 @@ def plot_contour(dataset, field_key, output_path=None, figsize=(14, 4),
     vmin, vmax : float, optional
         Color limits.  Auto-computed from percentiles if omitted.
     title : str, optional
+        Retained for compatibility. Production plots leave this unset and use
+        ``time_annotation`` inside the axes.
     xlabel, ylabel : str
     colorbar_label : str, optional
         Defaults to ``field_key``.
@@ -344,11 +405,35 @@ def plot_contour(dataset, field_key, output_path=None, figsize=(14, 4),
     cb = ax.figure.colorbar(
         p, ax=ax, pad=0.02, shrink=resolved_shrink
     )
-    cb.set_label(colorbar_label if colorbar_label is not None else field_label(field_key))
+    resolved_font_scale = _resolve_contour_font_scale(
+        font_scale, x, xlim=xlim, reference_span=font_reference_span
+    )
+    colorbar_font_scale = float(colorbar_font_scale)
+    if colorbar_font_scale <= 0.0:
+        raise ValueError("colorbar_font_scale must be positive")
+    axes_label_size = float(plt.rcParams["axes.labelsize"])
+    tick_label_size = float(plt.rcParams["xtick.labelsize"])
+    cb.set_label(
+        colorbar_label if colorbar_label is not None else field_label(field_key),
+        fontsize=(
+            axes_label_size * resolved_font_scale * colorbar_font_scale
+        ),
+    )
+    cb.ax.tick_params(
+        labelsize=(
+            tick_label_size * resolved_font_scale * colorbar_font_scale
+        )
+    )
 
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-    ax.set_title(dataset_title(dataset, field_key) if title is None else title)
+    ax.set_xlabel(xlabel, fontsize=axes_label_size * resolved_font_scale)
+    ax.set_ylabel(ylabel, fontsize=axes_label_size * resolved_font_scale)
+    ax.tick_params(labelsize=tick_label_size * resolved_font_scale)
+    if title:
+        ax.set_title(title)
+    annotate_plot_time(
+        ax, time_annotation, location=time_annotation_location,
+        fontsize=float(plt.rcParams["font.size"]) * resolved_font_scale,
+    )
     if xlim is not None:
         ax.set_xlim(xlim)
     if ylim is not None:
@@ -373,7 +458,9 @@ def plot_line_profiles(profiles, field_label=None, xlabel=r"$y$ [m]",
                        title=None, output_path=None, ax=None,
                        x_key="y", linewidth=2.0, linestyle="-",
                        swap_axes=False, coordinate_normalization=None,
-                       annotate_boundary_layer=True, coordinate_limits=None):
+                       annotate_boundary_layer=True, coordinate_limits=None,
+                       time_annotation=None,
+                       time_annotation_location="upper left"):
     """Plot one or more 1-D line profiles on a shared axis.
 
     Parameters
@@ -463,7 +550,7 @@ def plot_line_profiles(profiles, field_label=None, xlabel=r"$y$ [m]",
                     f"{x_key}={float(bl_height):.6f}",
                     xy=(marker_x, marker_y),
                     xytext=(6, 6), textcoords="offset points",
-                    fontsize=8, color="black",
+                    fontsize=12, color="black",
                     bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.7),
                 )
 
@@ -479,6 +566,9 @@ def plot_line_profiles(profiles, field_label=None, xlabel=r"$y$ [m]",
         ax.set_ylabel(field_label)
     if title is not None:
         ax.set_title(title)
+    annotate_plot_time(
+        ax, time_annotation, location=time_annotation_location
+    )
 
     if coordinate_normalization is not None:
         if swap_axes:
@@ -520,7 +610,8 @@ def plot_streamlines(streamline_sets, title=None, output_path=None,
                      seed_spacing="uniform", seed_power=2.0,
                      broken_streamlines=True, colorbar=None,
                      colorbar_label=None, mask_fill_color="black",
-                     mask_fill_alpha=1.0, ax=None):
+                     mask_fill_alpha=1.0, ax=None, time_annotation=None,
+                     time_annotation_location="upper left"):
     """Plot one or more steady streamline fields on a shared axis.
 
     Parameters
@@ -634,6 +725,9 @@ def plot_streamlines(streamline_sets, title=None, output_path=None,
     ax.set_aspect("equal", adjustable="box")
     if title is not None:
         ax.set_title(title, fontsize=14)
+    annotate_plot_time(
+        ax, time_annotation, location=time_annotation_location
+    )
     if xlim is not None:
         ax.set_xlim(xlim)
     if ylim is not None:
