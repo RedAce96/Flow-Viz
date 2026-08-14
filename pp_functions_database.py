@@ -4860,11 +4860,12 @@ def compute_adjacent_target_coherence(signal_matrix, fs, target_freq,
     this provides a coherence gate for large probe lines without allocating a
     frequency-by-probe tensor.
     """
-    signals = np.asarray(signal_matrix, dtype=float)
+    # Keep lazy HDF5-backed matrices lazy. Each Welch segment is converted to
+    # NumPy below, bounding memory by nperseg x n_probe rather than the full
+    # history. Ordinary arrays retain exactly the same path.
+    signals = signal_matrix
     if signals.ndim != 2 or signals.shape[0] < 8 or signals.shape[1] < 2:
         raise ValueError("signal_matrix must have shape (n_time>=8, n_probe>=2)")
-    if not np.all(np.isfinite(signals)):
-        raise ValueError("signal_matrix contains NaN or infinite values")
     fs = float(fs)
     nperseg = min(int(nperseg), signals.shape[0])
     if noverlap is None:
@@ -4894,7 +4895,11 @@ def compute_adjacent_target_coherence(signal_matrix, fs, target_freq,
     auto_sum = np.zeros(signals.shape[1], dtype=float)
     cross_sum = np.zeros(signals.shape[1] - 1, dtype=complex)
     for start in starts:
-        segment = signals[start:start + nperseg, :]
+        segment = np.asarray(
+            signals[start:start + nperseg, :], dtype=float
+        )
+        if not np.all(np.isfinite(segment)):
+            raise ValueError("signal_matrix contains NaN or infinite values")
         coefficient = kernel @ segment - np.mean(segment, axis=0) * kernel_sum
         coefficient = coefficient[order]
         auto_sum += np.abs(coefficient) ** 2
@@ -5028,7 +5033,9 @@ def compute_frequency_resolved_wavenumber(
         ``amplification_rate=-alpha_imag``, phase speed, wavelength, spectral
         power, uncertainty and quality metrics, and separate validity masks.
     """
-    signals = np.asarray(signal_matrix, dtype=float)
+    # ``signal_matrix`` may be an HDF5-backed view. Do not coerce the full
+    # time-by-probe record; Welch processing below already reads probe batches.
+    signals = signal_matrix
     x = np.asarray(probe_x, dtype=float)
     if signals.ndim != 2 or signals.shape[1] != x.size:
         raise ValueError(
@@ -5036,8 +5043,8 @@ def compute_frequency_resolved_wavenumber(
         )
     if signals.shape[0] < 8 or x.size < 5:
         raise ValueError("At least 8 time samples and 5 probes are required")
-    if not np.all(np.isfinite(signals)) or not np.all(np.isfinite(x)):
-        raise ValueError("Signals and probe positions must be finite")
+    if not np.all(np.isfinite(x)):
+        raise ValueError("Probe positions must be finite")
     fs = float(fs)
     if not np.isfinite(fs) or fs <= 0.0:
         raise ValueError("fs must be positive and finite")
@@ -5082,7 +5089,11 @@ def compute_frequency_resolved_wavenumber(
 
     order = np.argsort(x)
     x = x[order]
-    signals = signals[:, order]
+    if not np.array_equal(order, np.arange(order.size)):
+        # Irregular input order is uncommon. Reordering necessarily
+        # materializes this view; normal physically ordered probe lines stay
+        # lazy and batch-streamed.
+        signals = np.asarray(signals, dtype=float)[:, order]
     if np.any(np.diff(x) <= 0.0):
         raise ValueError("probe_x positions must be distinct")
 
@@ -5121,6 +5132,9 @@ def compute_frequency_resolved_wavenumber(
         for first in range(0, n_probe, fft_batch_size):
             last = min(first + fft_batch_size, n_probe)
             work = signals[start:start + nperseg, first:last]
+            work = np.asarray(work, dtype=float)
+            if not np.all(np.isfinite(work)):
+                raise ValueError("Signals must be finite")
             work = work - np.mean(work, axis=0, keepdims=True)
             spectrum = np.fft.rfft(
                 work * window[:, None], axis=0

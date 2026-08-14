@@ -23,6 +23,7 @@ import re
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 import datetime
 from multiprocessing import Pool
@@ -46,6 +47,7 @@ import pp_functions_database as fdb
 import pp_config
 import pp_modal_database as mdb
 import pp_plotting_database as pdb
+from pp_probe_store import HDF5ProbeStore
 
 
 # ---------------------------------------------------------------------------
@@ -384,19 +386,18 @@ def _write_analysis_evidence_report(
 
 CONFIG = {
     # --- Data source ---
-    "data_source": "../TS-Driver/FP-Extended-Domain/pltFile",   # Directory with plotfiles
-    "plot_prefix": "pltFlatPlatePost",                         # Plotfile directory prefix
+    "data_source": "../TS-Driver/John-Kernel-Tests/JK_MW/pltFile",   # Directory with plotfiles
+    "plot_prefix": "pltQuiescentWang",                         # Plotfile directory prefix
     # Focused recommendations 6--10 demonstration. This directory is kept
     # separate from the force-certification and legacy contour products.
     "output_dir": (
-        "../TS-Driver/FP-Extended-Domain/3-Plot-Outputs/"
-        "Analysis-Recommendations-6-10"
+        "../TS-Driver/John-Kernel-Tests/JK_MW/Plot-Outputs-1"
     ),
 
     # --- Snapshot range ---
     # Set to None to process all discovered plotfiles.
-    "snapshot_start": 240000,
-    "snapshot_end": 250000,
+    "snapshot_start": 1000,
+    "snapshot_end": 15000,
     "snapshot_step": 1000,
 
     # --- Field aliases ---
@@ -407,15 +408,15 @@ CONFIG = {
 
     # --- Workflow toggles ---
     # Probe-only demonstration: avoid loading every selected AMReX snapshot.
-    "make_contour_plots": False,
+    "make_contour_plots": True,
     "make_line_profiles": False,   # eta for similarity plots; otherwise y/delta_99
     "make_streamlines": False,
     "make_surface_analysis": False,
     "make_group_plots": False,
 
-    "make_probe_plots": False,   # set True only if you need time-history plots (requires ASCII conversion)
+    "make_probe_plots": False,   # HDF5 is read directly; legacy binary may convert to ASCII
     "make_fft_probes": False,       # FFT/coherence plus weighted POD/SPOD/DMD
-    "make_pprime_contour": True,       # symmetric perturbation contours
+    "make_pprime_contour": False,       # symmetric perturbation contours
     # Legacy workflow name; the enabled result is a measurement-first,
     # coherence-gated wave analysis and does not perform LST/PSE.
     "make_stability_diagnostics": False,
@@ -425,7 +426,7 @@ CONFIG = {
     # List of canonical field names to plot.  Any field present in the
     # dataset (including derived fields) can be used.
     "contour_fields": [
-        "vorticity", "vorticity_magnitude"
+        "temperature", "vorticity"
     ],
     "contour_cmap": "turbo",           # Perceptually uniform scalar-field map
     "contour_norm": "linear",               # Color scaling: "linear", "log", "symlog", or a matplotlib Normalize object
@@ -442,22 +443,22 @@ CONFIG = {
     # vorticity needs a zero-centred diverging map; magnitude is non-negative
     # and spans several orders of magnitude.
     "contour_cmaps": {
+        "temperature": "magma",
         "vorticity": "RdBu_r",
-        "vorticity_magnitude": "magma",
     },
     "contour_norms": {
+        "temperature": "log",
         "vorticity": "linear",
-        "vorticity_magnitude": "linear",
     },
     "contour_vlims": {                       # Per-field color limits [vmin, vmax]
-        "vorticity": [-10000, 10000],       # symmetric signed range [s^-1]
-        "vorticity_magnitude": [0, 10000], # emphasize outer-flow detail [s^-1]
+        "temperature": [0, 3000],         # [K]
+        "vorticity": [-100000, 100000],       # symmetric signed range [s^-1]
     },
-    "contour_xlim": [-0.001, 0.4],           # full 0.4 m plate
+    "contour_xlim": [0, 0.05],           # full 0.4 m plate
     "contour_ylim": None,                    # [ymin, ymax] or None for full domain
     # Time shown in figures. Flow-through time is t_FT = L_x / U_inf, where
     # L_x is the full AMReX domain length (independent of contour x-limits).
-    "plot_time_mode": "flow_through",       # "flow_through" | "physical" | "reference"
+    "plot_time_mode": "physical",       # "flow_through" | "physical" | "reference"
     "plot_flow_through_u_inf": 1726.0,      # U_inf [m/s]
     "plot_time_reference": None,
     "plot_time_origin": 0.0,
@@ -654,10 +655,14 @@ CONFIG = {
 
     # --- Probe processing settings ---
     "probe_bin_files": [
-        "../TS-Driver/FP-Extended-Domain/probes/flow-probe.bin",
-        "../TS-Driver/FP-Extended-Domain/probes/flow-probe2.bin",
-        "../TS-Driver/FP-Extended-Domain/probes/flow-probe3.bin",
+        # Restart segments from the current JK_MW run.  Do not include the
+        # older kernel-probe series: it used a different time-step history.
+        "../TS-Driver/John-Kernel-Tests/JK_MW/probes/"
+        "post-kernel-probe.segment*.pbin",
     ],
+    # Optional self-contained archive produced by compact_probes.py. When
+    # configured, this takes precedence over .pbin and ASCII sources.
+    "probe_compact_file": None,
     "probe_output_dir": "../TS-Driver/FP-Extended-Domain/probes/flow-probe",
     "probe_max": 2000,
     "probe_fields": ["rho", "u", "p", "T"],
@@ -665,8 +670,10 @@ CONFIG = {
 
     # --- FFT probe analysis settings ---
     "fft_use_binary": True,        # read probes directly from binary for FFT/stability
-    "probe_dir": "../TS-Driver/FP-Extended-Domain/probes/flow-probe",
-    "probe_prefix": "flow_probe",
+    # These are relative to data_source and provide the ASCII fallback path;
+    # the binary path above is used for this run.
+    "probe_dir": "../probes",
+    "probe_prefix": "post-kernel-probe",
     "fft_var_col": 3,
     "fft_nt_skip": 0,
     "fft_max_probes": None,
@@ -680,23 +687,29 @@ CONFIG = {
     # and its compact mapping history while labelling probes by their fixed
     # requested positions, and "longest_epoch" keeps only the longest
     # contiguous interval with one stationary sampling map.
-    "probe_coordinate_policy": "strict",
-    "fft_resample": False,
+    "probe_coordinate_policy": "nominal",
+    # The stopped segment contains one shortened final step.  Resampling onto
+    # the native 2 ns cadence prevents that endpoint from biasing the FFT.
+    "fft_resample": True,
     "fft_target_dt": None,
     "fft_mean_subtraction": "mean",   # "mean" | "linear" | "none" — remove DC before FFT
     "fft_window": "hann",            # "hann" | "hamming" | "blackman" | "rect" | "none"
     "fft_window_compensation": True,  # Scale FFT amplitudes to preserve magnitude
     "fft_batch_size": 32,             # Probe columns per vectorized FFT batch
     "fft_plot_last_probe": False,
-    # Use the same streamwise stations in the FFT and STFT comparison.
+    # Indices refer to the complete (finite for the full record) probes kept
+    # by the FFT worker.  They span the usable part of the diagonal line.
     "fft_plot_probe_indices": [
-        0, 249, 499, 749, 999, 1249, 1499, 1749, 1999,
+        0, 2, 5, 8, 10,
     ],
     # The full 2000-probe FFT contour is not needed for this demonstration
     # and materially increases memory and plotting cost.
     "fft_plot_contour": False,
+    # Bound the in-memory raster even when the full spectrum is disk-backed.
+    "fft_contour_max_frequency_points": 4096,
+    "fft_contour_max_probe_points": 1000,
     "fft_contour_normalize": True,  # True can create bright artifacts where the reference probe has a node
-    "fft_contour_ref_probe": 749,
+    "fft_contour_ref_probe": 5,
     "fft_contour_scale": "linear",  # "linear" gives 0-to-max amplitude; "db" gives the legacy dB plot
     "fft_contour_vmax": 400,  # None -> use the maximum plotted amplitude
 
@@ -715,16 +728,16 @@ CONFIG = {
     # plotting stations. None builds [(i, i+1), ...] automatically.
     "make_coherence_analysis": True,
     "coherence_probe_pairs": None,
-    "coherence_nperseg": 16384,
+    "coherence_nperseg": 4096,
     "coherence_noverlap": 0.5,
     "coherence_fmax": 50.0e6,
     # Modal screening on selected probe stations. These decompositions are
     # explicitly descriptive and are not substituted for LST eigenmodes.
-    "make_modal_analysis": True,
+    "make_modal_analysis": False,
     "modal_probe_indices": None,  # None -> full ordered line at modal_probe_stride
     "modal_probe_stride": 4,
     "modal_n_modes": 4,
-    "modal_spod_nperseg": 4096,
+    "modal_spod_nperseg": 2048,
     "modal_spod_noverlap": 0.5,
     "modal_spod_frequency_stride": 2,
     "modal_spod_fmax": 50.0e6,
@@ -841,7 +854,7 @@ CONFIG = {
 
     # --- Phase 2: Transient analysis (STFT / Hilbert envelope) ---
     # Time-frequency analysis for laser-pulse wavepacket tracking.
-    "make_transient_analysis": True,
+    "make_transient_analysis": False,
     "transient_band": [1.0e5, 1.0e6],       # includes heuristic/observed low-MHz modes
     "transient_stft_nperseg": 16384,
     "transient_stft_noverlap": 0.75,
@@ -865,7 +878,7 @@ CONFIG = {
 
     # --- Phase 3: Nonlinear interaction diagnostics (bispectrum) ---
     # Quadratic phase-coupling detection via bicoherence.
-    "make_nonlinear_diagnostics": True,
+    "make_nonlinear_diagnostics": False,
     # 8192 samples give about 61 kHz bins at the current 500 MHz sampling
     # rate and 14 conservative non-overlapping blocks in the pilot record.
     "nonlinear_nperseg": 8192,
@@ -3820,6 +3833,10 @@ def _load_probe_data_from_chunked_binary(
 
 def _write_probe_mapping_products(probe_data, output_root):
     """Persist compact AMR mapping provenance and a readable quality report."""
+    # Compact HDF5 stores already contain the complete mapping epochs. Avoid
+    # materializing probe zero merely to rediscover that provenance.
+    if isinstance(probe_data, HDF5ProbeStore):
+        return None
     if not probe_data or "_mapping_report" not in probe_data[0]:
         return None
     first = probe_data[0]
@@ -4083,6 +4100,25 @@ def _load_probe_timeseries(config, var_col, nt_skip=0, max_probes=None):
     ASCII conversion for runs that only need FFT/stability diagnostics.
     Otherwise fall back to existing per-probe .dat files.
     """
+    compact_file = config.get("probe_compact_file")
+    if compact_file:
+        compact_path = Path(compact_file).expanduser()
+        if not compact_path.is_absolute():
+            compact_path = Path(config.get("data_source", ".")) / compact_path
+        if not compact_path.is_file():
+            raise FileNotFoundError(
+                f"Configured compact probe archive is missing: {compact_path}"
+            )
+        field = {1: "rho", 2: "u", 3: "p", 4: "T"}.get(int(var_col))
+        if field is None:
+            raise ValueError(
+                "Compact probe archives support var_col values 1 through 4"
+            )
+        return HDF5ProbeStore(
+            compact_path, field=field, nt_skip=nt_skip,
+            max_probes=max_probes,
+        )
+
     use_binary = config.get("fft_use_binary", True)
     bin_files = config.get("probe_bin_files", [])
 
@@ -4142,6 +4178,35 @@ def _probe_matrix_on_common_time(probe_data, resample=True, target_dt=None):
     """
     if not probe_data:
         raise ValueError("probe_data is empty")
+
+    if isinstance(probe_data, HDF5ProbeStore):
+        native_time = probe_data.time
+        if native_time.size < 2:
+            raise ValueError("At least two probe samples are required")
+        native_dt = float(np.median(np.diff(native_time)))
+        uniform = np.allclose(
+            np.diff(native_time), native_dt, rtol=1.0e-8,
+            atol=max(abs(native_dt) * 1.0e-10, 1.0e-15),
+        )
+        dt_use = float(target_dt) if target_dt is not None else native_dt
+        if not resample or (
+                uniform and np.isclose(
+                    dt_use, native_dt, rtol=1.0e-8,
+                    atol=max(abs(native_dt) * 1.0e-10, 1.0e-15),
+                )):
+            return native_time, probe_data.field_view(), native_dt, False
+        count = int(np.floor(
+            (native_time[-1] - native_time[0]) / dt_use + 1.0e-9
+        )) + 1
+        time_uniform = native_time[0] + np.arange(count) * dt_use
+        matrix = np.empty((count, len(probe_data)), dtype=float)
+        batch_size = 32
+        for first, last, values in probe_data.iter_probe_batches(batch_size):
+            for column in range(last - first):
+                matrix[:, first + column] = np.interp(
+                    time_uniform, native_time, values[:, column]
+                )
+        return time_uniform, matrix, dt_use, False
 
     first = probe_data[0]
     native_time = np.asarray(first["time"], dtype=float)
@@ -4330,37 +4395,165 @@ def _process_fft_probes(config, probe_data=None):
         if not probe_data:
             return (label, False, "No probe data could be loaded")
 
-        probe_x = [d["x"] for d in probe_data]
-        probe_y = [d["y"] for d in probe_data]
+        compact_store = isinstance(probe_data, HDF5ProbeStore)
+        if compact_store:
+            probe_x = probe_data.x.tolist()
+            probe_y = probe_data.y.tolist()
+        else:
+            probe_x = [d["x"] for d in probe_data]
+            probe_y = [d["y"] for d in probe_data]
         n_valid = len(probe_data)
         _ts(f"  Successfully loaded {n_valid} probes")
 
-        time_uniform, raw_matrix, dt_actual, reused_shared = \
-            _probe_matrix_on_common_time(
-                probe_data, resample=resample, target_dt=target_dt
+        fft_batch_size = max(1, int(config.get("fft_batch_size", 32)))
+        stream_workspace = None
+        if compact_store:
+            native_time = probe_data.time
+            native_dt = float(np.median(np.diff(native_time)))
+            uniform = np.allclose(
+                np.diff(native_time), native_dt, rtol=1.0e-8,
+                atol=max(abs(native_dt) * 1.0e-10, 1.0e-15),
+            )
+            dt_actual = (
+                float(target_dt) if target_dt is not None else native_dt
+            )
+            needs_resampling = bool(
+                resample and (
+                    not uniform or not np.isclose(
+                        dt_actual, native_dt, rtol=1.0e-8,
+                        atol=max(abs(native_dt) * 1.0e-10, 1.0e-15),
+                    )
+                )
+            )
+            if needs_resampling:
+                count = int(np.floor(
+                    (native_time[-1] - native_time[0]) / dt_actual + 1.0e-9
+                )) + 1
+                time_uniform = native_time[0] + np.arange(count) * dt_actual
+            else:
+                time_uniform = native_time
+                dt_actual = native_dt
+            reused_shared = False
+        else:
+            time_uniform, raw_matrix, dt_actual, reused_shared = \
+                _probe_matrix_on_common_time(
+                    probe_data, resample=resample, target_dt=target_dt
+                )
+
+        # A probe that is absent from the finest AMR level is explicitly
+        # stored as NaN by the chunked probe writer.  Fourier/coherence/modal
+        # calculations require complete records, so retain only columns that
+        # are finite over the selected time interval.  Keep the source index
+        # mapping so plots and reusable products still identify the original
+        # diagonal probe numbers.
+        source_probe_indices = (
+            probe_data.probe_ids.copy() if compact_store
+            else np.arange(n_valid, dtype=int)
+        )
+        complete = (
+            probe_data.complete_probe_mask(fft_batch_size)
+            if compact_store else np.all(np.isfinite(raw_matrix), axis=0)
+        )
+        if not np.any(complete):
+            raise ValueError(
+                "No probe has a complete finite record for FFT analysis"
+            )
+        if not np.all(complete):
+            dropped = int(np.count_nonzero(~complete))
+            source_probe_indices = source_probe_indices[complete]
+            if compact_store:
+                probe_data = probe_data.select_probes(np.flatnonzero(complete))
+                probe_x = probe_data.x.tolist()
+                probe_y = probe_data.y.tolist()
+            else:
+                raw_matrix = raw_matrix[:, complete]
+                probe_data = [
+                    item for item, keep in zip(probe_data, complete) if keep
+                ]
+                probe_x = [item["x"] for item in probe_data]
+                probe_y = [item["y"] for item in probe_data]
+            n_valid = len(probe_data)
+            reused_shared = False
+            _ts(
+                f"  [W] Excluded {dropped} incomplete AMR probes; "
+                f"retaining {n_valid} complete probes "
+                f"(source indices {source_probe_indices.tolist()})"
             )
         L = len(time_uniform)
-        # Preserve the unprocessed record for time traces/reconstruction and
-        # create only the one working copy required by the FFT.
-        signal_matrix = raw_matrix.copy()
-        if reused_shared:
-            _ts("  Reusing contiguous binary probe matrix (no interpolation copy)")
-
-        # Apply mean subtraction and windowing
-        signal_matrix, win_scale, _ = _preprocess_probe_signal(
-            signal_matrix, config, time_uniform=time_uniform, copy_raw=False,
-        )
-
         Fs = 1.0 / dt_actual
         freq = Fs * np.arange(0, L // 2 + 1) / L
         n_freq = len(freq)
-        P1 = np.zeros((n_freq, n_valid))
-        fft_batch_size = max(1, int(config.get("fft_batch_size", 32)))
-        for first in range(0, n_valid, fft_batch_size):
-            last = min(first + fft_batch_size, n_valid)
-            Y = np.fft.rfft(signal_matrix[:, first:last], axis=0)
-            P1[:, first:last] = np.abs(Y / L) * win_scale
-            P1[1:-1, first:last] *= 2.0
+
+        if compact_store:
+            # Keep full compatibility matrices disk-backed while only one
+            # probe batch is resident in RAM. Later reconstruction and plot
+            # code can continue indexing columns without materializing the
+            # complete archive.
+            stream_workspace = tempfile.TemporaryDirectory(
+                prefix="fft-probe-work-", dir=output_dir
+            )
+            work_root = Path(stream_workspace.name)
+            signal_matrix = np.memmap(
+                work_root / "preprocessed.f64", mode="w+", dtype=np.float64,
+                shape=(L, n_valid),
+            )
+            P1 = np.memmap(
+                work_root / "amplitude.f64", mode="w+", dtype=np.float64,
+                shape=(n_freq, n_valid),
+            )
+            if needs_resampling:
+                raw_matrix = np.memmap(
+                    work_root / "resampled.f64", mode="w+", dtype=np.float64,
+                    shape=(L, n_valid),
+                )
+            else:
+                raw_matrix = probe_data.field_view()
+            win_scale = 1.0
+            for first, last, native_batch in probe_data.iter_probe_batches(
+                    fft_batch_size):
+                if needs_resampling:
+                    raw_batch = np.empty((L, last - first), dtype=float)
+                    for column in range(last - first):
+                        raw_batch[:, column] = np.interp(
+                            time_uniform, native_time, native_batch[:, column]
+                        )
+                    raw_matrix[:, first:last] = raw_batch
+                else:
+                    raw_batch = native_batch
+                work = raw_batch.copy()
+                work, win_scale, _ = _preprocess_probe_signal(
+                    work, config, time_uniform=time_uniform, copy_raw=False,
+                    log_details=(first == 0),
+                )
+                signal_matrix[:, first:last] = work
+                Y = np.fft.rfft(work, axis=0)
+                amplitudes = np.abs(Y / L) * win_scale
+                amplitudes[1:-1, :] *= 2.0
+                P1[:, first:last] = amplitudes
+            signal_matrix.flush()
+            P1.flush()
+            if needs_resampling:
+                raw_matrix.flush()
+            _ts(
+                "  Streamed compact HDF5 in probe batches; full working "
+                "matrices are disk-backed"
+            )
+        else:
+            # Preserve the unprocessed record for time traces/reconstruction
+            # and create only the one working copy required by the FFT.
+            signal_matrix = raw_matrix.copy()
+            if reused_shared:
+                _ts("  Reusing contiguous binary probe matrix (no interpolation copy)")
+            signal_matrix, win_scale, _ = _preprocess_probe_signal(
+                signal_matrix, config, time_uniform=time_uniform,
+                copy_raw=False,
+            )
+            P1 = np.zeros((n_freq, n_valid))
+            for first in range(0, n_valid, fft_batch_size):
+                last = min(first + fft_batch_size, n_valid)
+                Y = np.fft.rfft(signal_matrix[:, first:last], axis=0)
+                P1[:, first:last] = np.abs(Y / L) * win_scale
+                P1[1:-1, first:last] *= 2.0
         _ts(f"  FFT complete — {n_freq} bins x {n_valid} probes")
 
         # Auto-detect dominant frequency from FFT spectrum (exclude DC)
@@ -4428,8 +4621,13 @@ def _process_fft_probes(config, probe_data=None):
             frequency_hz=freq,
             probe_x_cm=np.asarray(probe_x, dtype=float),
             probe_y_cm=np.asarray(probe_y, dtype=float),
+            source_probe_indices=source_probe_indices,
             mean_amplitude=np.nanmean(P1, axis=1),
             selected_probe_indices=np.asarray(export_indices, dtype=int),
+            selected_source_probe_indices=(
+                source_probe_indices[export_indices]
+                if export_indices else np.empty(0, dtype=int)
+            ),
             selected_amplitude=selected_spectra,
             growth_frequency_hz=growth_actual,
             growth_amplitude=P1[growth_bins, :] if growth_bins.size
@@ -4464,7 +4662,8 @@ def _process_fft_probes(config, probe_data=None):
                 pair_results.append({
                     "indices": (first, second),
                     "label": (
-                        f"{first}->{second} "
+                        f"{source_probe_indices[first]}->"
+                        f"{source_probe_indices[second]} "
                         f"({probe_x[first]:.3f}->{probe_x[second]:.3f} cm)"
                     ),
                     "result": result,
@@ -4582,6 +4781,7 @@ def _process_fft_probes(config, probe_data=None):
             np.savez_compressed(
                 modal_dir / "modal_results.npz",
                 probe_indices=np.asarray(modal_indices, dtype=int),
+                source_probe_indices=source_probe_indices[modal_indices],
                 coordinates_m=coordinates_m,
                 spatial_quadrature_weights=modal_weight_info[
                     "quadrature_weights"
@@ -4643,13 +4843,14 @@ def _process_fft_probes(config, probe_data=None):
                 axes[row, 0].plot(plot_time, raw_sig, lw=0.8)
                 axes[row, 0].set_xlabel("Time [s]", fontsize=10)
                 axes[row, 0].set_ylabel(ylabel_sig, fontsize=10)
-                axes[row, 0].set_title(f"Probe {idx} — x={p['x']:.3f} cm — Raw", fontsize=11)
+                source_idx = int(source_probe_indices[idx])
+                axes[row, 0].set_title(f"Probe {source_idx} — x={p['x']:.3f} cm — Raw", fontsize=11)
                 axes[row, 0].grid(True, alpha=0.4)
                 # Processed time-trace
                 axes[row, 1].plot(plot_time, proc_sig, lw=0.8, color="C1")
                 axes[row, 1].set_xlabel("Time [s]", fontsize=10)
                 axes[row, 1].set_ylabel(ylabel_sig, fontsize=10)
-                axes[row, 1].set_title(f"Probe {idx} — x={p['x']:.3f} cm — Processed (mean-sub, Hann)", fontsize=11)
+                axes[row, 1].set_title(f"Probe {source_idx} — x={p['x']:.3f} cm — Processed (mean-sub, Hann)", fontsize=11)
                 axes[row, 1].grid(True, alpha=0.4)
                 # FFT spectrum
                 axes[row, 2].loglog(freq, P1[:, idx], lw=0.8)
@@ -4666,36 +4867,52 @@ def _process_fft_probes(config, probe_data=None):
         if plot_contour_enabled and n_valid > 1:
             try:
                 idx_sorted = np.argsort(probe_x)
-                probe_x_sorted = np.array(probe_x)[idx_sorted]
-                identity_order = np.array_equal(idx_sorted, np.arange(n_valid))
-                P1_sorted = P1 if identity_order else P1[:, idx_sorted]
+                max_probe_points = max(2, int(config.get(
+                    "fft_contour_max_probe_points", 1000
+                )))
+                probe_stride = max(1, int(np.ceil(n_valid / max_probe_points)))
+                contour_probe_ids = idx_sorted[::probe_stride]
+                probe_x_sorted = np.array(probe_x)[contour_probe_ids]
+                max_frequency_points = max(2, int(config.get(
+                    "fft_contour_max_frequency_points", 4096
+                )))
+                frequency_stride = max(
+                    1, int(np.ceil(max(1, n_freq - 1) / max_frequency_points))
+                )
+                contour_frequency_ids = np.arange(
+                    1, n_freq, frequency_stride, dtype=int
+                )
+                # np.ix_ materializes only the bounded plot raster from the
+                # disk-backed full spectrum.
+                amplitude_plot = np.asarray(P1[np.ix_(
+                    contour_frequency_ids, contour_probe_ids
+                )])
                 eps = 1e-20
                 contour_scale = config.get("fft_contour_scale", "linear").lower()
                 if contour_scale == "linear":
                     # Use the physical nonnegative FFT amplitude directly.
                     # This gives the requested color range [0, max].
-                    P1_plot = P1_sorted
+                    P1_plot_sub = amplitude_plot
                     cbar_label = "Amplitude"
                     plot_vmin = 0.0
                     plot_vmax = config.get("fft_contour_vmax")
                 else:
                     if contour_normalize:
                         ref_idx = 0 if contour_ref == "first" else (
-                            -1 if contour_ref == "last" else int(contour_ref))
-                        P1_ref = P1_sorted[:, ref_idx]
+                            n_valid - 1 if contour_ref == "last"
+                            else int(contour_ref))
+                        ref_idx = max(0, min(ref_idx, n_valid - 1))
+                        P1_ref = np.asarray(P1[contour_frequency_ids, ref_idx])
                         P1_ref_safe = np.where(P1_ref < eps, eps, P1_ref)
-                        P1_plot = 20.0 * np.log10(
-                            P1_sorted / P1_ref_safe[:, np.newaxis] + eps)
+                        P1_plot_sub = 20.0 * np.log10(
+                            amplitude_plot / P1_ref_safe[:, np.newaxis] + eps)
                         cbar_label = "Amplitude factor [dB]"
                     else:
-                        P1_plot = 10.0 * np.log10(P1_sorted + eps)
+                        P1_plot_sub = 10.0 * np.log10(amplitude_plot + eps)
                         cbar_label = "Amplitude [dB]"
                     plot_vmin = None
                     plot_vmax = None
-                first_signal = 1
-                idx_f = slice(first_signal, n_freq)
-                freq_sub = freq[idx_f]
-                P1_plot_sub = P1_plot[idx_f, :]
+                freq_sub = freq[contour_frequency_ids]
                 if len(freq_sub) > 1:
                     if contour_scale == "linear" and plot_vmax is None:
                         plot_vmax = float(np.nanmax(P1_plot_sub))
@@ -4735,9 +4952,10 @@ def _process_fft_probes(config, probe_data=None):
                         fbin, _ = _find_nearest_freq_bin(freq, hf)
                         harmonic_amp[ih, ip_sorted] = P1_sorted[fbin, ip_sorted]
                 fig, ax = plt.subplots(figsize=(12, 6))
-                for ih, label in enumerate(harmonic_labels):
+                for ih, harmonic_label in enumerate(harmonic_labels):
                     ax.semilogy(probe_x_sorted, harmonic_amp[ih, :],
-                                marker="o", markersize=3, lw=0.8, label=label)
+                                marker="o", markersize=3, lw=0.8,
+                                label=harmonic_label)
                 ax.set_xlabel("Probe X position [cm]", fontsize=12)
                 ax.set_ylabel("Harmonic Amplitude", fontsize=12)
                 ax.set_title(f"Harmonic amplitudes vs position (f0 = {harmonic_freq:.3e} Hz)", fontsize=13)
@@ -5132,10 +5350,17 @@ def _process_fft_probes(config, probe_data=None):
                 _ts(f"  Disturbance reconstruction complete — {len(recon_probe_indices)} probes processed")
             except Exception as exc:
                 _ts(f"  [W] Disturbance reconstruction failed: {exc}")
+                if stream_workspace is not None:
+                    stream_workspace.cleanup()
                 return (label, False, f"Disturbance reconstruction failed: {exc}")
 
+        if stream_workspace is not None:
+            stream_workspace.cleanup()
         return (label, True, None)
     except Exception as exc:
+        workspace = locals().get("stream_workspace")
+        if workspace is not None:
+            workspace.cleanup()
         return (label, False, str(exc))
 
 
@@ -5245,7 +5470,11 @@ def _process_stability_diagnostics(config, probe_data=None):
         if not probe_data:
             return ("stability", False, "No probe data")
 
-        probe_x_m = [d["x"] * 1e-2 for d in probe_data]
+        probe_x_m = (
+            (probe_data.x * 1.0e-2).tolist()
+            if isinstance(probe_data, HDF5ProbeStore)
+            else [d["x"] * 1e-2 for d in probe_data]
+        )
 
         n_valid = len(probe_data)
         if n_valid < 3:
@@ -5355,8 +5584,11 @@ def _process_stability_diagnostics(config, probe_data=None):
                         "stability_analysis_time_window contains fewer than "
                         "8 samples"
                     )
-                wave_signals = wave_signals[time_mask, :]
-                wave_time = wave_time[time_mask]
+                selected_rows = np.flatnonzero(time_mask)
+                first_row = int(selected_rows[0])
+                stop_row = int(selected_rows[-1]) + 1
+                wave_signals = wave_signals[first_row:stop_row, :]
+                wave_time = wave_time[first_row:stop_row]
             overlap_fraction = float(config.get(
                 "stability_wavenumber_noverlap", 0.5
             ))
@@ -5820,7 +6052,11 @@ def _process_transient_analysis(config, probe_data=None):
             return (label, False, "No probe data could be loaded")
 
         n_valid = len(probe_data)
-        probe_x = [d["x"] for d in probe_data]
+        probe_x = (
+            probe_data.x.tolist()
+            if isinstance(probe_data, HDF5ProbeStore)
+            else [d["x"] for d in probe_data]
+        )
         _ts(f"  [TA] Loaded {n_valid} probes")
 
         time_uniform, signal_matrix, dt_use, reused_shared = \
@@ -6089,7 +6325,11 @@ def _process_nonlinear_diagnostics(config, probe_data=None):
             return (label, False, "No probe data could be loaded")
 
         n_valid = len(probe_data)
-        probe_x = [d["x"] for d in probe_data]
+        probe_x = (
+            probe_data.x.tolist()
+            if isinstance(probe_data, HDF5ProbeStore)
+            else [d["x"] for d in probe_data]
+        )
         _ts(f"  [NL] Loaded {n_valid} probes")
 
         time_uniform, signal_matrix, dt_use, reused_shared = \
@@ -6841,11 +7081,43 @@ def main(config=None):
 
         probe_out = Path(config["probe_output_dir"])
         probe_max = config.get("probe_max", None)
+        compact_plot_data = None
+        compact_file = config.get("probe_compact_file")
+        if compact_file:
+            compact_path = Path(compact_file).expanduser()
+            if not compact_path.is_absolute():
+                compact_path = Path(config.get("data_source", ".")) / compact_path
+            with HDF5ProbeStore(
+                    compact_path, field="p", max_probes=probe_max) as store:
+                available = set(store.field_names)
+                required = ("rho", "u", "p", "T")
+                missing = sorted(set(required) - available)
+                if missing:
+                    raise ValueError(
+                        f"Compact probe plot source lacks fields: {missing}"
+                    )
+                matrices = {field: store.read(field) for field in required}
+                compact_plot_data = {
+                    probe: {
+                        "probe_id": probe,
+                        "probe_x": float(store.x[probe]),
+                        "probe_y": float(store.y[probe]),
+                        "time": store.time,
+                        **{
+                            field: matrices[field][:, probe]
+                            for field in required
+                        },
+                    }
+                    for probe in range(len(store))
+                }
 
         # Check if conversion already done
         dat_files = list(probe_out.glob("flow_probe_*.dat"))
 
-        if len(dat_files) == 0:
+        if compact_plot_data is not None:
+            probe_out = None
+            _ts("Using compact HDF5 directly for probe-history plots.")
+        elif len(dat_files) == 0:
             _ts("Converting binary probe files to ASCII .dat ...")
             converter = Path(__file__).parent / "convert_probes.py"
             if not converter.is_file():
@@ -6869,7 +7141,15 @@ def main(config=None):
             _ts(f"Probe .dat files already exist ({len(dat_files)} found), skipping conversion.")
 
         # Load and plot
-        if probe_out is not None:
+        if compact_plot_data is not None:
+            pdb.plot_probe_timeseries(
+                compact_plot_data,
+                output_dir=out_dir / "Probes",
+                laser_start_time=config.get("laser_start_time"),
+                convert_to_mks=config.get("probe_convert_to_mks", False),
+            )
+            _ts(f"Probe plots saved to {out_dir / 'Probes'}")
+        elif probe_out is not None:
             _ts("Loading probe data ...")
             try:
                 probe_data = fdb.load_probe_dat_files(
@@ -6994,6 +7274,8 @@ def main(config=None):
             analysis_results.append(("nonlinear", False, str(exc)))
             _ts(f"✗ Nonlinear diagnostics -> FAIL — {exc}")
 
+    if isinstance(shared_probe_data, HDF5ProbeStore):
+        shared_probe_data.close()
     shared_probe_data = None
     gc.collect()
 
