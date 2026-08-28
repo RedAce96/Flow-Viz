@@ -1,0 +1,5 @@
+*.err
+*.out
+*.log
+*.pyc
+*.txt

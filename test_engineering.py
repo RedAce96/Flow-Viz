@@ -16,7 +16,11 @@ Path(os.environ["XDG_CACHE_HOME"]).mkdir(parents=True, exist_ok=True)
 import matplotlib.pyplot as plt
 import numpy as np
 
-import compressible_similarity as standalone_similarity
+try:
+    import compressible_similarity as standalone_similarity
+except ImportError:
+    standalone_similarity = None
+
 import pelec_post
 import pp_functions_database as functions
 import pp_config
@@ -292,6 +296,22 @@ class PlottingTests(unittest.TestCase):
         summary.canvas.draw()
         dispersion = plotting.plot_phase_speed_dispersion(data)
         dispersion.canvas.draw()
+
+    def test_wavenumber_time_contour_renders_with_resolution_references(self):
+        data = {
+            "wavenumber_rad_per_m": np.array([-20.0, -10.0, 0.0, 10.0, 20.0]),
+            "response_amplitude": np.ones((3, 5)),
+            "snapshot_time_s": np.array([0.0, 1.0e-6, 2.0e-6]),
+            "physical_aperture_m": np.array(0.2),
+            "dx_m": np.array(0.05),
+            "wavenumber_colorbar_vmax": 1.5,
+        }
+        fig = plotting.plot_wavenumber_time_contour(data)
+        fig.canvas.draw()
+        self.assertIn("k \\, (k \\geq 0)", fig.axes[0].get_ylabel())
+        self.assertIn(r"\Delta k", fig.axes[0].get_title())
+        self.assertIn("One-sided spatial FFT amplitude", fig.axes[1].get_ylabel())
+        self.assertEqual(fig.axes[0].collections[0].get_clim(), (0.0, 1.5))
 
 
 class BinaryProbeLoaderTests(unittest.TestCase):
@@ -1286,6 +1306,10 @@ class CompressibleReferenceTests(unittest.TestCase):
             ).figure
             figure.canvas.draw()
 
+    @unittest.skipIf(
+        standalone_similarity is None,
+        "compressible_similarity module is not available",
+    )
     def test_standalone_solver_matches_post_process_reference(self):
         current = self._reference()
         standalone = standalone_similarity.compute_compressible_flat_plate_reference_profile(
@@ -1654,6 +1678,144 @@ class ConfigurationTests(unittest.TestCase):
         config["make_surface_analysis"] = False
         with self.assertRaisesRegex(ValueError, "make_surface_analysis"):
             pp_config.build_config(config)
+
+    def test_fft_var_col_is_validated(self):
+        config = dict(pelec_post.CONFIG)
+        config["fft_var_col"] = 7
+        with self.assertRaisesRegex(ValueError, "fft_var_col"):
+            pp_config.build_config(config)
+
+
+class TestFFTVariableSelection(unittest.TestCase):
+    def tearDown(self):
+        plt.close("all")
+
+    def test_fft_variable_meta_returns_expected_fields(self):
+        meta = pelec_post._fft_variable_meta(1)
+        self.assertEqual(meta["field"], "rho")
+        self.assertEqual(meta["slug"], "density")
+        self.assertEqual(meta["modal_weight"], "rho")
+        meta = pelec_post._fft_variable_meta(3)
+        self.assertEqual(meta["field"], "p")
+        self.assertEqual(meta["slug"], "pressure")
+        self.assertEqual(meta["modal_weight"], "pressure")
+        with self.assertRaisesRegex(ValueError, "fft_var_col=5"):
+            pelec_post._fft_variable_meta(5)
+
+    def _write_probe_segment(self, path, n_probes, requested_x, requested_y,
+                             sample_x, sample_y, steps, times):
+        """Write a synthetic chunked binary probe segment for FFT tests."""
+        steps = np.asarray(steps, dtype="<i8")
+        times = np.asarray(times, dtype="<f8")
+        n_samples = len(steps)
+        levels = np.ones(n_probes, dtype="<i4")
+        valid = np.ones(n_probes, dtype=np.uint8)
+        fields = []
+        for field in range(4):
+            base = 1000.0 * field + 1.0
+            amplitude = 0.1 * (field + 1)
+            frequency = 1.0e6 * (field + 1)
+            values = (
+                base
+                + amplitude * np.sin(2.0 * np.pi * frequency * times[:, None])
+                + 0.01 * np.arange(n_probes)[None, :]
+            ).astype("<f8")
+            fields.append(values)
+        payload = b"".join([
+            steps.tobytes(), times.tobytes(),
+            sample_x.astype("<f8").tobytes(),
+            sample_y.astype("<f8").tobytes(),
+            levels.tobytes(), valid.tobytes(),
+            *(values.tobytes() for values in fields),
+        ])
+        with path.open("wb") as stream:
+            stream.write(b"PROBES2\0")
+            stream.write(struct.pack(
+                "<8q", 2, 0x0102030405060708, n_probes, 4,
+                512, 1, 16, 24,
+            ))
+            for value in ("rho", "u", "p", "T"):
+                stream.write(value.encode().ljust(16, b"\0"))
+            for value in ("g/cm^3", "cm/s", "dyne/cm^2", "K"):
+                stream.write(value.encode().ljust(24, b"\0"))
+            stream.write(requested_x.astype("<f8").tobytes())
+            stream.write(requested_y.astype("<f8").tobytes())
+            stream.write(b"PRBCHNK2")
+            stream.write(struct.pack(
+                "<7q2d", 0, n_samples, n_probes, 4, len(payload),
+                int(steps[0]), int(steps[-1]), times[0], times[-1],
+            ))
+            stream.write(payload)
+            stream.write(struct.pack(
+                "<8sqQq", b"PRBEND2\0", 0, 0, len(payload)
+            ))
+
+    def test_process_fft_probes_uses_variable_slug_in_filenames(self):
+        n_probes = 4
+        requested_x = np.array([1.0, 2.0, 3.0, 4.0])
+        requested_y = np.array([0.1, 0.1, 0.1, 0.1])
+        sample_x = requested_x + 0.001
+        sample_y = requested_y + 0.001
+        sample_rate_hz = 1.0e8
+        n_samples = 128
+        times = np.arange(n_samples) / sample_rate_hz
+        steps = np.arange(n_samples)
+
+        for var_col in (1, 2, 3, 4):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                probe_dir = root / "probes"
+                probe_dir.mkdir()
+                out_dir = root / "out"
+                out_dir.mkdir()
+                self._write_probe_segment(
+                    probe_dir / "probe.segment0000.pbin",
+                    n_probes, requested_x, requested_y,
+                    sample_x, sample_y, steps, times,
+                )
+                meta = pelec_post._fft_variable_meta(var_col)
+                config = pp_config.build_config(
+                    pelec_post.CONFIG,
+                    command_line_overrides={
+                        "data_source": str(root),
+                        "output_dir": str(out_dir),
+                        "plot_prefix": "test",
+                        "probe_bin_files": [
+                            str(probe_dir / "probe.segment*.pbin")
+                        ],
+                        "fft_use_binary": True,
+                        "fft_max_probes": n_probes,
+                        "fft_plot_probe_indices": [0],
+                        "fft_plot_contour": False,
+                        "fft_plot_harmonics": False,
+                        "fft_plot_spectral_slope": False,
+                        "fft_plot_growth_curves": False,
+                        "make_source_response_analysis": False,
+                        "make_coherence_analysis": False,
+                        "make_modal_analysis": False,
+                        "fft_var_col": var_col,
+                        "fft_resample": True,
+                        "fft_target_dt": 1.0 / sample_rate_hz,
+                    },
+                )
+                result = pelec_post._process_fft_probes(config)
+                self.assertTrue(result[1], result[2])
+
+                fft_dir = out_dir / "FFT-Probes"
+                summary = fft_dir / f"spectral_summary_{meta['slug']}.npz"
+                self.assertTrue(summary.is_file(), f"missing {summary}")
+                plot = fft_dir / f"kernel-probe_{meta['slug']}_fft_probes.png"
+                self.assertTrue(plot.is_file(), f"missing {plot}")
+
+                with np.load(summary, allow_pickle=False) as archive:
+                    self.assertEqual(
+                        str(archive["signal_name"].item()),
+                        meta["name"],
+                    )
+                    self.assertEqual(
+                        str(archive["signal_unit_cgs"].item()),
+                        meta["unit_cgs"],
+                    )
 
 
 if __name__ == "__main__":
