@@ -386,19 +386,21 @@ def _write_analysis_evidence_report(
 
 CONFIG = {
     # --- Data source ---
-    "data_source": "../TS-Driver/John-Kernel-Tests/JK_MW/pltFile",   # Directory with plotfiles
-    "plot_prefix": "pltQuiescentWang",                         # Plotfile directory prefix
-    # Focused recommendations 6--10 demonstration. This directory is kept
-    # separate from the force-certification and legacy contour products.
+    "data_source": (
+        "/lustre/isaac24/scratch/sbrollia/TS-Driver/"
+        "FP-Extended-Domain/pltFile"
+    ),
+    "plot_prefix": "pltFlatPlateFlow",
     "output_dir": (
-        "../TS-Driver/John-Kernel-Tests/JK_MW/Plot-Outputs-1"
+        "/lustre/isaac24/scratch/sbrollia/TS-Driver/"
+        "FP-Extended-Domain/3-Plot-Outputs/GIP-PreLaser"
     ),
 
     # --- Snapshot range ---
     # Set to None to process all discovered plotfiles.
-    "snapshot_start": 1000,
-    "snapshot_end": 15000,
-    "snapshot_step": 1000,
+    "snapshot_start": 210729,
+    "snapshot_end": 210729,
+    "snapshot_step": 1,
 
     # --- Field aliases ---
     # Map solver raw names -> canonical names.  If omitted, default PeleC
@@ -408,7 +410,7 @@ CONFIG = {
 
     # --- Workflow toggles ---
     # Probe-only demonstration: avoid loading every selected AMReX snapshot.
-    "make_contour_plots": True,
+    "make_contour_plots": False,
     "make_line_profiles": False,   # eta for similarity plots; otherwise y/delta_99
     "make_streamlines": False,
     "make_surface_analysis": False,
@@ -419,7 +421,7 @@ CONFIG = {
     "make_pprime_contour": False,       # symmetric perturbation contours
     # Legacy workflow name; the enabled result is a measurement-first,
     # coherence-gated wave analysis and does not perform LST/PSE.
-    "make_stability_diagnostics": False,
+    "make_stability_diagnostics": True,
 
 
     # --- Contour plot settings ---
@@ -752,8 +754,8 @@ CONFIG = {
     # --- Pressure perturbation (p') contour ---
     "pprime_baseline_plotfile": "pltFlatPlateFlow210000",
     "base_flow_definition": (
-        "Independent pre-laser instantaneous plotfile; replace with a "
-        "verified steady/Favre/ensemble base before making LST attribution"
+        "Final pre-laser flat-plate flow plotfile pltFlatPlateFlow210729; "
+        "instantaneous converged base used only for non-LST GIP screening"
     ),
     "pprime_field": "pressure",
     "pprime_cmap": "RdBu_r",
@@ -762,11 +764,18 @@ CONFIG = {
     # --- Stability diagnostics (2nd Mack mode) ---
     # Existing pre-event/base-flow plotfile; use an independently verified
     # steady base here when a more appropriate baseline becomes available.
-    "stability_baseline_plotfile": "pltFlatPlateFlow210000",
+    "stability_baseline_plotfile": "pltFlatPlateFlow210729",
+    # Base-flow-only mode: produce GIP diagnostics and return before loading
+    # probes or evaluating phase speed, growth, or N_probe.
+    "stability_gip_only": True,
     "stability_target_freq": None,
     "stability_freq_band": [100e3, 1.0e6],
     "stability_growth_window_size": None,
     "stability_num_gpi_profiles": 5,
+    "stability_gip_derivative_window": 11,
+    "stability_gip_derivative_order": 3,
+    "stability_gip_exclusion_fraction": 0.02,
+    "stability_gip_residual_multiplier": 3.0,
     "stability_coherence_nperseg": 16384,
     "stability_coherence_noverlap": 0.5,
     "stability_min_coherence": 0.5,
@@ -775,7 +784,7 @@ CONFIG = {
     # Frequency-resolved, measurement-first complex-wavenumber analysis.
     # This estimates the dominant coherent wave in each local (x, f) window;
     # it does not assign definitive LST F/S eigenmode labels.
-    "stability_make_wavenumber_analysis": True,
+    "stability_make_wavenumber_analysis": False,
     "stability_analysis_time_window": None,  # [start_s, end_s] or None
     "stability_wavenumber_nperseg": 16384,
     "stability_wavenumber_noverlap": 0.5,
@@ -788,6 +797,11 @@ CONFIG = {
     "stability_wavenumber_min_amplitude_r2": 0.5,
     "stability_wavenumber_min_relative_power_db": -40.0,
     "stability_wavenumber_max_edge_phase_rad": 2.827433388230814,
+    # Non-LST logarithmic amplification measured from the accepted probe data.
+    "stability_make_probe_amplification": False,
+    "stability_amplification_plot_frequencies": [],
+    "stability_amplification_max_consistency_error": 1.0,
+    "stability_amplification_min_contiguous_centres": 3,
     "stability_phase_speed_bounds": [500.0, 2500.0],
     # Relative distance to the U_e +/- a_e reference, measured as a fraction
     # of their separation, for cautious "fast-like"/"slow-like" candidates.
@@ -5364,6 +5378,163 @@ def _process_fft_probes(config, probe_data=None):
         return (label, False, str(exc))
 
 
+def _write_gip_only_products(config, bl_profiles, output_dir):
+    """Evaluate and save base-flow-only Lees-Lin GIP diagnostics."""
+    results = []
+    for profile in bl_profiles:
+        result = fdb.compute_gpi_criterion(
+            profile.get("y_profile", np.array([])),
+            profile.get("u_profile", np.array([])),
+            profile.get("T_profile", np.array([])),
+            profile.get("rho_profile", np.array([])),
+            derivative_window=int(config.get(
+                "stability_gip_derivative_window", 11
+            )),
+            derivative_order=int(config.get(
+                "stability_gip_derivative_order", 3
+            )),
+            exclusion_fraction=float(config.get(
+                "stability_gip_exclusion_fraction", 0.02
+            )),
+            residual_multiplier=float(config.get(
+                "stability_gip_residual_multiplier", 3.0
+            )),
+        )
+        result["x"] = profile.get("x", np.nan)
+        results.append(result)
+
+    point_count = max(
+        (len(item.get("y_profile", [])) for item in results), default=0
+    )
+    crossing_count = max(
+        (int(item.get("crossing_count", 0)) for item in results), default=0
+    )
+    y_profiles = np.full((len(results), point_count), np.nan)
+    criteria = np.full_like(y_profiles, np.nan)
+    crossings = np.full((len(results), crossing_count), np.nan)
+    crossings_normalized = np.full_like(crossings, np.nan)
+    for row, item in enumerate(results):
+        count = len(item.get("y_profile", []))
+        y_profiles[row, :count] = item.get("y_profile", [])
+        criteria[row, :count] = item.get("F", [])
+        locations = np.asarray(item.get("gip_locations", []), dtype=float)
+        normalized = np.asarray(
+            item.get("gip_locations_over_delta99", []), dtype=float
+        )
+        crossings[row, :locations.size] = locations
+        crossings_normalized[row, :normalized.size] = normalized
+
+    np.savez_compressed(
+        output_dir / "gip_summary.npz",
+        baseline_plotfile=np.asarray(config["stability_baseline_plotfile"]),
+        x_m=np.asarray([item.get("x", np.nan) for item in results]),
+        y_profile_m=y_profiles,
+        criterion=criteria,
+        delta_99_m=np.asarray([
+            item.get("delta_99_est", np.nan) for item in results
+        ]),
+        crossing_locations_m=crossings,
+        crossing_locations_over_delta99=crossings_normalized,
+        crossing_count=np.asarray([
+            item.get("crossing_count", 0) for item in results
+        ], dtype=int),
+        gip_present=np.asarray([
+            item.get("gip_present", False) for item in results
+        ], dtype=bool),
+        profile_valid=np.asarray([
+            item.get("profile_valid", False) for item in results
+        ], dtype=bool),
+        rejection_reason=np.asarray([
+            item.get("rejection_reason", "") for item in results
+        ], dtype="U128"),
+        derivative_residual_scale=np.asarray([
+            item.get("derivative_residual_scale", np.nan) for item in results
+        ]),
+        points_inside_accepted_layer=np.asarray([
+            np.count_nonzero(
+                (np.asarray(item.get("y_profile", []), dtype=float)
+                 / float(item.get("delta_99_est", np.nan)) > 0.02)
+                & (np.asarray(item.get("y_profile", []), dtype=float)
+                   / float(item.get("delta_99_est", np.nan)) < 0.98)
+            ) if np.isfinite(item.get("delta_99_est", np.nan))
+            and item.get("delta_99_est", np.nan) > 0.0 else 0
+            for item in results
+        ], dtype=int),
+    )
+
+    rejection_counts = {}
+    candidate_rejection_counts = {}
+    for item in results:
+        reason = str(item.get("rejection_reason", ""))
+        if reason:
+            rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
+        for candidate_reason in np.asarray(
+                item.get("rejected_crossing_reasons", []), dtype=str):
+            candidate_rejection_counts[candidate_reason] = (
+                candidate_rejection_counts.get(candidate_reason, 0) + 1
+            )
+    points_inside = []
+    for item in results:
+        delta = float(item.get("delta_99_est", np.nan))
+        y = np.asarray(item.get("y_profile", []), dtype=float)
+        points_inside.append(int(np.count_nonzero(
+            (y / delta > 0.02) & (y / delta < 0.98)
+        )) if np.isfinite(delta) and delta > 0.0 else 0)
+    report = {
+        "analysis": "Lees-Lin generalized inflection point screening",
+        "baseline_plotfile": config["stability_baseline_plotfile"],
+        "base_flow_definition": config.get("base_flow_definition", "unspecified"),
+        "criterion": "G(y)=d(rho_bar*dU_bar/dy)/dy",
+        "interpretation": (
+            "A credible interior GIP is a necessary inviscid criterion; it "
+            "does not establish modal instability, growth, or transition."
+        ),
+        "derivative_method": "nonuniform-grid local polynomial least squares",
+        "derivative_window": int(config.get("stability_gip_derivative_window", 11)),
+        "derivative_order": int(config.get("stability_gip_derivative_order", 3)),
+        "exclusion_fraction": float(config.get("stability_gip_exclusion_fraction", 0.02)),
+        "residual_multiplier": float(config.get("stability_gip_residual_multiplier", 3.0)),
+        "profile_count": len(results),
+        "valid_profile_count": int(sum(
+            bool(item.get("profile_valid", False)) for item in results
+        )),
+        "profiles_with_gip": int(sum(
+            bool(item.get("gip_present", False)) for item in results
+        )),
+        "profile_rejection_counts": rejection_counts,
+        "candidate_rejection_counts": candidate_rejection_counts,
+        "boundary_layer_point_count": {
+            "minimum": int(np.min(points_inside)) if points_inside else 0,
+            "median": float(np.median(points_inside)) if points_inside else 0.0,
+            "maximum": int(np.max(points_inside)) if points_inside else 0,
+            "stations_below_seven_points": int(np.sum(
+                np.asarray(points_inside) < 7
+            )),
+        },
+        "probe_or_amplification_analysis_performed": False,
+    }
+    report_path = output_dir / "gip_report.json"
+    temporary_path = output_dir / ".gip_report.json.tmp"
+    with temporary_path.open("w", encoding="utf-8") as stream:
+        json.dump(report, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+    os.replace(temporary_path, report_path)
+
+    representative_count = min(
+        int(config.get("stability_num_gpi_profiles", 5)), len(results)
+    )
+    representative_indices = np.linspace(
+        0, len(results) - 1, representative_count
+    ).astype(int) if results else np.array([], dtype=int)
+    representatives = [results[index] for index in representative_indices]
+    plot_path = output_dir / "gip_diagnostics.png"
+    pdb.plot_gip_diagnostics(
+        bl_profiles, representatives, output_path=str(plot_path),
+        streamwise_results=results,
+    )
+    return results
+
+
 def _process_stability_diagnostics(config, probe_data=None):
     """Worker: run second Mack mode stability diagnostics."""
     try:
@@ -5431,6 +5602,12 @@ def _process_stability_diagnostics(config, probe_data=None):
         if len(bl_profiles) < 3:
             return ("stability", False, "Too few BL profiles")
         _ts(f"  [SD] Extracted {len(bl_profiles)} BL profiles")
+
+        if config.get("stability_gip_only", False):
+            _ts("  [SD] GIP-only mode: skipping probes, FFT, and amplification")
+            _write_gip_only_products(config, bl_profiles, output_dir)
+            _ts(f"  [SD] Saved GIP-only products in {output_dir}")
+            return ("stability", True, None)
 
         freq_data = fdb.compute_second_mode_frequency(bl_profiles)
         f_omega = np.nanmedian(freq_data["f_omega_star"])
@@ -5710,24 +5887,128 @@ def _process_stability_diagnostics(config, probe_data=None):
                 "of complex-wavenumber fits"
             )
 
-        # GPI
+        amplification_data = {}
+        if wave_data and config.get("stability_make_probe_amplification", True):
+            amplification_data = fdb.compute_probe_amplification(
+                wave_data,
+                min_contiguous_centres=int(config.get(
+                    "stability_amplification_min_contiguous_centres", 3
+                )),
+                max_consistency_error=float(config.get(
+                    "stability_amplification_max_consistency_error", 1.0
+                )),
+            )
+            _ts(
+                "  [SD] Probe-derived amplification: "
+                f"{amplification_data['segment_count']} accepted segments; non-LST"
+            )
+
+        # GIP is evaluated at every extracted base-flow station. A smaller,
+        # representative subset is used for profile overlays only.
         n_bl = len(bl_profiles)
-        gpi_indices = np.linspace(0, n_bl - 1, min(num_gpi, n_bl)).astype(int)
-        gpi_results = []
-        for idx in gpi_indices:
-            bl = bl_profiles[idx]
+        all_gip_results = []
+        for bl in bl_profiles:
             yp = bl.get("y_profile", np.array([]))
             up = bl.get("u_profile", np.array([]))
             Tp = bl.get("T_profile", np.array([]))
-            rp = bl.get("rho_profile", None)
-            if rp is None or len(rp) == 0 or np.all(np.isnan(rp)):
-                continue
+            rp = bl.get("rho_profile", np.array([]))
             try:
-                gpi = fdb.compute_gpi_criterion(yp, up, Tp, rp)
-                gpi["x"] = bl["x"]
-                gpi_results.append(gpi)
-            except Exception:
-                pass
+                gip = fdb.compute_gpi_criterion(
+                    yp, up, Tp, rp,
+                    derivative_window=int(config.get(
+                        "stability_gip_derivative_window", 11
+                    )),
+                    derivative_order=int(config.get(
+                        "stability_gip_derivative_order", 3
+                    )),
+                    exclusion_fraction=float(config.get(
+                        "stability_gip_exclusion_fraction", 0.02
+                    )),
+                    residual_multiplier=float(config.get(
+                        "stability_gip_residual_multiplier", 3.0
+                    )),
+                )
+                gip["x"] = bl["x"]
+                all_gip_results.append(gip)
+            except Exception as exc:
+                fdb._log_error(f"GIP profile at x={bl.get('x', np.nan)}", exc)
+        representative_indices = np.linspace(
+            0, len(all_gip_results) - 1,
+            min(num_gpi, len(all_gip_results)),
+        ).astype(int) if all_gip_results else np.array([], dtype=int)
+        gpi_results = [all_gip_results[index] for index in representative_indices]
+
+        max_gip_points = max(
+            (len(item.get("y_profile", [])) for item in all_gip_results),
+            default=0,
+        )
+        gip_y = np.full((len(all_gip_results), max_gip_points), np.nan)
+        gip_criterion = np.full_like(gip_y, np.nan)
+        max_crossings = max(
+            (int(item.get("crossing_count", 0)) for item in all_gip_results),
+            default=0,
+        )
+        gip_crossings = np.full((len(all_gip_results), max_crossings), np.nan)
+        for row, item in enumerate(all_gip_results):
+            point_count = len(item.get("y_profile", []))
+            gip_y[row, :point_count] = item.get("y_profile", [])
+            gip_criterion[row, :point_count] = item.get("F", [])
+            crossings = np.asarray(item.get("gip_locations", []), dtype=float)
+            gip_crossings[row, :len(crossings)] = crossings
+
+        rejection_counts = {}
+        candidate_rejection_counts = {}
+        points_inside = []
+        for item in all_gip_results:
+            reason = str(item.get("rejection_reason", ""))
+            if reason:
+                rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
+            for candidate_reason in np.asarray(
+                    item.get("rejected_crossing_reasons", []), dtype=str):
+                candidate_rejection_counts[candidate_reason] = (
+                    candidate_rejection_counts.get(candidate_reason, 0) + 1
+                )
+            delta = float(item.get("delta_99_est", np.nan))
+            y = np.asarray(item.get("y_profile", []), dtype=float)
+            points_inside.append(int(np.count_nonzero(
+                (y / delta > 0.02) & (y / delta < 0.98)
+            )) if np.isfinite(delta) and delta > 0.0 else 0)
+        gip_report = {
+            "analysis": "Lees-Lin generalized inflection point screening",
+            "criterion": "G(y)=d(rho_bar*dU_bar/dy)/dy",
+            "interpretation": (
+                "A credible interior GIP is a necessary inviscid criterion; "
+                "it does not establish modal instability or growth."
+            ),
+            "derivative_method": "nonuniform-grid local polynomial least squares",
+            "derivative_window": int(config.get("stability_gip_derivative_window", 11)),
+            "derivative_order": int(config.get("stability_gip_derivative_order", 3)),
+            "exclusion_fraction": float(config.get("stability_gip_exclusion_fraction", 0.02)),
+            "residual_multiplier": float(config.get("stability_gip_residual_multiplier", 3.0)),
+            "profile_count": len(all_gip_results),
+            "valid_profile_count": int(sum(
+                bool(item.get("profile_valid", False)) for item in all_gip_results
+            )),
+            "profiles_with_gip": int(sum(
+                bool(item.get("gip_present", False)) for item in all_gip_results
+            )),
+            "profile_rejection_counts": rejection_counts,
+            "candidate_rejection_counts": candidate_rejection_counts,
+            "boundary_layer_point_count": {
+                "minimum": int(np.min(points_inside)) if points_inside else 0,
+                "median": float(np.median(points_inside)) if points_inside else 0.0,
+                "maximum": int(np.max(points_inside)) if points_inside else 0,
+                "stations_below_seven_points": int(np.sum(
+                    np.asarray(points_inside) < 7
+                )),
+            },
+        }
+        gip_report_path = output_dir / "gip_report.json"
+        gip_report_temporary = output_dir / ".gip_report.json.tmp"
+        with gip_report_temporary.open("w", encoding="utf-8") as stream:
+            json.dump(gip_report, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+        os.replace(gip_report_temporary, gip_report_path)
 
         plot_data = {
             "freq_estimate": freq_data,
@@ -5738,6 +6019,7 @@ def _process_stability_diagnostics(config, probe_data=None):
             "freq_band": freq_band,
             "bl_profiles": bl_profiles,
             "wavenumber": wave_data,
+            "probe_amplification": amplification_data,
         }
 
         np.savez_compressed(
@@ -5856,6 +6138,57 @@ def _process_stability_diagnostics(config, probe_data=None):
                 wave_data.get(
                     "phase_convention", "not computed"
                 )
+            ),
+            gip_x_m=np.asarray([
+                item.get("x", np.nan) for item in all_gip_results
+            ]),
+            gip_y_profile_m=gip_y,
+            gip_criterion=gip_criterion,
+            gip_crossing_locations_m=gip_crossings,
+            gip_crossing_count=np.asarray([
+                item.get("crossing_count", 0) for item in all_gip_results
+            ], dtype=int),
+            gip_present=np.asarray([
+                item.get("gip_present", False) for item in all_gip_results
+            ], dtype=bool),
+            gip_profile_valid=np.asarray([
+                item.get("profile_valid", False) for item in all_gip_results
+            ], dtype=bool),
+            gip_rejection_reason=np.asarray([
+                item.get("rejection_reason", "") for item in all_gip_results
+            ], dtype="U128"),
+            probe_amplification_frequency_hz=np.asarray(
+                amplification_data.get("frequency_hz", [])
+            ),
+            probe_amplification_x_center_m=np.asarray(
+                amplification_data.get("x_center_m", [])
+            ),
+            probe_amplification_n_probe=np.asarray(
+                amplification_data.get("n_probe", [])
+            ),
+            probe_amplification_n_direct=np.asarray(
+                amplification_data.get("n_direct", [])
+            ),
+            probe_amplification_lower_diagnostic=np.asarray(
+                amplification_data.get("n_probe_lower_diagnostic", [])
+            ),
+            probe_amplification_upper_diagnostic=np.asarray(
+                amplification_data.get("n_probe_upper_diagnostic", [])
+            ),
+            probe_amplification_consistency_error=np.asarray(
+                amplification_data.get("consistency_error", [])
+            ),
+            probe_amplification_segment_id=np.asarray(
+                amplification_data.get("segment_id", []), dtype=int
+            ),
+            probe_amplification_reference_x_m=np.asarray(
+                amplification_data.get("reference_x_m", [])
+            ),
+            probe_amplification_valid_mask=np.asarray(
+                amplification_data.get("integration_valid_mask", []), dtype=bool
+            ),
+            probe_amplification_reliable_mask=np.asarray(
+                amplification_data.get("reliable_mask", []), dtype=bool
             ),
         )
 
@@ -5977,6 +6310,95 @@ def _process_stability_diagnostics(config, probe_data=None):
             os.replace(report_temporary, report_path)
             _ts(f"  [SD] Saved wave-analysis report: {report_path}")
 
+        selected_amplification_indices = []
+        if amplification_data:
+            amp_frequency = np.asarray(amplification_data["frequency_hz"])
+            requested_frequencies = [float(target_freq)] + [
+                float(value) for value in config.get(
+                    "stability_amplification_plot_frequencies", []
+                )
+            ]
+            selected_amplification_indices.extend(
+                int(np.argmin(np.abs(amp_frequency - value)))
+                for value in requested_frequencies
+            )
+            amp_valid = np.asarray(
+                amplification_data["integration_valid_mask"], dtype=bool
+            )
+            amp_power = np.asarray(wave_data["spectral_power"], dtype=float)
+            final_power = np.full(amp_frequency.size, -np.inf)
+            for frequency_index in range(amp_frequency.size):
+                valid_indices = np.flatnonzero(amp_valid[frequency_index])
+                if valid_indices.size:
+                    final_power[frequency_index] = amp_power[
+                        frequency_index, valid_indices[-1]
+                    ]
+            strongest = np.argsort(final_power)[::-1]
+            selected_amplification_indices.extend(
+                int(index) for index in strongest[:3]
+                if np.isfinite(final_power[index])
+            )
+            selected_amplification_indices = list(dict.fromkeys(
+                selected_amplification_indices
+            ))
+            amplitude_variable = {
+                1: "density disturbance", 2: "streamwise-velocity disturbance",
+                3: "pressure disturbance", 4: "temperature disturbance",
+            }.get(var_col, f"probe column {var_col} disturbance")
+            amplification_report = {
+                "analysis": "probe-derived amplification exponent",
+                "non_lst_qualification": (
+                    "This is measured logarithmic amplification in the probe "
+                    "data, not an LST/PSE transition-prediction N-factor."
+                ),
+                "integrated_definition": amplification_data["definition"],
+                "direct_definition": amplification_data["direct_definition"],
+                "pressure_reference_clarification": (
+                    "A(f,x_ref) is the disturbance amplitude at a reference "
+                    "probe, never mean pressure, freestream pressure, or p_infinity."
+                ),
+                "signal_variable": amplitude_variable,
+                "reference_policy": amplification_data["reference_policy"],
+                "frequency_band_hz": [
+                    float(amp_frequency[0]), float(amp_frequency[-1])
+                ],
+                "frequency_bins": int(amp_frequency.size),
+                "welch_nperseg": int(wave_data["nperseg"]),
+                "welch_noverlap": int(wave_data["noverlap"]),
+                "welch_blocks": int(wave_data["n_blocks"]),
+                "minimum_contiguous_centres": int(
+                    amplification_data["min_contiguous_centres"]
+                ),
+                "maximum_consistency_error": float(
+                    amplification_data["max_consistency_error"]
+                ),
+                "segment_count": int(amplification_data["segment_count"]),
+                "integrated_accepted_fraction": float(np.mean(amp_valid)),
+                "reliable_fraction_of_integrated": float(
+                    np.sum(amplification_data["reliable_mask"])
+                    / max(np.sum(amp_valid), 1)
+                ),
+                "selected_plot_frequencies_hz": [
+                    float(amp_frequency[index])
+                    for index in selected_amplification_indices
+                ],
+                "uncertainty_note": amplification_data["uncertainty_note"],
+                "rejection_counts": {
+                    "growth_quality_gate": int(
+                        amp_valid.size - np.sum(amp_valid)
+                    ),
+                    "consistency_limit": int(np.sum(
+                        amp_valid & ~amplification_data["reliable_mask"]
+                    )),
+                },
+            }
+            report_path = output_dir / "probe_amplification_report.json"
+            temporary_path = output_dir / ".probe_amplification_report.json.tmp"
+            with temporary_path.open("w", encoding="utf-8") as stream:
+                json.dump(amplification_report, stream, indent=2, sort_keys=True)
+                stream.write("\n")
+            os.replace(temporary_path, report_path)
+
         _ts("  [SD] Generating stability summary plot ...")
         out_path = output_dir / "stability_summary.png"
         pdb.plot_stability_summary(plot_data, output_path=str(out_path))
@@ -5993,10 +6415,25 @@ def _process_stability_diagnostics(config, probe_data=None):
             _ts(f"  [SD] Saved wavenumber summary: {wave_path}")
             _ts(f"  [SD] Saved phase-speed dispersion: {dispersion_path}")
 
+        if amplification_data:
+            amplification_map = output_dir / "probe_amplification_map.png"
+            pdb.plot_probe_amplification_map(
+                amplification_data, output_path=str(amplification_map)
+            )
+            amplification_curves = output_dir / "probe_amplification_curves.png"
+            pdb.plot_probe_amplification_curves(
+                amplification_data, selected_amplification_indices,
+                output_path=str(amplification_curves),
+            )
+            _ts(f"  [SD] Saved probe-derived amplification: {amplification_map}")
+
         if len(gpi_results) > 0:
-            gpi_out = output_dir / "gpi_profiles.png"
-            pdb.plot_gpi_profiles(bl_profiles, gpi_results, output_path=str(gpi_out))
-            _ts(f"  [SD] Saved GPI profiles: {gpi_out}")
+            gip_out = output_dir / "gip_diagnostics.png"
+            pdb.plot_gip_diagnostics(
+                bl_profiles, gpi_results, output_path=str(gip_out),
+                streamwise_results=all_gip_results,
+            )
+            _ts(f"  [SD] Saved GIP diagnostics: {gip_out}")
 
         _ts(f"  [SD] Saved stability summary: {out_path}")
         return ("stability", True, None)
@@ -7178,7 +7615,10 @@ def main(config=None):
     shared_probe_data = None
     probe_workflows_enabled = any((
         config.get("make_fft_probes", False),
-        config.get("make_stability_diagnostics", False),
+        (
+            config.get("make_stability_diagnostics", False)
+            and not config.get("stability_gip_only", False)
+        ),
         config.get("make_transient_analysis", False),
         config.get("make_nonlinear_diagnostics", False),
     ))
@@ -7186,7 +7626,10 @@ def main(config=None):
         _ts("Loading shared probe dataset for enabled analysis workflows ...")
         try:
             shared_max_probes = (
-                None if config.get("make_stability_diagnostics", False)
+                None if (
+                    config.get("make_stability_diagnostics", False)
+                    and not config.get("stability_gip_only", False)
+                )
                 else config.get("fft_max_probes")
             )
             shared_probe_data = _load_probe_timeseries(

@@ -293,6 +293,48 @@ class PlottingTests(unittest.TestCase):
         dispersion = plotting.plot_phase_speed_dispersion(data)
         dispersion.canvas.draw()
 
+    def test_gip_diagnostics_render_with_non_lst_interpretation(self):
+        y = np.linspace(0.0, 0.003, 21)
+        bl_profiles = [{
+            "x": 0.1,
+            "u_profile": np.linspace(0.0, 1000.0, y.size),
+            "rho_profile": np.linspace(0.03, 0.02, y.size),
+        }]
+        gip_results = [{
+            "x": 0.1, "y_profile": y,
+            "F": np.linspace(-1.0, 1.0, y.size),
+            "delta_99_est": 0.0028,
+            "gip_locations": np.array([0.0014]),
+            "gip_locations_over_delta99": np.array([0.5]),
+            "rejected_crossing_locations": np.array([0.00279]),
+            "crossing_count": 1, "profile_valid": True,
+            "derivative_window": 11, "derivative_order": 3,
+            "exclusion_fraction": 0.02,
+        }]
+        fig = plotting.plot_gip_diagnostics(bl_profiles, gip_results)
+        fig.canvas.draw()
+        self.assertEqual(fig.axes[1].get_title(), "GIP criterion")
+        self.assertEqual(fig.axes[2].get_title(), "GIP locations")
+
+    def test_probe_amplification_plots_render_with_non_lst_labels(self):
+        frequency = np.array([100.0, 200.0])
+        x = np.linspace(0.0, 1.0, 5)
+        n_probe = np.vstack((x, -x))
+        data = {
+            "frequency_hz": frequency, "x_center_m": x,
+            "n_probe": n_probe, "n_direct": n_probe.copy(),
+            "n_probe_lower_diagnostic": n_probe - 0.1,
+            "n_probe_upper_diagnostic": n_probe + 0.1,
+            "integration_valid_mask": np.ones_like(n_probe, dtype=bool),
+            "reliable_mask": np.ones_like(n_probe, dtype=bool),
+        }
+        map_figure = plotting.plot_probe_amplification_map(data)
+        map_figure.canvas.draw()
+        self.assertIn("non-LST", map_figure.axes[0].get_title())
+        curves = plotting.plot_probe_amplification_curves(data, [0, 1])
+        curves.canvas.draw()
+        self.assertIn("non-LST", curves.axes[0].get_title())
+
 
 class BinaryProbeLoaderTests(unittest.TestCase):
     def test_canonical_field_selection_expands_solver_aliases(self):
@@ -881,6 +923,80 @@ class AnalysisCorrectionTests(unittest.TestCase):
             result["amplification_rate"], -alpha, atol=1.0e-10
         )
         self.assertLess(np.nanmax(result["alpha_i_ci95"]), 1.0e-9)
+
+    def test_gip_local_polynomial_recovers_stretched_grid_crossing(self):
+        y = np.linspace(0.0, 1.0, 101) ** 1.4
+        velocity = 1.0 - (y - 0.5) ** 3
+        velocity = (velocity - velocity[0]) / (
+            velocity[-1] - velocity[0]
+        )
+        result = functions.compute_gpi_criterion(
+            y, velocity, np.ones_like(y), np.ones_like(y)
+        )
+        self.assertTrue(result["profile_valid"])
+        self.assertTrue(result["gip_present"])
+        self.assertTrue(result["unstable"])  # Legacy field remains available.
+        np.testing.assert_allclose(
+            result["gip_locations_over_delta99"], [0.5], atol=2.0e-3
+        )
+
+    def test_gip_rejects_invalid_density_and_undersampled_profiles(self):
+        y = np.linspace(0.0, 1.0, 6)
+        short = functions.compute_gpi_criterion(
+            y, y, np.ones_like(y), np.ones_like(y)
+        )
+        self.assertFalse(short["profile_valid"])
+        self.assertIn("seven", short["rejection_reason"])
+        y = np.linspace(0.0, 1.0, 21)
+        density = np.ones_like(y)
+        density[4] = 0.0
+        invalid_density = functions.compute_gpi_criterion(
+            y, y, np.ones_like(y), density
+        )
+        self.assertFalse(invalid_density["profile_valid"])
+        self.assertIn("density", invalid_density["rejection_reason"])
+
+    def test_probe_amplification_integrates_and_splits_segments(self):
+        x = np.linspace(0.0, 1.0, 6)
+        growth = np.vstack((np.full(x.size, 2.0), np.full(x.size, -1.0)))
+        power = np.exp(2.0 * np.vstack((2.0 * x, -x)))
+        valid = np.ones_like(growth, dtype=bool)
+        valid[0, 3] = False
+        data = {
+            "frequency_hz": np.array([100.0, 200.0]),
+            "x_center_m": x,
+            "amplification_rate_per_m": growth,
+            "alpha_imag_ci95_rad_per_m": np.full_like(growth, 0.1),
+            "spectral_power": power,
+            "growth_valid_mask": valid,
+        }
+        result = functions.compute_probe_amplification(
+            data, min_contiguous_centres=2, max_consistency_error=1.0e-12
+        )
+        np.testing.assert_allclose(result["n_probe"][1], -x)
+        np.testing.assert_allclose(result["n_direct"][1], -x)
+        self.assertEqual(result["segment_id"][0, 3], -1)
+        self.assertNotEqual(
+            result["segment_id"][0, 2], result["segment_id"][0, 4]
+        )
+        self.assertEqual(result["n_probe"][0, 4], 0.0)
+        self.assertTrue(np.all(result["reliable_mask"][1]))
+
+    def test_probe_amplification_is_invariant_to_amplitude_scale(self):
+        x = np.linspace(0.0, 1.0, 5)
+        base = {
+            "frequency_hz": np.array([100.0]),
+            "x_center_m": x,
+            "amplification_rate_per_m": np.full((1, 5), 0.5),
+            "alpha_imag_ci95_rad_per_m": np.zeros((1, 5)),
+            "spectral_power": np.exp(x)[None, :],
+            "growth_valid_mask": np.ones((1, 5), dtype=bool),
+        }
+        first = functions.compute_probe_amplification(base)
+        scaled = dict(base)
+        scaled["spectral_power"] = 1.0e12 * base["spectral_power"]
+        second = functions.compute_probe_amplification(scaled)
+        np.testing.assert_allclose(first["n_direct"], second["n_direct"])
 
     def test_frequency_resolved_complex_wavenumber(self):
         fs = 4096.0

@@ -182,6 +182,41 @@ def validate_config(config):
         raise ValueError("stability_spatial_window_size must be at least 5")
     if int(config.get("stability_spatial_step", 20)) < 1:
         raise ValueError("stability_spatial_step must be at least 1")
+    gip_window = int(config.get("stability_gip_derivative_window", 11))
+    if gip_window < 7 or gip_window % 2 == 0:
+        raise ValueError(
+            "stability_gip_derivative_window must be an odd integer >= 7"
+        )
+    gip_order = int(config.get("stability_gip_derivative_order", 3))
+    if not 2 <= gip_order < gip_window:
+        raise ValueError(
+            "stability_gip_derivative_order must lie in [2, window)"
+        )
+    gip_exclusion = float(config.get("stability_gip_exclusion_fraction", 0.02))
+    if not 0.0 <= gip_exclusion < 0.5:
+        raise ValueError(
+            "stability_gip_exclusion_fraction must lie in [0, 0.5)"
+        )
+    if float(config.get("stability_gip_residual_multiplier", 3.0)) < 0.0:
+        raise ValueError("stability_gip_residual_multiplier must be non-negative")
+    if int(config.get("stability_amplification_min_contiguous_centres", 3)) < 2:
+        raise ValueError(
+            "stability_amplification_min_contiguous_centres must be at least 2"
+        )
+    amplification_error = float(config.get(
+        "stability_amplification_max_consistency_error", 1.0
+    ))
+    if amplification_error != amplification_error or amplification_error < 0.0:
+        raise ValueError(
+            "stability_amplification_max_consistency_error must be non-negative"
+        )
+    plot_frequencies = config.get(
+        "stability_amplification_plot_frequencies", []
+    )
+    if plot_frequencies is None or any(float(value) <= 0.0 for value in plot_frequencies):
+        raise ValueError(
+            "stability_amplification_plot_frequencies must contain positive frequencies"
+        )
     for key in (
             "stability_wavenumber_min_coherence",
             "stability_wavenumber_min_coherent_fraction",

@@ -2121,6 +2121,13 @@ def plot_stability_summary(data, output_path=None, figsize=(18, 14)):
     ax3.set_title(
         "Panel 3: Spatial Amplification (positive means growth)", fontsize=13
     )
+    if data.get("probe_amplification"):
+        ax3.text(
+            0.02, 0.03,
+            r"See probe amplification figures for non-LST $N_{probe}(f,x)$",
+            transform=ax3.transAxes, fontsize=8,
+            bbox=dict(facecolor="white", alpha=0.85, edgecolor="0.8"),
+        )
     ax3.grid(True, alpha=0.3)
 
     # -- Panel 4: GPI profiles
@@ -2144,18 +2151,18 @@ def plot_stability_summary(data, output_path=None, figsize=(18, 14)):
         plotted_gpi = True
 
         y_gpi = gpi.get("y_gpi", np.nan)
-        stable = gpi.get("unstable", False)
+        stable = gpi.get("gip_present", gpi.get("unstable", False))
         if np.isfinite(y_gpi):
             marker = "v" if stable else "o"
             ax4.axhline(y=y_gpi, xmin=0, xmax=0.3, color=color,
                         linestyle="--", linewidth=0.8)
             ax4.plot(0, y_gpi, marker=marker, color=color, markersize=8,
-                     label=f"GPI" if i == 0 else "")
+                     label=f"GIP" if i == 0 else "")
 
     ax4.axvline(x=0, color="gray", linestyle=":", linewidth=0.8)
     ax4.set_xlabel(r"$F(y) = d(\rho \, du/dy)/dy$  (normalized)", fontsize=12)
     ax4.set_ylabel("y [m]", fontsize=12)
-    ax4.set_title("Panel 4: GPI Criterion", fontsize=13)
+    ax4.set_title("Panel 4: GIP necessary inviscid criterion", fontsize=13)
     if not plotted_gpi:
         ax4.text(
             0.5, 0.5, "No valid density profiles for GPI evaluation",
@@ -2592,6 +2599,218 @@ def plot_gpi_profiles(bl_profiles, gpi_results, output_path=None,
         plt.savefig(output_path, dpi=200, bbox_inches="tight")
         plt.close(fig)
 
+    return fig
+
+
+def plot_gip_diagnostics(bl_profiles, gpi_results, output_path=None,
+                         figsize=(16.5, 5.5), streamwise_results=None,
+                         display_ymax=1.5, minimum_bl_points=7):
+    """Convey the GIP profiles, numerical decisions, and streamwise result."""
+    if not gpi_results:
+        return None
+    fig, axes = plt.subplots(1, 3, figsize=figsize)
+    fig.subplots_adjust(
+        left=0.065, right=0.985, top=0.88, bottom=0.15, wspace=0.18
+    )
+    ax_profile, ax_criterion, ax_streamwise = axes
+    colors = plt.cm.viridis(np.linspace(0.08, 0.92, len(gpi_results)))
+    profile_by_x = {float(item.get("x", np.nan)): item for item in bl_profiles}
+    valid_profiles = 0
+    representative_underresolved = 0
+    for color, gpi in zip(colors, gpi_results):
+        x_position = float(gpi.get("x", np.nan))
+        y = np.asarray(gpi.get("y_profile", []), dtype=float)
+        delta = float(gpi.get("delta_99_est", np.nan))
+        if y.size == 0 or not np.isfinite(delta) or delta <= 0.0:
+            continue
+        normalized_y = y / delta
+        bl = profile_by_x.get(x_position, {})
+        velocity = np.asarray(bl.get("u_profile", []), dtype=float)
+        density = np.asarray(bl.get("rho_profile", []), dtype=float)
+        interior_points = int(np.count_nonzero(
+            (normalized_y > 0.02) & (normalized_y < 0.98)
+        ))
+        underresolved = interior_points < int(minimum_bl_points)
+        representative_underresolved += int(underresolved)
+        label = f"x={x_position:.3f} m"
+        if velocity.shape == y.shape and np.nanmax(np.abs(velocity)) > 0.0:
+            ax_profile.plot(
+                velocity / np.nanmax(velocity), normalized_y,
+                color=color, label=label,
+            )
+        if density.shape == y.shape and np.nanmax(np.abs(density)) > 0.0:
+            ax_profile.plot(
+                density / density[-1], normalized_y, color=color,
+                linestyle="--",
+            )
+        criterion = np.asarray(gpi.get("F", []), dtype=float)
+        if criterion.shape == y.shape and np.any(np.isfinite(criterion)):
+            display = normalized_y <= float(display_ymax)
+            scale = np.nanmax(np.abs(criterion[display]))
+            if scale > 0.0:
+                ax_criterion.plot(
+                    criterion / scale, normalized_y, color=color
+                )
+        for location in np.asarray(gpi.get("gip_locations", []), dtype=float):
+            ax_criterion.plot(0.0, location / delta, "o", color=color, ms=6)
+        if gpi.get("profile_valid", False):
+            valid_profiles += 1
+
+    exclusion = float(gpi_results[0].get("exclusion_fraction", 0.02))
+    for axis in (ax_profile, ax_criterion):
+        axis.axhline(1.0, color="0.35", linestyle=":", label=r"$\delta_{99}$")
+        axis.axhspan(0.0, exclusion, color="0.85", alpha=0.5)
+        axis.axhspan(
+            1.0 - exclusion, float(display_ymax), color="0.85", alpha=0.5
+        )
+        axis.set_ylim(0.0, float(display_ymax))
+        axis.grid(True, alpha=0.25)
+    ax_profile.set_xlabel(r"$\bar U/U_e$ solid; $\bar\rho/\rho_e$ dashed")
+    ax_profile.set_ylabel(r"$y/\delta_{99}$")
+    ax_profile.set_title("Base flow", fontsize=14, pad=8)
+    ax_profile.legend(fontsize=7, loc="center right", framealpha=0.9)
+    ax_criterion.axvline(0.0, color="0.25", linestyle=":")
+    ax_criterion.set_xlabel(
+        r"Normalized $G=d(\bar\rho\,d\bar U/dy)/dy$"
+    )
+    ax_criterion.set_title("GIP criterion", fontsize=14, pad=8)
+
+    summary_results = (
+        gpi_results if streamwise_results is None else streamwise_results
+    )
+    accepted_total = 0
+    rejected_total = 0
+    underresolved_total = 0
+    x_values = []
+    for gpi in summary_results:
+        x_position = float(gpi.get("x", np.nan))
+        if np.isfinite(x_position):
+            x_values.append(x_position)
+        profile_y = np.asarray(gpi.get("y_profile", []), dtype=float)
+        profile_delta = float(gpi.get("delta_99_est", np.nan))
+        if profile_y.size and np.isfinite(profile_delta) and profile_delta > 0.0:
+            normalized_profile_y = profile_y / profile_delta
+            underresolved = np.count_nonzero(
+                (normalized_profile_y > exclusion)
+                & (normalized_profile_y < 1.0 - exclusion)
+            ) < int(minimum_bl_points)
+            if underresolved:
+                underresolved_total += 1
+        locations = np.asarray(
+            gpi.get("gip_locations_over_delta99", []), dtype=float
+        )
+        accepted_total += locations.size
+        if locations.size:
+            ax_streamwise.scatter(
+                np.full(locations.size, x_position), locations,
+                c=np.full(locations.size, locations.size), cmap="plasma",
+                vmin=1, vmax=max(2, max(
+                    int(item.get("crossing_count", 0)) for item in summary_results
+                )), s=35,
+            )
+        rejected_total += len(gpi.get("rejected_crossing_locations", []))
+        if not gpi.get("profile_valid", False):
+            ax_streamwise.plot(x_position, 0.5, "x", color="0.6")
+    ax_streamwise.axhline(1.0, color="0.35", linestyle=":")
+    ax_streamwise.axhspan(0.0, exclusion, color="0.85", alpha=0.5)
+    ax_streamwise.axhspan(
+        1.0 - exclusion, float(display_ymax), color="0.85", alpha=0.5
+    )
+    ax_streamwise.set_xlabel("x [m]")
+    ax_streamwise.set_ylabel(r"$y_{GIP}/\delta_{99}$")
+    ax_streamwise.set_ylim(0.0, 1.1)
+    if x_values:
+        x_min, x_max = min(x_values), max(x_values)
+        margin = max(0.01 * (x_max - x_min), 1.0e-6)
+        ax_streamwise.set_xlim(x_min - margin, x_max + margin)
+    ax_streamwise.set_title("GIP locations", fontsize=14, pad=8)
+    if accepted_total == 0:
+        ax_streamwise.text(
+            0.5, 0.55,
+            "No interior GIP detected",
+            transform=ax_streamwise.transAxes, ha="center", va="center",
+            fontsize=12, fontweight="bold",
+            bbox=dict(facecolor="white", edgecolor="0.65", alpha=0.92),
+        )
+    ax_streamwise.grid(True, alpha=0.25)
+    if output_path is not None:
+        fig.savefig(output_path, dpi=220, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_probe_amplification_map(data, output_path=None, figsize=(12, 6)):
+    """Plot quality-gated non-LST probe-derived amplification exponents."""
+    frequency = np.asarray(data["frequency_hz"], dtype=float)
+    x = np.asarray(data["x_center_m"], dtype=float)
+    values = np.where(
+        np.asarray(data["integration_valid_mask"], dtype=bool),
+        np.asarray(data["n_probe"], dtype=float), np.nan,
+    )
+    fig, ax = plt.subplots(figsize=figsize)
+    limit = _robust_symmetric_limit(values)
+    mesh = ax.pcolormesh(
+        x, frequency, values, shading="auto", cmap="RdBu_r",
+        vmin=-limit, vmax=limit,
+    )
+    fig.colorbar(mesh, ax=ax, label=r"$N_{probe}$")
+    ax.set_xlabel("x [m]")
+    ax.set_ylabel("Frequency [Hz]")
+    ax.set_title("Probe-derived amplification exponent (non-LST)")
+    ax.text(
+        0.01, 0.01,
+        "Each contiguous accepted segment starts at N_probe=0; blank=quality rejected",
+        transform=ax.transAxes, fontsize=8,
+        bbox=dict(facecolor="white", alpha=0.85, edgecolor="0.8"),
+    )
+    fig.tight_layout()
+    if output_path is not None:
+        fig.savefig(output_path, dpi=220, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_probe_amplification_curves(data, selected_frequency_indices,
+                                     output_path=None, figsize=(12, 8)):
+    """Compare integrated and direct probe-derived amplification exponents."""
+    frequency = np.asarray(data["frequency_hz"], dtype=float)
+    x = np.asarray(data["x_center_m"], dtype=float)
+    integrated = np.asarray(data["n_probe"], dtype=float)
+    direct = np.asarray(data["n_direct"], dtype=float)
+    lower = np.asarray(data["n_probe_lower_diagnostic"], dtype=float)
+    upper = np.asarray(data["n_probe_upper_diagnostic"], dtype=float)
+    reliable = np.asarray(data["reliable_mask"], dtype=bool)
+    fig, (ax_curve, ax_error) = plt.subplots(2, 1, figsize=figsize, sharex=True)
+    for color_index, index in enumerate(selected_frequency_indices):
+        index = int(index)
+        color = f"C{color_index % 10}"
+        label = f"{frequency[index]:.4g} Hz"
+        ax_curve.plot(x, integrated[index], color=color, label=label)
+        ax_curve.plot(x, direct[index], color=color, linestyle="--", alpha=0.8)
+        ax_curve.fill_between(
+            x, lower[index], upper[index], color=color, alpha=0.12
+        )
+        error = integrated[index] - direct[index]
+        ax_error.plot(x, error, color=color, label=label)
+        rejected = np.isfinite(error) & ~reliable[index]
+        ax_error.scatter(x[rejected], error[rejected], marker="x", color=color)
+    ax_curve.axhline(0.0, color="0.4", linestyle=":")
+    ax_curve.set_ylabel("Log amplification exponent")
+    ax_curve.set_title(
+        "Probe-derived amplification exponent: integrated (solid), "
+        "direct Welch ratio (dashed); non-LST"
+    )
+    ax_curve.legend(fontsize=8, ncol=2)
+    ax_error.axhline(0.0, color="0.4", linestyle=":")
+    ax_error.set_xlabel("x [m]")
+    ax_error.set_ylabel(r"$N_{probe}-N_{direct}$")
+    ax_error.set_title("Consistency diagnostic; crosses exceed reliability limit")
+    for axis in (ax_curve, ax_error):
+        axis.grid(True, alpha=0.25)
+    fig.tight_layout()
+    if output_path is not None:
+        fig.savefig(output_path, dpi=220, bbox_inches="tight")
+        plt.close(fig)
     return fig
 
 

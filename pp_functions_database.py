@@ -4229,7 +4229,36 @@ def compute_second_mode_frequency(bl_profiles, method="both"):
     return out
 
 
-def compute_gpi_criterion(y, u, T, rho, R_specific=287.05):
+def _local_polynomial_derivative(coordinate, values, window=11, order=3):
+    """Differentiate data on a nonuniform grid using local polynomials."""
+    coordinate = np.asarray(coordinate, dtype=float)
+    values = np.asarray(values, dtype=float)
+    count = coordinate.size
+    window = min(int(window), count)
+    if window % 2 == 0:
+        window -= 1
+    order = min(int(order), window - 1)
+    derivative = np.full(count, np.nan)
+    half = window // 2
+    for index in range(count):
+        first = max(0, index - half)
+        last = min(count, first + window)
+        first = max(0, last - window)
+        local_x = coordinate[first:last] - coordinate[index]
+        scale = np.max(np.abs(local_x))
+        if not np.isfinite(scale) or scale <= 0.0:
+            continue
+        coefficient = np.polynomial.polynomial.polyfit(
+            local_x / scale, values[first:last], order
+        )
+        derivative[index] = coefficient[1] / scale
+    return derivative
+
+
+def compute_gpi_criterion(y, u, T, rho, R_specific=287.05,
+                          derivative_window=11, derivative_order=3,
+                          exclusion_fraction=0.02,
+                          residual_multiplier=3.0):
     """Compute the Generalized Inflection Point (GPI) criterion.
 
     F(y) = d(rho * du/dy) / dy
@@ -4248,16 +4277,32 @@ def compute_gpi_criterion(y, u, T, rho, R_specific=287.05):
     T = np.asarray(T, dtype=float)
     rho = np.asarray(rho, dtype=float)
 
-    valid = np.isfinite(y) & np.isfinite(u) & np.isfinite(T) & np.isfinite(rho)
-    if np.sum(valid) < 5:
+    def rejected(reason, profile_y=None):
+        result_y = y if profile_y is None else profile_y
         return {
-            "y_profile": y,
-            "F": np.full_like(y, np.nan),
+            "y_profile": result_y,
+            "F": np.full_like(result_y, np.nan, dtype=float),
             "y_gpi": np.nan,
             "F_gpi": np.nan,
-            "unstable": False,
+            "unstable": False,  # Legacy compatibility.
+            "gip_present": False,
+            "gip_locations": np.array([], dtype=float),
+            "gip_locations_over_delta99": np.array([], dtype=float),
+            "rejected_crossing_locations": np.array([], dtype=float),
+            "rejected_crossing_reasons": np.array([], dtype="U64"),
+            "crossing_count": 0,
+            "profile_valid": False,
+            "rejection_reason": reason,
             "delta_99_est": np.nan,
+            "derivative_window": int(derivative_window),
+            "derivative_order": int(derivative_order),
+            "exclusion_fraction": float(exclusion_fraction),
+            "derivative_residual_scale": np.nan,
         }
+
+    valid = np.isfinite(y) & np.isfinite(u) & np.isfinite(T) & np.isfinite(rho)
+    if np.sum(valid) < 7:
+        return rejected("fewer than seven finite profile points")
 
     y = y[valid]
     u = u[valid]
@@ -4269,42 +4314,86 @@ def compute_gpi_criterion(y, u, T, rho, R_specific=287.05):
     T = T[sort_idx]
     rho = rho[sort_idx]
 
-    dudy = np.gradient(u, y)
-    F = np.gradient(rho * dudy, y)
+    if np.any(np.diff(y) <= 0.0):
+        return rejected("wall distance is not strictly increasing", y)
+    if np.any(rho <= 0.0):
+        return rejected("density is not strictly positive", y)
 
     U = u / np.max(u) if np.max(u) > 0 else u
     idx99 = np.where(U >= 0.99)[0]
     delta_99_est = y[idx99[0]] if len(idx99) > 0 else y[-1]
+    if not np.isfinite(delta_99_est) or delta_99_est <= 0.0:
+        return rejected("delta_99 is not positive and finite", y)
 
-    y_gpi = np.nan
-    F_gpi = np.nan
-    unstable = False
+    normalized_y = y / delta_99_est
+    dudy_normalized = _local_polynomial_derivative(
+        normalized_y, u, derivative_window, derivative_order
+    )
+    F_normalized = _local_polynomial_derivative(
+        normalized_y, rho * dudy_normalized,
+        derivative_window, derivative_order,
+    )
+    # Convert derivatives with respect to y/delta back to dimensional y.
+    F = F_normalized / delta_99_est ** 2
+    raw_dudy = np.gradient(u, y)
+    raw_F = np.gradient(rho * raw_dudy, y)
+    residual = raw_F - F
+    residual_median = np.nanmedian(residual)
+    residual_scale = 1.4826 * np.nanmedian(
+        np.abs(residual - residual_median)
+    )
+    if not np.isfinite(residual_scale):
+        residual_scale = 0.0
 
-    inside = y <= delta_99_est
-    if np.sum(inside) >= 3:
-        y_in = y[inside]
-        F_in = F[inside]
-        sign = np.sign(F_in)
-        sign[sign == 0] = 1
-        zero_cross = np.where(np.diff(sign) != 0)[0]
+    accepted = []
+    rejected_locations = []
+    rejected_reasons = []
+    sign = np.sign(F)
+    sign[sign == 0.0] = 1.0
+    candidates = np.flatnonzero(np.diff(sign) != 0)
+    for index in candidates:
+        y0, y1 = y[index], y[index + 1]
+        F0, F1 = F[index], F[index + 1]
+        if not np.all(np.isfinite([y0, y1, F0, F1])) or F1 == F0:
+            continue
+        location = y0 - F0 * (y1 - y0) / (F1 - F0)
+        normalized_location = location / delta_99_est
+        if not (exclusion_fraction < normalized_location
+                < 1.0 - exclusion_fraction):
+            rejected_locations.append(location)
+            rejected_reasons.append("outside interior boundary-layer region")
+        elif abs(F1 - F0) <= residual_multiplier * residual_scale:
+            rejected_locations.append(location)
+            rejected_reasons.append("sign change below derivative-noise threshold")
+        else:
+            accepted.append(location)
 
-        if len(zero_cross) > 0:
-            iz = zero_cross[0]
-            y0, y1 = y_in[iz], y_in[iz + 1]
-            F0, F1 = F_in[iz], F_in[iz + 1]
-            if abs(F1 - F0) > 1e-20:
-                y_gpi = y0 - F0 * (y1 - y0) / (F1 - F0)
-                F_gpi = 0.0
-                tol = delta_99_est * 0.01
-                unstable = (tol < y_gpi < delta_99_est - tol)
+    accepted = np.asarray(accepted, dtype=float)
+    y_gpi = float(accepted[0]) if accepted.size else np.nan
 
     return {
         "y_profile": y,
         "F": F,
         "y_gpi": y_gpi,
-        "F_gpi": F_gpi,
-        "unstable": unstable,
+        "F_gpi": 0.0 if accepted.size else np.nan,
+        "unstable": bool(accepted.size),  # Legacy compatibility.
+        "gip_present": bool(accepted.size),
+        "gip_locations": accepted,
+        "gip_locations_over_delta99": accepted / delta_99_est,
+        "rejected_crossing_locations": np.asarray(
+            rejected_locations, dtype=float
+        ),
+        "rejected_crossing_reasons": np.asarray(
+            rejected_reasons, dtype="U64"
+        ),
+        "crossing_count": int(accepted.size),
+        "profile_valid": True,
+        "rejection_reason": "" if accepted.size else "no credible interior crossing",
         "delta_99_est": delta_99_est,
+        "derivative_window": min(int(derivative_window), len(y)),
+        "derivative_order": min(int(derivative_order), len(y) - 1),
+        "exclusion_fraction": float(exclusion_fraction),
+        "derivative_residual_scale": float(residual_scale),
     }
 
 
@@ -5303,6 +5392,147 @@ def compute_frequency_resolved_wavenumber(
         "spatial_step": int(spatial_step),
         "phase_convention": phase_convention,
         "alpha_convention": "exp(i*(alpha*x-omega*t))",
+    }
+
+
+def compute_probe_amplification(wavenumber_data, min_contiguous_centres=3,
+                                max_consistency_error=1.0):
+    """Compute non-LST probe-derived logarithmic amplification exponents.
+
+    Each contiguous run of quality-gated growth estimates receives its own
+    reference station. ``N_probe`` integrates the measured local amplification
+    rate, while ``N_direct`` is the logarithm of the Welch-amplitude ratio to
+    that same station. Neither quantity is a transition-prediction N-factor.
+    """
+    frequency = np.asarray(wavenumber_data["frequency_hz"], dtype=float)
+    x = np.asarray(wavenumber_data["x_center_m"], dtype=float)
+    growth = np.asarray(
+        wavenumber_data["amplification_rate_per_m"], dtype=float
+    )
+    growth_ci95 = np.asarray(
+        wavenumber_data["alpha_imag_ci95_rad_per_m"], dtype=float
+    )
+    power = np.asarray(wavenumber_data["spectral_power"], dtype=float)
+    valid = np.asarray(wavenumber_data["growth_valid_mask"], dtype=bool)
+    expected_shape = (frequency.size, x.size)
+    for name, value in (
+            ("amplification_rate_per_m", growth),
+            ("alpha_imag_ci95_rad_per_m", growth_ci95),
+            ("spectral_power", power), ("growth_valid_mask", valid)):
+        if value.shape != expected_shape:
+            raise ValueError(f"{name} must have shape {expected_shape}")
+    if x.size and (not np.all(np.isfinite(x)) or np.any(np.diff(x) <= 0.0)):
+        raise ValueError("x_center_m must be finite and strictly increasing")
+    min_contiguous_centres = int(min_contiguous_centres)
+    if min_contiguous_centres < 2:
+        raise ValueError("min_contiguous_centres must be at least 2")
+    max_consistency_error = float(max_consistency_error)
+    if not np.isfinite(max_consistency_error) or max_consistency_error < 0.0:
+        raise ValueError("max_consistency_error must be finite and non-negative")
+
+    shape = expected_shape
+    n_probe = np.full(shape, np.nan)
+    n_direct = np.full(shape, np.nan)
+    n_lower = np.full(shape, np.nan)
+    n_upper = np.full(shape, np.nan)
+    segment_id = np.full(shape, -1, dtype=int)
+    reference_x = np.full(shape, np.nan)
+    integration_valid = np.zeros(shape, dtype=bool)
+    segment_counter = 0
+    amplitude = np.sqrt(power)
+
+    for frequency_index in range(frequency.size):
+        indices = np.flatnonzero(
+            valid[frequency_index]
+            & np.isfinite(growth[frequency_index])
+            & np.isfinite(growth_ci95[frequency_index])
+            & np.isfinite(amplitude[frequency_index])
+            & (amplitude[frequency_index] > 0.0)
+        )
+        if indices.size == 0:
+            continue
+        breaks = np.flatnonzero(np.diff(indices) != 1) + 1
+        for run in np.split(indices, breaks):
+            if run.size < min_contiguous_centres:
+                continue
+            segment_counter += 1
+            reference = int(run[0])
+            segment_id[frequency_index, run] = segment_counter
+            reference_x[frequency_index, run] = x[reference]
+            integration_valid[frequency_index, run] = True
+            n_probe[frequency_index, reference] = 0.0
+            n_lower[frequency_index, reference] = 0.0
+            n_upper[frequency_index, reference] = 0.0
+            for previous, current in zip(run[:-1], run[1:]):
+                dx = x[current] - x[previous]
+                n_probe[frequency_index, current] = (
+                    n_probe[frequency_index, previous]
+                    + 0.5 * dx * (
+                        growth[frequency_index, previous]
+                        + growth[frequency_index, current]
+                    )
+                )
+                lower_previous = (
+                    growth[frequency_index, previous]
+                    - growth_ci95[frequency_index, previous]
+                )
+                lower_current = (
+                    growth[frequency_index, current]
+                    - growth_ci95[frequency_index, current]
+                )
+                upper_previous = (
+                    growth[frequency_index, previous]
+                    + growth_ci95[frequency_index, previous]
+                )
+                upper_current = (
+                    growth[frequency_index, current]
+                    + growth_ci95[frequency_index, current]
+                )
+                n_lower[frequency_index, current] = (
+                    n_lower[frequency_index, previous]
+                    + 0.5 * dx * (lower_previous + lower_current)
+                )
+                n_upper[frequency_index, current] = (
+                    n_upper[frequency_index, previous]
+                    + 0.5 * dx * (upper_previous + upper_current)
+                )
+            n_direct[frequency_index, run] = np.log(
+                amplitude[frequency_index, run]
+                / amplitude[frequency_index, reference]
+            )
+
+    consistency_error = n_probe - n_direct
+    reliable = (
+        integration_valid & np.isfinite(consistency_error)
+        & (np.abs(consistency_error) <= max_consistency_error)
+    )
+    return {
+        "frequency_hz": frequency,
+        "x_center_m": x,
+        "n_probe": n_probe,
+        "n_direct": n_direct,
+        "n_probe_lower_diagnostic": n_lower,
+        "n_probe_upper_diagnostic": n_upper,
+        "consistency_error": consistency_error,
+        "segment_id": segment_id,
+        "reference_x_m": reference_x,
+        "integration_valid_mask": integration_valid,
+        "reliable_mask": reliable,
+        "min_contiguous_centres": min_contiguous_centres,
+        "max_consistency_error": max_consistency_error,
+        "segment_count": int(segment_counter),
+        "definition": (
+            "N_probe=integral(-alpha_i dx) over each contiguous accepted "
+            "probe segment; non-LST probe-derived amplification exponent"
+        ),
+        "direct_definition": (
+            "N_direct=ln(A(f,x)/A(f,x_ref)), where A is the Welch amplitude"
+        ),
+        "reference_policy": "first accepted centre of each contiguous segment",
+        "uncertainty_note": (
+            "Integrated pointwise fit bounds are diagnostic; overlapping "
+            "spatial windows are not statistically independent."
+        ),
     }
 
 
