@@ -137,6 +137,8 @@ def validate_config(config):
         )
     if int(config.get("fft_batch_size", 1)) < 1:
         raise ValueError("fft_batch_size must be at least 1")
+    if int(config.get("fft_var_col", 3)) not in (1, 2, 3, 4):
+        raise ValueError("fft_var_col must be 1, 2, 3, or 4")
     coordinate_policy = str(
         config.get("probe_coordinate_policy", "strict")
     ).lower()

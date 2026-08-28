@@ -5680,6 +5680,392 @@ def compute_complex_fft(signal_matrix, dt, win_scale=1.0):
     return freq, Y_complex, P1
 
 
+def _fft_window(length, window_name):
+    """Return the requested FFT window and its coherent-gain correction."""
+    name = str(window_name).lower()
+    if name in ("none", "rect", "rectangular"):
+        window = np.ones(int(length), dtype=float)
+    elif name == "hann":
+        window = np.hanning(int(length))
+    elif name == "hamming":
+        window = np.hamming(int(length))
+    elif name == "blackman":
+        window = np.blackman(int(length))
+    else:
+        raise ValueError(
+            "window must be none, rect, hann, hamming, or blackman"
+        )
+    return window, float(length) / np.sum(window)
+
+
+def compute_single_pulse_source_spectrum(
+        time_s, energy_per_pulse, pulse_fwhm_s, pulse_period_s,
+        start_time_s=0.0, cutoff_sigma=4.0, mean_subtraction="mean",
+        window="hann", window_compensation=True):
+    """Construct a code-matched single Gaussian source and its spectra.
+
+    The source is the domain-integrated deposition power of the analytic
+    temporal model used by ``thermal_source.cpp``.  Its centre is one half of
+    ``pulse_period_s`` after ``start_time_s`` and its tails are clipped at
+    ``cutoff_sigma`` standard deviations, matching the solver's source gate.
+    ``physical_spectrum`` has units of energy per pulse (the continuous-time
+    transform convention ``dt * rfft(power)``).  ``processed_*`` applies the
+    same detrending/window convention as the probe FFT and is intended only
+    for a like-for-like finite-record transfer ratio.
+    """
+    time_s = np.asarray(time_s, dtype=float).ravel()
+    if time_s.size < 4 or not np.all(np.isfinite(time_s)):
+        raise ValueError("time_s must contain at least four finite samples")
+    dt = float(np.median(np.diff(time_s)))
+    if dt <= 0.0 or not np.allclose(
+            np.diff(time_s), dt, rtol=1.0e-8,
+            atol=max(abs(dt) * 1.0e-10, 1.0e-15)):
+        raise ValueError("time_s must be uniformly sampled")
+    energy_per_pulse = float(energy_per_pulse)
+    pulse_fwhm_s = float(pulse_fwhm_s)
+    pulse_period_s = float(pulse_period_s)
+    cutoff_sigma = float(cutoff_sigma)
+    if energy_per_pulse <= 0.0 or pulse_fwhm_s <= 0.0 or pulse_period_s <= 0.0:
+        raise ValueError("pulse energy, FWHM, and period must be positive")
+    if cutoff_sigma <= 0.0:
+        raise ValueError("cutoff_sigma must be positive")
+
+    sigma_s = pulse_fwhm_s / 2.355
+    centre_s = float(start_time_s) + 0.5 * pulse_period_s
+    source_power = np.zeros_like(time_s)
+    active = np.abs(time_s - centre_s) <= cutoff_sigma * sigma_s
+    source_power[active] = (
+        energy_per_pulse / (sigma_s * np.sqrt(2.0 * np.pi))
+        * np.exp(-0.5 * ((time_s[active] - centre_s) / sigma_s) ** 2)
+    )
+
+    frequency = np.fft.rfftfreq(time_s.size, dt)
+    physical_complex = np.fft.rfft(source_power) * dt
+    physical_spectrum = np.abs(physical_complex)
+    ideal_spectrum = energy_per_pulse * np.exp(
+        -2.0 * np.pi ** 2 * sigma_s ** 2 * frequency ** 2
+    )
+
+    processed = source_power.copy()
+    mode = str(mean_subtraction).lower()
+    if mode == "mean":
+        processed -= np.mean(processed)
+    elif mode == "linear":
+        coefficients = np.polyfit(time_s, processed, 1)
+        processed -= np.polyval(coefficients, time_s)
+    elif mode != "none":
+        raise ValueError("mean_subtraction must be mean, linear, or none")
+    fft_window, gain_correction = _fft_window(processed.size, window)
+    processed *= fft_window
+    if not window_compensation:
+        gain_correction = 1.0
+    processed_complex = (
+        np.fft.rfft(processed) / processed.size * gain_correction
+    )
+    processed_amplitude = np.abs(processed_complex)
+    if processed_amplitude.size > 2:
+        processed_amplitude[1:-1] *= 2.0
+
+    return {
+        "time_s": time_s,
+        "power": source_power,
+        "processed_power": processed,
+        "frequency_hz": frequency,
+        "sigma_s": sigma_s,
+        "center_s": centre_s,
+        "physical_complex": physical_complex,
+        "physical_spectrum": physical_spectrum,
+        "ideal_spectrum": ideal_spectrum,
+        "processed_complex": processed_complex,
+        "processed_amplitude": processed_amplitude,
+        "window_amplitude_scale": gain_correction,
+    }
+
+
+def compute_single_pulse_transfer_function(
+        source_complex, response_complex, minimum_relative_source_amplitude=1.0e-3):
+    """Return the direct finite-record transfer ratio ``response/source``.
+
+    This is not a Welch H1 estimator: a single pulse is non-stationary and has
+    only one realization.  Frequencies below the specified relative source
+    amplitude are masked because division there would amplify round-off and
+    source-tail noise.
+    """
+    source_complex = np.asarray(source_complex, dtype=complex).ravel()
+    response_complex = np.asarray(response_complex, dtype=complex)
+    if response_complex.ndim == 1:
+        response_complex = response_complex[:, None]
+    if response_complex.shape[0] != source_complex.size:
+        raise ValueError("source and response spectra must share frequency bins")
+    threshold = float(minimum_relative_source_amplitude)
+    if not 0.0 < threshold < 1.0:
+        raise ValueError("minimum_relative_source_amplitude must lie in (0, 1)")
+    source_amplitude = np.abs(source_complex)
+    reference = float(np.max(source_amplitude))
+    valid = source_amplitude >= threshold * reference
+    valid[0] = False
+    transfer = np.full(
+        response_complex.shape, np.nan + 1j * np.nan, dtype=complex
+    )
+    transfer[valid, :] = (
+        response_complex[valid, :] / source_complex[valid, None]
+    )
+    return {
+        "transfer": transfer,
+        "magnitude": np.abs(transfer),
+        "phase_rad": np.angle(transfer),
+        "valid_frequency": valid,
+        "minimum_source_amplitude": threshold * reference,
+    }
+
+
+def compute_spatial_fft(
+        signal_matrix, probe_x_m, mean_subtraction="mean", window="hann",
+        window_compensation=True, zero_padding=0):
+    """Compute a complex spatial FFT on uniformly spaced probe stations."""
+    values = np.asarray(signal_matrix, dtype=float)
+    if values.ndim == 1:
+        values = values[None, :]
+    x = np.asarray(probe_x_m, dtype=float).ravel()
+    if values.ndim != 2 or values.shape[1] != x.size or x.size < 4:
+        raise ValueError("signal_matrix must have shape (n_snapshots, len(probe_x_m))")
+    if not np.all(np.isfinite(values)) or not np.all(np.isfinite(x)):
+        raise ValueError("spatial FFT inputs must be finite")
+    order = np.argsort(x)
+    x = x[order]
+    values = values[:, order]
+    spacing = np.diff(x)
+    dx = float(np.median(spacing))
+    if dx <= 0.0 or not np.allclose(spacing, dx, rtol=1.0e-5, atol=1.0e-12):
+        raise ValueError("probe_x_m must be uniformly spaced")
+
+    mode = str(mean_subtraction).lower()
+    processed = values.copy()
+    if mode == "mean":
+        processed -= np.mean(processed, axis=1, keepdims=True)
+    elif mode == "linear":
+        design = np.column_stack((x - np.mean(x), np.ones_like(x)))
+        coefficients = np.linalg.lstsq(design.T, processed.T, rcond=None)[0]
+        processed -= (design @ coefficients).T
+    elif mode != "none":
+        raise ValueError("mean_subtraction must be mean, linear, or none")
+
+    fft_window, gain_correction = _fft_window(x.size, window)
+    if not window_compensation:
+        gain_correction = 1.0
+    processed *= fft_window[None, :]
+    requested_padding = int(zero_padding)
+    if requested_padding < 0:
+        raise ValueError("zero_padding must be non-negative")
+    transform_length = max(x.size, x.size + requested_padding)
+    spectrum = np.fft.fftshift(
+        np.fft.fft(processed, n=transform_length, axis=1), axes=1
+    )
+    spectrum *= gain_correction / x.size
+    wavenumber = np.fft.fftshift(
+        2.0 * np.pi * np.fft.fftfreq(transform_length, d=dx)
+    )
+    return {
+        "wavenumber_rad_per_m": wavenumber,
+        "complex_spectrum": spectrum,
+        "amplitude": np.abs(spectrum),
+        "probe_x_m": x,
+        "dx_m": dx,
+        "physical_aperture_m": float(x[-1] - x[0] + dx),
+        "window": str(window),
+        "window_amplitude_scale": float(gain_correction),
+        "mean_subtraction": mode,
+        "zero_padding": requested_padding,
+        "transform_convention": "exp(-i*k*x)",
+    }
+
+
+def _gaussian_spatial_profile(x_m, y_m, center_x_m, center_y_m, radius_m):
+    """Return the solver's unnormalised 2-D Gaussian kernel on a probe line."""
+    radius_m = float(radius_m)
+    if radius_m <= 0.0:
+        raise ValueError("Gaussian radius must be positive")
+    rel_sq = (np.asarray(x_m) - float(center_x_m)) ** 2
+    rel_sq += (np.asarray(y_m) - float(center_y_m)) ** 2
+    return np.exp(-rel_sq / (2.0 * radius_m ** 2))
+
+
+def _wang_kernel_geometry(length_m, aspect_ratio, asymmetry):
+    """Build the scalar geometry used by ``thermal_kernel.H``."""
+    length_m = float(length_m)
+    aspect_ratio = float(aspect_ratio)
+    asymmetry = float(asymmetry)
+    if length_m <= 0.0 or aspect_ratio <= 0.0 or asymmetry <= 0.0:
+        raise ValueError("Wang length, aspect ratio, and asymmetry must be positive")
+    radius_one = length_m / (2.0 * aspect_ratio)
+    radius_two = radius_one / asymmetry
+    center_one = -0.5 * length_m + radius_one
+    center_two = 0.5 * length_m - radius_two
+    distance = center_two - center_one
+    delta = (radius_one - radius_two) / distance
+    height = np.sqrt(max(0.0, 1.0 - delta ** 2))
+    return {
+        "length": length_m, "R1": radius_one, "R2": radius_two,
+        "c1": center_one, "c2": center_two,
+        "p1q": center_one + radius_one * delta,
+        "p1r": radius_one * height,
+        "p2q": center_two + radius_two * delta,
+        "p2r": radius_two * height,
+        "tangent_angle": np.arctan2(height, delta),
+    }
+
+
+def _wang_arc_distance_sq(q, r, center, radius, theta_lower, theta_upper):
+    theta = np.clip(np.arctan2(r, q - center), theta_lower, theta_upper)
+    closest_q = center + radius * np.cos(theta)
+    closest_r = radius * np.sin(theta)
+    return (q - closest_q) ** 2 + (r - closest_r) ** 2
+
+
+def _wang_spatial_profile(x_m, y_m, center_x_m, center_y_m, parameters):
+    """Vectorised 2-D Wang profile matching the C++ kernel definition."""
+    geometry = _wang_kernel_geometry(
+        parameters["length_m"], parameters["aspect_ratio"],
+        parameters["asymmetry"],
+    )
+    q = np.asarray(x_m, dtype=float) - float(center_x_m)
+    r = np.abs(np.asarray(y_m, dtype=float) - float(center_y_m))
+    pi = np.pi
+    nearest = _wang_arc_distance_sq(
+        q, r, geometry["c1"], geometry["R1"],
+        geometry["tangent_angle"], pi,
+    )
+    fraction = np.clip(
+        ((q - geometry["p1q"]) * (geometry["p2q"] - geometry["p1q"])
+         + (r - geometry["p1r"]) * (geometry["p2r"] - geometry["p1r"]))
+        / ((geometry["p2q"] - geometry["p1q"]) ** 2
+           + (geometry["p2r"] - geometry["p1r"]) ** 2),
+        0.0, 1.0,
+    )
+    segment_q = geometry["p1q"] + fraction * (geometry["p2q"] - geometry["p1q"])
+    segment_r = geometry["p1r"] + fraction * (geometry["p2r"] - geometry["p1r"])
+    segment_distance = (q - segment_q) ** 2 + (r - segment_r) ** 2
+    local_width = np.full_like(q, geometry["R1"], dtype=float)
+    use_segment = segment_distance < nearest
+    nearest = np.where(use_segment, segment_distance, nearest)
+    local_width = np.where(
+        use_segment,
+        (1.0 - fraction) * geometry["R1"] + fraction * geometry["R2"],
+        local_width,
+    )
+    small_cap = _wang_arc_distance_sq(
+        q, r, geometry["c2"], geometry["R2"], 0.0,
+        geometry["tangent_angle"],
+    )
+    use_small_cap = small_cap < nearest
+    nearest = np.where(use_small_cap, small_cap, nearest)
+    local_width = np.where(use_small_cap, geometry["R2"], local_width)
+
+    inside = np.zeros_like(q, dtype=bool)
+    in_axial_range = (q >= -0.5 * geometry["length"]) & (q <= 0.5 * geometry["length"])
+    first = q <= geometry["p1q"]
+    middle = (q > geometry["p1q"]) & (q <= geometry["p2q"])
+    first_radius = np.sqrt(np.maximum(
+        geometry["R1"] ** 2 - (q - geometry["c1"]) ** 2, 0.0
+    ))
+    middle_radius = geometry["p1r"] + (
+        (q - geometry["p1q"]) / (geometry["p2q"] - geometry["p1q"])
+    ) * (geometry["p2r"] - geometry["p1r"])
+    last_radius = np.sqrt(np.maximum(
+        geometry["R2"] ** 2 - (q - geometry["c2"]) ** 2, 0.0
+    ))
+    boundary = np.where(first, first_radius, np.where(middle, middle_radius, last_radius))
+    inside = in_axial_range & (r <= boundary)
+    normal_distance = np.sqrt(np.maximum(nearest, 0.0))
+    normal_distance = np.where(inside, -normal_distance, normal_distance)
+    return 0.5 * (1.0 - np.tanh(
+        (np.log(9.0) * normal_distance) / local_width
+    ))
+
+
+def _wang_spatial_integral(parameters, axial_points=2048, radial_points=1024):
+    """Evaluate the 2-D Wang normalization integral used by the solver."""
+    geometry = _wang_kernel_geometry(
+        parameters["length_m"], parameters["aspect_ratio"],
+        parameters["asymmetry"],
+    )
+    tail_radii = 6.0
+    q_lower = -0.5 * geometry["length"] - tail_radii * geometry["R1"]
+    q_upper = 0.5 * geometry["length"] + tail_radii * geometry["R1"]
+    r_upper = (1.0 + tail_radii) * geometry["R1"]
+    dq = (q_upper - q_lower) / int(axial_points)
+    dr = r_upper / int(radial_points)
+    radial = (np.arange(int(radial_points), dtype=float) + 0.5) * dr
+    integral = 0.0
+    for q_block in np.array_split(
+            q_lower + (np.arange(int(axial_points), dtype=float) + 0.5) * dq,
+            max(1, int(axial_points) // 64)):
+        profile = _wang_spatial_profile(
+            q_block[:, None], radial[None, :], 0.0, 0.0, parameters
+        )
+        integral += 2.0 * np.sum(profile) * dq * dr
+    return float(integral)
+
+
+def compute_spatial_source_spectrum(
+        probe_x_m, probe_y_m, model="gaussian", center_x_m=0.0,
+        center_y_m=0.0, radius_m=None, wang_parameters=None,
+        mean_subtraction="none", window="hann", window_compensation=True,
+        zero_padding=0):
+    """Evaluate and transform the exact Gaussian or Wang spatial kernel."""
+    x = np.asarray(probe_x_m, dtype=float).ravel()
+    y = np.asarray(probe_y_m, dtype=float).ravel()
+    if x.size != y.size or x.size < 4:
+        raise ValueError("probe_x_m and probe_y_m must have four matching points")
+    if str(model).lower() == "gaussian":
+        raw_profile = _gaussian_spatial_profile(
+            x, y, center_x_m, center_y_m, radius_m
+        )
+        spatial_integral = 2.0 * np.pi * float(radius_m) ** 2
+    elif str(model).lower() in ("wang", "wang_kernel"):
+        raw_profile = _wang_spatial_profile(
+            x, y, center_x_m, center_y_m, wang_parameters or {}
+        )
+        spatial_integral = _wang_spatial_integral(wang_parameters or {})
+    else:
+        raise ValueError("spatial source model must be gaussian or wang_kernel")
+    profile = raw_profile / spatial_integral
+    result = compute_spatial_fft(
+        profile, x, mean_subtraction=mean_subtraction, window=window,
+        window_compensation=window_compensation, zero_padding=zero_padding,
+    )
+    result["profile"] = profile
+    result["model"] = str(model)
+    result["center_x_m"] = float(center_x_m)
+    result["center_y_m"] = float(center_y_m)
+    result["spatial_integral_m2"] = float(spatial_integral)
+    return result
+
+
+def compute_spatial_transfer_function(
+        source_complex, response_complex, minimum_relative_source_amplitude=1.0e-3):
+    """Return the spatial response/source ratio at each wavenumber."""
+    source = np.asarray(source_complex, dtype=complex).ravel()
+    response = np.asarray(response_complex, dtype=complex)
+    if response.ndim == 1:
+        response = response[None, :]
+    if response.shape[-1] != source.size:
+        raise ValueError("source and response spectra must share wavenumber bins")
+    threshold = float(minimum_relative_source_amplitude)
+    if not 0.0 < threshold < 1.0:
+        raise ValueError("minimum_relative_source_amplitude must lie in (0, 1)")
+    valid = np.abs(source) >= threshold * np.max(np.abs(source))
+    transfer = np.full(response.shape, np.nan + 1j * np.nan, dtype=complex)
+    transfer[:, valid] = response[:, valid] / source[None, valid]
+    return {
+        "transfer": transfer,
+        "magnitude": np.abs(transfer),
+        "phase_rad": np.angle(transfer),
+        "valid_wavenumber": valid,
+        "minimum_source_amplitude": threshold * np.max(np.abs(source)),
+    }
+
+
 def reconstruct_from_bins(Y_full, bin_mask):
     """Reconstruct time-domain signal from selected frequency bins.
 

@@ -15,7 +15,10 @@ import csv
 import glob
 import gc
 import hashlib
-import importlib.metadata
+try:
+    import importlib.metadata as importlib_metadata
+except ImportError:
+    import importlib_metadata
 import json
 import os
 import platform
@@ -47,7 +50,97 @@ import pp_functions_database as fdb
 import pp_config
 import pp_modal_database as mdb
 import pp_plotting_database as pdb
-from pp_probe_store import HDF5ProbeStore
+try:
+    from pp_probe_store import HDF5ProbeStore
+    HDF5_PROBE_STORE_AVAILABLE = True
+except ImportError:
+    class HDF5ProbeStore:
+        pass
+
+    HDF5_PROBE_STORE_AVAILABLE = False
+
+
+# ---------------------------------------------------------------------------
+#  PROBE VARIABLE METADATA
+# ---------------------------------------------------------------------------
+
+# ASCII .dat column convention: 0=time, 1=rho, 2=u, 3=p, 4=T, 5=x_sample,
+# 6=y_sample, 7=level.  The selectable FFT variables are columns 1-4.
+_PROBE_VARIABLES = {
+    1: {
+        "field": "rho",
+        "slug": "density",
+        "name": "Density",
+        "unit_cgs": "g/cm^3",
+        "unit_si": "kg/m^3",
+        "symbol": r"$\rho$",
+        "ms_symbol": r"$\rho-\overline{\rho}$",
+        "modal_weight": "rho",
+    },
+    2: {
+        "field": "u",
+        "slug": "velocity",
+        "name": "Streamwise velocity",
+        "unit_cgs": "cm/s",
+        "unit_si": "m/s",
+        "symbol": r"$u$",
+        "ms_symbol": r"$u-\overline{u}$",
+        "modal_weight": "u",
+    },
+    3: {
+        "field": "p",
+        "slug": "pressure",
+        "name": "Pressure",
+        "unit_cgs": "dyne/cm^2",
+        "unit_si": "Pa",
+        "symbol": r"$p$",
+        "ms_symbol": r"$p-\overline{p}$",
+        "modal_weight": "pressure",
+    },
+    4: {
+        "field": "T",
+        "slug": "temperature",
+        "name": "Temperature",
+        "unit_cgs": "K",
+        "unit_si": "K",
+        "symbol": r"$T$",
+        "ms_symbol": r"$T-\overline{T}$",
+        "modal_weight": "temperature",
+    },
+}
+
+
+def _fft_variable_meta(config_or_col):
+    """Return metadata for the configured FFT probe variable.
+
+    Parameters
+    ----------
+    config_or_col : dict or int
+        Either the full CONFIG dict (reads ``fft_var_col``) or an explicit
+        integer column index.
+
+    Returns
+    -------
+    dict
+        Metadata for the selected variable, including field key, display
+        name, units, and modal-analysis weight name.
+    """
+    if isinstance(config_or_col, dict):
+        var_col = int(config_or_col.get("fft_var_col", 3))
+    else:
+        var_col = int(config_or_col)
+    if var_col not in _PROBE_VARIABLES:
+        raise ValueError(
+            f"fft_var_col={var_col} is not supported; "
+            f"choose one of {sorted(_PROBE_VARIABLES)} "
+            "(1=density, 2=velocity, 3=pressure, 4=temperature)"
+        )
+    return _PROBE_VARIABLES[var_col]
+
+
+def _fft_var_slug(config_or_col):
+    """Return the short filename-safe slug for the selected variable."""
+    return _fft_variable_meta(config_or_col)["slug"]
 
 
 # ---------------------------------------------------------------------------
@@ -187,8 +280,8 @@ def _json_safe(value):
 
 def _package_version(name):
     try:
-        return importlib.metadata.version(name)
-    except importlib.metadata.PackageNotFoundError:
+        return importlib_metadata.version(name)
+    except importlib_metadata.PackageNotFoundError:
         return None
 
 
@@ -288,19 +381,21 @@ def _write_analysis_evidence_report(
         sources[label] = str(path.relative_to(output_root))
         return value
 
+    var_slug = _fft_var_slug(config)
     wave_report = read_json(
-        "stability", "StabilityDiagnostics/wave_analysis_report.json"
+        "stability", f"StabilityDiagnostics/wave_analysis_report_{var_slug}.json"
     )
     packet_report = read_json(
-        "transient", "TransientAnalysis/packet_propagation.json"
+        "transient", f"TransientAnalysis/packet_propagation_{var_slug}.json"
     )
     nonlinear_report = read_json(
-        "nonlinear", "NonlinearDiagnostics/nonlinear_significance.json"
+        "nonlinear", f"NonlinearDiagnostics/nonlinear_significance_{var_slug}.json"
     )
 
     modal_summary = None
     modal_path = (
-        output_root / "FFTProbes" / "ModalAnalysis" / "modal_results.npz"
+        output_root / "FFTProbes" / "ModalAnalysis"
+        / f"modal_results_{_fft_var_slug(config)}.npz"
     )
     if successful.get("fft_probes", False) and modal_path.is_file():
         with np.load(modal_path, allow_pickle=False) as archive:
@@ -416,8 +511,8 @@ CONFIG = {
     "make_surface_analysis": False,
     "make_group_plots": False,
 
-    "make_probe_plots": False,   # HDF5 is read directly; legacy binary may convert to ASCII
-    "make_fft_probes": False,       # FFT/coherence plus weighted POD/SPOD/DMD
+    "make_probe_plots": True,
+    "make_fft_probes": True,
     "make_pprime_contour": False,       # symmetric perturbation contours
     # Legacy workflow name; the enabled result is a measurement-first,
     # coherence-gated wave analysis and does not perform LST/PSE.
@@ -427,9 +522,7 @@ CONFIG = {
     # --- Contour plot settings ---
     # List of canonical field names to plot.  Any field present in the
     # dataset (including derived fields) can be used.
-    "contour_fields": [
-        "temperature", "vorticity"
-    ],
+    "contour_fields": ["temperature", "pressure", "vorticity"],
     "contour_cmap": "turbo",           # Perceptually uniform scalar-field map
     "contour_norm": "linear",               # Color scaling: "linear", "log", "symlog", or a matplotlib Normalize object
     # "auto" shortens the colorbar as the displayed streamwise span grows.
@@ -447,17 +540,20 @@ CONFIG = {
     "contour_cmaps": {
         "temperature": "magma",
         "vorticity": "RdBu_r",
+        "pressure": "turbo",
     },
     "contour_norms": {
-        "temperature": "log",
         "vorticity": "linear",
+        "temperature": "log",
+        "pressure": "linear",
     },
-    "contour_vlims": {                       # Per-field color limits [vmin, vmax]
-        "temperature": [0, 3000],         # [K]
-        "vorticity": [-100000, 100000],       # symmetric signed range [s^-1]
+    "contour_vlims": {
+        "vorticity": [-1.0e5, 1.0e5],
+        "temperature": [0, 4.0e3],
+        "pressure": [0, 5.0e3],
     },
-    "contour_xlim": [0, 0.05],           # full 0.4 m plate
-    "contour_ylim": None,                    # [ymin, ymax] or None for full domain
+    "contour_xlim": None,
+    "contour_ylim": None,
     # Time shown in figures. Flow-through time is t_FT = L_x / U_inf, where
     # L_x is the full AMReX domain length (independent of contour x-limits).
     "plot_time_mode": "physical",       # "flow_through" | "physical" | "reference"
@@ -616,7 +712,7 @@ CONFIG = {
             "minimum_welch_segments": 8,
         },
         "laser": {
-            "start_time_s": 0.005,
+            "start_time_s": 0.000,
             "frequency_hz": 10.0e6,
             "pulse_fwhm_s": 10.0e-9,
             "energy_per_pulse_j": 1.0e-3,
@@ -630,7 +726,7 @@ CONFIG = {
             # from centimetres to metres in the saved linkage product.
             "probe_bin_files": [],
             "probe_pressure_var_col": 3,
-            "probe_max_probes": None,
+            "probe_max_probes": 2000,
             "spectral_nperseg": 16384,
             "spectral_noverlap": 0.5,
         },
@@ -649,36 +745,38 @@ CONFIG = {
     },
 
     # --- Laser annotation (for time-series / animation) ---
-    "laser_start_time": 0.005,            # [s] time when laser turns on
+    "laser_start_time": 0.0,
+    # Individual probe station plots show the first 2 microseconds after
+    # laser turn-on; the all-probe overview remains full-record.
+    "probe_station_time_window_s": 0.2e-5,
 
     # --- Multiprocessing ---
     "use_multiprocessing": True,
-    "num_processes": 10,
+    "num_processes": 2,
 
     # --- Probe processing settings ---
     "probe_bin_files": [
-        # Restart segments from the current JK_MW run.  Do not include the
-        # older kernel-probe series: it used a different time-step history.
-        "../TS-Driver/John-Kernel-Tests/JK_MW/probes/"
-        "post-kernel-probe.segment*.pbin",
+        "../TS-Driver/Asym_Kernel_Tests/Asym_JW/probes/"
+        "kernel-probe.segment*.pbin",
     ],
     # Optional self-contained archive produced by compact_probes.py. When
     # configured, this takes precedence over .pbin and ASCII sources.
     "probe_compact_file": None,
-    "probe_output_dir": "../TS-Driver/FP-Extended-Domain/probes/flow-probe",
-    "probe_max": 2000,
+    "probe_output_dir": "../TS-Driver/Asym_Kernel_Tests/Asym_JW/probes",
+    "probe_max": 50,
     "probe_fields": ["rho", "u", "p", "T"],
     "probe_convert_to_mks": False,
 
     # --- FFT probe analysis settings ---
     "fft_use_binary": True,        # read probes directly from binary for FFT/stability
-    # These are relative to data_source and provide the ASCII fallback path;
-    # the binary path above is used for this run.
-    "probe_dir": "../probes",
-    "probe_prefix": "post-kernel-probe",
-    "fft_var_col": 3,
+    "probe_dir": "../TS-Driver/Asym_Kernel_Tests/Asym_JW/probes",
+    "probe_prefix": "kernel-probe",
+    # Probe column for FFT/stability/transient/modal/nonlinear analysis:
+    # 1=density, 2=streamwise velocity, 3=pressure, 4=temperature.
+    # Output filenames include a short slug for the selected variable.
+    "fft_var_col": 4,
     "fft_nt_skip": 0,
-    "fft_max_probes": None,
+    "fft_max_probes": 50,
     "probe_dedup_tol": 1e-12,
     # Restart segments can repeat their final/initial sample.  If a repeated
     # step was recomputed after restart, prefer the newer segment and retain
@@ -699,21 +797,105 @@ CONFIG = {
     "fft_window_compensation": True,  # Scale FFT amplitudes to preserve magnitude
     "fft_batch_size": 32,             # Probe columns per vectorized FFT batch
     "fft_plot_last_probe": False,
-    # Indices refer to the complete (finite for the full record) probes kept
-    # by the FFT worker.  They span the usable part of the diagonal line.
-    "fft_plot_probe_indices": [
-        0, 2, 5, 8, 10,
-    ],
-    # The full 2000-probe FFT contour is not needed for this demonstration
-    # and materially increases memory and plotting cost.
-    "fft_plot_contour": False,
+    # Five stations spanning the 50-probe source line.
+    "fft_plot_probe_indices": [0, 10, 20, 30, 40, 49],
+    "fft_plot_contour": True,
     # Bound the in-memory raster even when the full spectrum is disk-backed.
     "fft_contour_max_frequency_points": 4096,
     "fft_contour_max_probe_points": 1000,
-    "fft_contour_normalize": True,  # True can create bright artifacts where the reference probe has a node
+    "fft_contour_normalize": False,  # True can create bright artifacts where the reference probe has a node
     "fft_contour_ref_probe": 5,
     "fft_contour_scale": "linear",  # "linear" gives 0-to-max amplitude; "db" gives the legacy dB plot
-    "fft_contour_vmax": 400,  # None -> use the maximum plotted amplitude
+    "fft_contour_vmax": 500,  # None -> use the maximum plotted amplitude
+
+    # --- Single-pulse source spectrum and source-to-response transfer ---
+    # The source is the domain-integrated temporal deposition model. It is
+    # analytically exact for fixed-volume deposition and the uniform-density
+    # calibration reference for fixed-specific-energy deposition.
+    "make_source_response_analysis": True,
+    "source_response": {
+        "model": "single_gaussian",
+        "spatial_shape_label": "gaussian_kernel",
+        "energy_per_pulse": 100.0e2,       # [erg/cm] in this 2-D case
+        "energy_unit": "erg/cm",
+        "pulse_fwhm_s": 10.0e-9,
+        "pulse_period_s": 1.0e-7,
+        "start_time_s": 0.0,
+        "cutoff_sigma": 4.0,
+        # A single impulse has nonzero integral, so preserve the physical
+        # source history for transfer ratios. Probe mean subtraction removes
+        # the ambient-state baseline and remains controlled by fft_* above.
+        "transfer_source_mean_subtraction": "none",
+        # Direct ratios are masked when the processed source is this far below
+        # its peak, preventing division by its negligible high-frequency tail.
+        "minimum_relative_source_amplitude": 1.0e-3,
+        "plot_fmax_hz": 200.0e6,
+        "plot_probe_indices": [0, 10, 20, 30, 40, 49],
+    },
+    # --- Spatial FFT along the fixed y=2.5 cm probe aperture ---
+    # The transform is descriptive: it measures spatial energy and a
+    # response/source ratio, but does not identify an LST eigenmode.
+    "make_spatial_fft": True,
+    "spatial_fft": {
+        "model": "wang_kernel",
+        "center_x_cm": 2.5,
+        "center_y_cm": 2.5,
+        "radius_cm": 0.0384843,
+        "wang_length_cm": 0.184,
+        "wang_aspect_ratio": 3.23,
+        "wang_asymmetry": 1.24,
+        "mean_subtraction": "mean",
+        "window": "hann",
+        "window_compensation": True,
+        "zero_padding": 0,
+        "minimum_relative_source_amplitude": 1.0e-3,
+        "snapshot_indices": None,
+        "snapshot_times_s": None,
+        # None analyzes every available resampled probe time. Set an integer
+        # only when a reduced, evenly spaced snapshot set is desired.
+        "max_snapshots": None,
+        "wavenumber_colorbar_vmax": 50000.0,
+    },
+    "make_spatial_case_comparison": True,
+    "spatial_case_comparison": {
+        "baseline_label": "Gaus_JW",
+        "baseline_archive": (
+            "../TS-Driver/Asym_Kernel_Tests/Gaus_JW/Plots/Spatial-FFT/"
+            "spatial_spectral_summary_temperature.npz"
+        ),
+        "comparison_label": "Asym_JW",
+        "comparison_archive": (
+            "../TS-Driver/Asym_Kernel_Tests/Asym_JW/Plots/Spatial-FFT/"
+            "spatial_spectral_summary_temperature.npz"
+        ),
+    },
+    # --- Direct Gaussian-versus-Asym spectral comparison ---
+    # Gaus_JW is deliberately the reference in both the figure titles and
+    # Asym_JW/Gaus_JW ratio; station IDs are checked against physical x values.
+    # FFT filenames include the selected variable slug (e.g. _pressure below).
+    "make_case_spectrum_comparison": True,
+    "case_spectrum_comparison": {
+        "baseline_label": "Gaus_JW",
+        "baseline_source_response_archive": (
+            "../TS-Driver/Asym_Kernel_Tests/Gaus_JW/Plots/FFT-Probes/"
+            "source_response_spectrum_temperature.npz"
+        ),
+        "baseline_spectral_summary_archive": (
+            "../TS-Driver/Asym_Kernel_Tests/Gaus_JW/Plots/FFT-Probes/"
+            "spectral_summary_temperature.npz"
+        ),
+        "comparison_label": "Asym_JW",
+        "comparison_source_response_archive": (
+            "../TS-Driver/Asym_Kernel_Tests/Asym_JW/Plots/FFT-Probes/"
+            "source_response_spectrum_temperature.npz"
+        ),
+        "comparison_spectral_summary_archive": (
+            "../TS-Driver/Asym_Kernel_Tests/Asym_JW/Plots/FFT-Probes/"
+            "spectral_summary_temperature.npz"
+        ),
+        "probe_indices": [0, 10, 20, 30, 40, 49],
+        "plot_fmax_hz": 200.0e6,
+    },
 
     # --- FFT advanced analysis ---
     "fft_harmonic_freq": 10.0e6,
@@ -725,7 +907,7 @@ CONFIG = {
     "fft_growth_freqs": [5.0e6, 10.0e6, 30.0e6, 100.0e6, 200.0e6],
     # Stationary full-record growth curves are superseded here by the
     # coherence-gated local wavenumber fit and convecting-packet energy fit.
-    "fft_plot_growth_curves": False,
+    "fft_plot_growth_curves": True,
     # Welch coherence is evaluated on adjacent probe pairs near the selected
     # plotting stations. None builds [(i, i+1), ...] automatically.
     "make_coherence_analysis": True,
@@ -876,7 +1058,7 @@ CONFIG = {
     "transient_plot_probe_indices": [
         0, 249, 499, 749, 999, 1249, 1499, 1749, 1999,
     ],
-    "transient_make_fft_stft_comparison": True,
+    "transient_make_fft_stft_comparison": False,
     "transient_spectrogram_scale": "linear",
     # Linear PSD is nonnegative, matching the zero-based FFT-vs-x contour
     # convention. None selects the maximum of each plotted spectrogram.
@@ -971,7 +1153,7 @@ def run_validation_case(output_dir="validation_outputs"):
     ax.set_xlabel(r"$x$ [mm]")
     ax.set_ylabel(r"$c_p$ [m s$^{-1}$]")
     ax.set_title(r"Phase convention validation: $e^{i(\omega t-\alpha x)}$")
-    ax.grid(True, alpha=0.3)
+    ax.grid(False)
     ax.legend()
     fig.savefig(output_dir / "01_phase_speed_validation.png")
     plt.close(fig)
@@ -2192,7 +2374,7 @@ def _evaluate_force_baseline_drift(config, output_dir):
             (r"$D'$ [N/m]", r"$N'_{\mathrm{1s}}$ [N/m]", r"$M'_z$ [N]")):
         axis.plot(centered_time * 1.0e6, values, "o-")
         axis.set_ylabel(ylabel)
-        axis.grid(True, alpha=0.25)
+        axis.grid(False)
     axes[-1].set_xlabel("Laser-off continuation time [µs]")
     axes[0].set_title("Laser-off baseline drift")
     figure.tight_layout()
@@ -3513,10 +3695,7 @@ def _load_probe_data_from_chunked_binary(
         raise ValueError(
             "overlap_policy must be 'latest_segment' or 'error'"
         )
-    expected_names = ("rho", "u", "p", "T")
-    if not 1 <= int(var_col) <= len(expected_names):
-        raise ValueError("Chunked probe files support var_col values 1 through 4")
-    requested_name = expected_names[int(var_col) - 1]
+    requested_name = _fft_variable_meta(var_col)["field"]
 
     file_info = []
     reference = None
@@ -4116,6 +4295,10 @@ def _load_probe_timeseries(config, var_col, nt_skip=0, max_probes=None):
     """
     compact_file = config.get("probe_compact_file")
     if compact_file:
+        if not HDF5_PROBE_STORE_AVAILABLE:
+            raise ImportError(
+                "Compact HDF5 probe input requires the optional h5py package"
+            )
         compact_path = Path(compact_file).expanduser()
         if not compact_path.is_absolute():
             compact_path = Path(config.get("data_source", ".")) / compact_path
@@ -4123,11 +4306,7 @@ def _load_probe_timeseries(config, var_col, nt_skip=0, max_probes=None):
             raise FileNotFoundError(
                 f"Configured compact probe archive is missing: {compact_path}"
             )
-        field = {1: "rho", 2: "u", 3: "p", 4: "T"}.get(int(var_col))
-        if field is None:
-            raise ValueError(
-                "Compact probe archives support var_col values 1 through 4"
-            )
+        field = _fft_variable_meta(var_col)["field"]
         return HDF5ProbeStore(
             compact_path, field=field, nt_skip=nt_skip,
             max_probes=max_probes,
@@ -4380,7 +4559,8 @@ def _process_fft_probes(config, probe_data=None):
 
         probe_dir = config.get("probe_dir", "probes")
         probe_prefix = config.get("probe_prefix", "flow_probe")
-        var_col = config.get("fft_var_col", 4)
+        var_col = int(config.get("fft_var_col", 3))
+        var_meta = _fft_variable_meta(var_col)
         nt_skip = config.get("fft_nt_skip", 0)
         max_probes = config.get("fft_max_probes", None)
         resample = config.get("fft_resample", True)
@@ -4570,6 +4750,52 @@ def _process_fft_probes(config, probe_data=None):
                 P1[1:-1, first:last] *= 2.0
         _ts(f"  FFT complete — {n_freq} bins x {n_valid} probes")
 
+        source_response_result = None
+        if config.get("make_source_response_analysis", False):
+            source_cfg = config.get("source_response", {})
+            model = str(source_cfg.get("model", "single_gaussian")).lower()
+            if model != "single_gaussian":
+                raise ValueError(
+                    "source_response.model currently supports only "
+                    "'single_gaussian'"
+                )
+            source_result = fdb.compute_single_pulse_source_spectrum(
+                time_uniform,
+                energy_per_pulse=source_cfg["energy_per_pulse"],
+                pulse_fwhm_s=source_cfg["pulse_fwhm_s"],
+                pulse_period_s=source_cfg["pulse_period_s"],
+                start_time_s=source_cfg.get("start_time_s", 0.0),
+                cutoff_sigma=source_cfg.get("cutoff_sigma", 4.0),
+                mean_subtraction=source_cfg.get(
+                    "transfer_source_mean_subtraction", "none"
+                ),
+                window=config.get("fft_window", "hann"),
+                window_compensation=config.get(
+                    "fft_window_compensation", True
+                ),
+            )
+            if not np.allclose(source_result["frequency_hz"], freq):
+                raise RuntimeError(
+                    "Source and probe FFT frequency grids do not match"
+                )
+            response_complex = np.fft.rfft(signal_matrix, axis=0)
+            response_complex *= win_scale / L
+            transfer_result = fdb.compute_single_pulse_transfer_function(
+                source_result["processed_complex"], response_complex,
+                minimum_relative_source_amplitude=source_cfg.get(
+                    "minimum_relative_source_amplitude", 1.0e-3
+                ),
+            )
+            source_response_result = {
+                "source": source_result,
+                "transfer": transfer_result,
+                "config": source_cfg,
+            }
+            _ts(
+                "  Computed single-pulse source spectrum and direct "
+                "source-to-response transfer ratio"
+            )
+
         # Auto-detect dominant frequency from FFT spectrum (exclude DC)
         auto_detect = config.get("fft_auto_detect_harmonic_freq", True)
         if auto_detect:
@@ -4586,13 +4812,7 @@ def _process_fft_probes(config, probe_data=None):
                     f" (was {old_f:.3e} Hz)")
 
         # Human-readable label for the signal column
-        var_labels = {
-            1: "Density [g/cm^3]",
-            2: "u [cm/s]",
-            3: "Pressure [dyne/cm^2]",
-            4: "Temperature [K]",
-        }
-        ylabel_sig = var_labels.get(var_col, f"Signal (col {var_col})")
+        ylabel_sig = f"{var_meta['name']} [{var_meta['unit_cgs']}]"
 
         # Probe time-trace + FFT plots
         plot_indices = []
@@ -4630,8 +4850,9 @@ def _process_fft_probes(config, probe_data=None):
             P1[:, export_indices] if export_indices
             else np.empty((len(freq), 0), dtype=float)
         )
+        var_slug = var_meta["slug"]
         np.savez_compressed(
-            output_dir / "spectral_summary.npz",
+            output_dir / f"spectral_summary_{var_slug}.npz",
             frequency_hz=freq,
             probe_x_cm=np.asarray(probe_x, dtype=float),
             probe_y_cm=np.asarray(probe_y, dtype=float),
@@ -4649,8 +4870,92 @@ def _process_fft_probes(config, probe_data=None):
             dominant_frequency_hz=np.array(harmonic_freq),
             sample_interval_s=np.array(dt_actual),
             window_amplitude_scale=np.array(win_scale),
+            signal_name=np.array(var_meta["name"]),
+            signal_unit_cgs=np.array(var_meta["unit_cgs"]),
         )
-        _ts(f"  Saved reusable spectral data: {output_dir / 'spectral_summary.npz'}")
+        _ts(f"  Saved reusable spectral data: "
+            f"{output_dir / f'spectral_summary_{var_slug}.npz'}")
+
+        if source_response_result is not None:
+            source_result = source_response_result["source"]
+            transfer_result = source_response_result["transfer"]
+            source_cfg = source_response_result["config"]
+            requested = source_cfg.get("plot_probe_indices", export_indices)
+            transfer_indices = sorted(set(
+                max(0, min(int(index), n_valid - 1)) for index in requested
+            ))
+            transfer_labels = [
+                f"Probe {source_probe_indices[index]} "
+                f"(x={probe_x[index]:.4f} cm)"
+                for index in transfer_indices
+            ]
+            np.savez_compressed(
+                output_dir / f"source_response_spectrum_{var_slug}.npz",
+                time_s=source_result["time_s"],
+                source_power=source_result["power"],
+                source_processed_power=source_result["processed_power"],
+                frequency_hz=freq,
+                source_physical_spectrum=source_result["physical_spectrum"],
+                source_ideal_spectrum=source_result["ideal_spectrum"],
+                source_processed_amplitude=source_result["processed_amplitude"],
+                source_sigma_s=np.array(source_result["sigma_s"]),
+                source_center_s=np.array(source_result["center_s"]),
+                source_energy_per_pulse=np.array(
+                    source_cfg["energy_per_pulse"]
+                ),
+                source_energy_unit=np.array(
+                    source_cfg.get("energy_unit", "energy/depth")
+                ),
+                source_spatial_shape_label=np.array(
+                    source_cfg.get("spatial_shape_label", "unspecified")
+                ),
+                transfer_complex=transfer_result["transfer"],
+                transfer_magnitude=transfer_result["magnitude"],
+                transfer_phase_rad=transfer_result["phase_rad"],
+                valid_transfer_frequency=transfer_result["valid_frequency"],
+                transfer_probe_indices=np.asarray(transfer_indices, dtype=int),
+                transfer_source_probe_indices=source_probe_indices[
+                    transfer_indices
+                ],
+                transfer_probe_x_cm=np.asarray(probe_x)[transfer_indices],
+                transfer_minimum_source_amplitude=np.array(
+                    transfer_result["minimum_source_amplitude"]
+                ),
+                signal_name=np.array(var_meta["name"]),
+                signal_unit_cgs=np.array(var_meta["unit_cgs"]),
+            )
+            source_fmax = source_cfg.get("plot_fmax_hz")
+            pdb.plot_single_pulse_source_spectrum(
+                source_result,
+                output_path=str(
+                    output_dir / f"single_pulse_source_spectrum_{var_slug}.png"
+                ),
+                fmax=source_fmax,
+                energy_unit=source_cfg.get("energy_unit", "energy/depth"),
+            )
+            pdb.plot_normalized_source_response_spectra(
+                freq, source_result["processed_amplitude"],
+                P1[:, transfer_indices], transfer_labels,
+                output_path=str(
+                    output_dir
+                    / f"normalized_source_response_spectra_{var_slug}.png"
+                ),
+                fmax=source_fmax,
+            )
+            pdb.plot_single_pulse_transfer_functions(
+                freq, transfer_result["magnitude"][:, transfer_indices],
+                transfer_result["phase_rad"][:, transfer_indices],
+                transfer_result["valid_frequency"], transfer_labels,
+                output_path=str(
+                    output_dir
+                    / f"single_pulse_transfer_function_{var_slug}.png"
+                ),
+                fmax=source_fmax,
+            )
+            _ts(
+                "  Saved source spectrum and source-to-response transfer "
+                "products"
+            )
 
         if config.get("make_coherence_analysis", False) and export_indices:
             configured_pairs = config.get("coherence_probe_pairs")
@@ -4690,7 +4995,7 @@ def _process_fft_probes(config, probe_data=None):
                     item["result"]["cross_phase_rad"] for item in pair_results
                 ])
                 np.savez_compressed(
-                    output_dir / "pair_coherence.npz",
+                    output_dir / f"pair_coherence_{var_slug}.npz",
                     frequency_hz=pair_results[0]["result"]["frequency_hz"],
                     probe_pairs=np.asarray([
                         item["indices"] for item in pair_results
@@ -4699,10 +5004,14 @@ def _process_fft_probes(config, probe_data=None):
                     cross_phase_rad=phase_values,
                     nperseg=np.array(pair_results[0]["result"]["nperseg"]),
                     noverlap=np.array(pair_results[0]["result"]["noverlap"]),
+                    signal_name=np.array(var_meta["name"]),
+                    signal_unit_cgs=np.array(var_meta["unit_cgs"]),
                 )
                 pdb.plot_pair_coherence(
                     pair_results,
-                    output_path=str(output_dir / "pair_coherence.png"),
+                    output_path=str(
+                        output_dir / f"pair_coherence_{var_slug}.png"
+                    ),
                     fmax=config.get("coherence_fmax"),
                 )
                 _ts(f"  Saved Welch coherence for {len(pair_results)} probe pairs")
@@ -4728,7 +5037,7 @@ def _process_fft_probes(config, probe_data=None):
             # Give modal algorithms that explicit uniform coordinate rather
             # than pretending the ppm-level native clock jitter is exact.
             modal_time = time_uniform[0] + np.arange(L, dtype=float) * dt_actual
-            modal_variable = var_labels.get(var_col, f"column_{var_col}")
+            modal_variable = var_meta["modal_weight"]
             modal_weight_info = {
                 "weights": mdb.trapezoidal_spatial_weights(coordinates_m),
                 "quadrature_weights": mdb.trapezoidal_spatial_weights(
@@ -4793,7 +5102,7 @@ def _process_fft_probes(config, probe_data=None):
             modal_dir = output_dir / "ModalAnalysis"
             modal_dir.mkdir(parents=True, exist_ok=True)
             np.savez_compressed(
-                modal_dir / "modal_results.npz",
+                modal_dir / f"modal_results_{var_slug}.npz",
                 probe_indices=np.asarray(modal_indices, dtype=int),
                 source_probe_indices=source_probe_indices[modal_indices],
                 coordinates_m=coordinates_m,
@@ -4832,7 +5141,7 @@ def _process_fft_probes(config, probe_data=None):
             )
             pdb.plot_modal_summary(
                 pod_result, spod_result, dmd_result,
-                output_path=str(modal_dir / "modal_summary.png"),
+                output_path=str(modal_dir / f"modal_summary_{var_slug}.png"),
             )
             _ts(
                 f"  Saved POD/SPOD/DMD screening for {len(modal_indices)} probes"
@@ -4859,20 +5168,20 @@ def _process_fft_probes(config, probe_data=None):
                 axes[row, 0].set_ylabel(ylabel_sig, fontsize=10)
                 source_idx = int(source_probe_indices[idx])
                 axes[row, 0].set_title(f"Probe {source_idx} — x={p['x']:.3f} cm — Raw", fontsize=11)
-                axes[row, 0].grid(True, alpha=0.4)
+                axes[row, 0].grid(False)
                 # Processed time-trace
                 axes[row, 1].plot(plot_time, proc_sig, lw=0.8, color="C1")
                 axes[row, 1].set_xlabel("Time [s]", fontsize=10)
                 axes[row, 1].set_ylabel(ylabel_sig, fontsize=10)
                 axes[row, 1].set_title(f"Probe {source_idx} — x={p['x']:.3f} cm — Processed (mean-sub, Hann)", fontsize=11)
-                axes[row, 1].grid(True, alpha=0.4)
+                axes[row, 1].grid(False)
                 # FFT spectrum
                 axes[row, 2].loglog(freq, P1[:, idx], lw=0.8)
                 axes[row, 2].set_xlabel("Frequency [Hz]", fontsize=10)
                 axes[row, 2].set_ylabel("|Amplitude|", fontsize=10)
-                axes[row, 2].grid(True, which="both", ls=":", alpha=0.3)
+                axes[row, 2].grid(False)
             fig.tight_layout()
-            out = output_dir / f"{probe_prefix}_fft_probes.png"
+            out = output_dir / f"{probe_prefix}_{var_slug}_fft_probes.png"
             fig.savefig(str(out), dpi=150)
             plt.close(fig)
             _ts(f"  Saved {len(pos_indices)} probe FFT plots: {out}")
@@ -4945,7 +5254,7 @@ def _process_fft_probes(config, probe_data=None):
                     ax.set_ylabel("Frequency [Hz]", fontsize=12)
                     ax.set_yscale("log")
                     fig.tight_layout()
-                    out = output_dir / f"{probe_prefix}_freq_vs_x_contour.png"
+                    out = output_dir / f"{probe_prefix}_{var_slug}_freq_vs_x_contour.png"
                     fig.savefig(str(out), dpi=150)
                     plt.close(fig)
                     _ts(f"  Saved freq-vs-position contour: {out}")
@@ -4974,9 +5283,9 @@ def _process_fft_probes(config, probe_data=None):
                 ax.set_ylabel("Harmonic Amplitude", fontsize=12)
                 ax.set_title(f"Harmonic amplitudes vs position (f0 = {harmonic_freq:.3e} Hz)", fontsize=13)
                 ax.legend(loc="best", fontsize=9)
-                ax.grid(True, alpha=0.3)
+                ax.grid(False)
                 fig.tight_layout()
-                out = output_dir / f"{probe_prefix}_harmonics_vs_x.png"
+                out = output_dir / f"{probe_prefix}_{var_slug}_harmonics_vs_x.png"
                 fig.savefig(str(out), dpi=150)
                 plt.close(fig)
                 _ts(f"  Saved harmonic amplitudes plot: {out}")
@@ -5000,9 +5309,9 @@ def _process_fft_probes(config, probe_data=None):
                 ax.set_xlabel("Probe X position [cm]", fontsize=12)
                 ax.set_ylabel("Spectral slope (log-log fit)", fontsize=12)
                 ax.set_title(f"Spectral slope vs probe position", fontsize=13)
-                ax.grid(True, alpha=0.3)
+                ax.grid(False)
                 fig.tight_layout()
-                out = output_dir / f"{probe_prefix}_spectral_slope_vs_x.png"
+                out = output_dir / f"{probe_prefix}_{var_slug}_spectral_slope_vs_x.png"
                 fig.savefig(str(out), dpi=150)
                 plt.close(fig)
                 _ts(f"  Saved spectral slope plot: {out}")
@@ -5025,9 +5334,9 @@ def _process_fft_probes(config, probe_data=None):
                 ax.set_ylabel("Amplitude", fontsize=12)
                 ax.set_title("Amplitude growth curves vs probe position", fontsize=13)
                 ax.legend(loc="best", fontsize=8)
-                ax.grid(True, alpha=0.3)
+                ax.grid(False)
                 fig.tight_layout()
-                out = output_dir / f"{probe_prefix}_growth_curves.png"
+                out = output_dir / f"{probe_prefix}_{var_slug}_growth_curves.png"
                 fig.savefig(str(out), dpi=150)
                 plt.close(fig)
                 _ts(f"  Saved growth curves plot: {out}")
@@ -5637,7 +5946,10 @@ def _process_stability_diagnostics(config, probe_data=None):
         del baseline_ds, surfaces
 
         # Probe loading + FFT
-        var_col = config.get("fft_var_col", 4)
+        var_col = int(config.get("fft_var_col", 3))
+        var_meta = _fft_variable_meta(var_col)
+        var_slug = var_meta["slug"]
+        signal_name = var_meta["name"].lower()
         nt_skip = config.get("fft_nt_skip", 0)
 
         if probe_data is None:
@@ -6023,7 +6335,7 @@ def _process_stability_diagnostics(config, probe_data=None):
         }
 
         np.savez_compressed(
-            output_dir / "stability_summary.npz",
+            output_dir / f"stability_summary_{var_slug}.npz",
             target_frequency_hz=np.array(target_freq),
             actual_fft_frequency_hz=np.array(actual_target_freq),
             estimate_x_m=np.asarray(freq_data.get("x", [])),
@@ -6236,7 +6548,7 @@ def _process_stability_diagnostics(config, probe_data=None):
             report = {
                 "analysis": "frequency_resolved_complex_wavenumber",
                 "interpretation": (
-                    "Dominant coherent wave measured from the wall-pressure "
+                    f"Dominant coherent wave measured from the wall {signal_name} "
                     "probe line. Acoustic candidate labels are not F/S LST "
                     "eigenmode identifications."
                 ),
@@ -6302,8 +6614,8 @@ def _process_stability_diagnostics(config, probe_data=None):
                     "phase_speed_bounds_m_per_s": speed_bounds,
                 },
             }
-            report_path = output_dir / "wave_analysis_report.json"
-            report_temporary = output_dir / ".wave_analysis_report.json.tmp"
+            report_path = output_dir / f"wave_analysis_report_{var_slug}.json"
+            report_temporary = output_dir / f".wave_analysis_report_{var_slug}.json.tmp"
             with report_temporary.open("w", encoding="utf-8") as stream:
                 json.dump(report, stream, indent=2, sort_keys=True)
                 stream.write("\n")
@@ -6400,15 +6712,15 @@ def _process_stability_diagnostics(config, probe_data=None):
             os.replace(temporary_path, report_path)
 
         _ts("  [SD] Generating stability summary plot ...")
-        out_path = output_dir / "stability_summary.png"
+        out_path = output_dir / f"stability_summary_{var_slug}.png"
         pdb.plot_stability_summary(plot_data, output_path=str(out_path))
 
         if wave_data:
-            wave_path = output_dir / "wavenumber_summary.png"
+            wave_path = output_dir / f"wavenumber_summary_{var_slug}.png"
             pdb.plot_wavenumber_summary(
                 wave_data, output_path=str(wave_path)
             )
-            dispersion_path = output_dir / "phase_speed_dispersion.png"
+            dispersion_path = output_dir / f"phase_speed_dispersion_{var_slug}.png"
             pdb.plot_phase_speed_dispersion(
                 wave_data, output_path=str(dispersion_path)
             )
@@ -6428,7 +6740,7 @@ def _process_stability_diagnostics(config, probe_data=None):
             _ts(f"  [SD] Saved probe-derived amplification: {amplification_map}")
 
         if len(gpi_results) > 0:
-            gip_out = output_dir / "gip_diagnostics.png"
+            gip_out = output_dir / f"gip_diagnostics_{var_slug}.png"
             pdb.plot_gip_diagnostics(
                 bl_profiles, gpi_results, output_path=str(gip_out),
                 streamwise_results=all_gip_results,
@@ -6458,7 +6770,9 @@ def _process_transient_analysis(config, probe_data=None):
         output_dir.mkdir(parents=True, exist_ok=True)
         label = "transient"
 
-        var_col = config.get("fft_var_col", 4)
+        var_col = int(config.get("fft_var_col", 3))
+        var_meta = _fft_variable_meta(var_col)
+        var_slug = var_meta["slug"]
         nt_skip = config.get("fft_nt_skip", 0)
         max_probes = config.get("fft_max_probes", None)
         band = config.get("transient_band", [5.0e6, 50.0e6])
@@ -6518,7 +6832,7 @@ def _process_transient_analysis(config, probe_data=None):
             # STFT spectrogram
             try:
                 noverlap = int(noverlap_frac * nperseg)
-                out_stft = output_dir / f"spectrogram_probe{idx:03d}.png"
+                out_stft = output_dir / f"spectrogram_{var_slug}_probe{idx:03d}.png"
                 pdb.plot_spectrogram(
                     time_uniform, sig_ms, fs,
                     output_path=str(out_stft),
@@ -6538,14 +6852,8 @@ def _process_transient_analysis(config, probe_data=None):
                 try:
                     comparison_output = (
                         output_dir
-                        / f"fft_stft_comparison_probe{idx:03d}.png"
+                        / f"fft_stft_comparison_{var_slug}_probe{idx:03d}.png"
                     )
-                    signal_labels = {
-                        1: r"$\rho-\overline{\rho}$",
-                        2: r"$u-\overline{u}$",
-                        3: r"$p-\overline{p}$",
-                        4: r"$T-\overline{T}$",
-                    }
                     pdb.plot_fft_stft_comparison(
                         time_uniform, sig, fs,
                         output_path=str(comparison_output),
@@ -6554,9 +6862,7 @@ def _process_transient_analysis(config, probe_data=None):
                             f"Probe {idx} — x={p['x']:.3f} cm: "
                             "mean-subtracted history, FFT, and STFT"
                         ),
-                        signal_label=signal_labels.get(
-                            var_col, "Mean-subtracted signal"
-                        ),
+                        signal_label=var_meta["ms_symbol"],
                         nperseg=nperseg,
                         noverlap=noverlap,
                         spectrogram_scale=spectrogram_scale,
@@ -6624,7 +6930,9 @@ def _process_transient_analysis(config, probe_data=None):
             try:
                 pdb.plot_envelope_growth(
                     packet_x, packet_stats_list,
-                    output_path=str(output_dir / "envelope_growth_vs_x.png"),
+                    output_path=str(
+                        output_dir / f"envelope_growth_vs_x_{var_slug}.png"
+                    ),
                 )
                 _ts("  [TA] Saved envelope growth vs x")
             except Exception as exc:
@@ -6635,9 +6943,11 @@ def _process_transient_analysis(config, probe_data=None):
             "half_width_half_max", "integrated_energy",
         )
         np.savez_compressed(
-            output_dir / "packet_statistics.npz",
+            output_dir / f"packet_statistics_{var_slug}.npz",
             probe_indices=np.asarray(packet_indices, dtype=int),
             probe_x_cm=np.asarray(packet_x, dtype=float),
+            signal_name=np.array(var_meta["name"]),
+            signal_unit_cgs=np.array(var_meta["unit_cgs"]),
             **{
                 key: np.asarray([
                     np.nan if item.get(key) is None else item.get(key, np.nan)
@@ -6646,7 +6956,8 @@ def _process_transient_analysis(config, probe_data=None):
                 for key in stat_keys
             },
         )
-        _ts(f"  [TA] Saved packet statistics: {output_dir / 'packet_statistics.npz'}")
+        _ts(f"  [TA] Saved packet statistics: "
+            f"{output_dir / f'packet_statistics_{var_slug}.npz'}")
 
         propagation = None
         if packet_envelopes:
@@ -6685,7 +6996,7 @@ def _process_transient_analysis(config, probe_data=None):
                     "baseline_source": "not_evaluated",
                 }
             np.savez_compressed(
-                output_dir / "packet_propagation.npz",
+                output_dir / f"packet_propagation_{var_slug}.npz",
                 **{
                     key: value for key, value in propagation.items()
                     if not isinstance(value, str) and value is not None
@@ -6698,12 +7009,14 @@ def _process_transient_analysis(config, probe_data=None):
                 filtering=np.array(
                     "fourth-order zero-phase Butterworth bandpass"
                 ),
+                signal_name=np.array(var_meta["name"]),
+                signal_unit_cgs=np.array(var_meta["unit_cgs"]),
             )
             if propagation["status"] == "complete":
                 pdb.plot_packet_propagation(
                     propagation,
                     output_path=str(
-                        output_dir / "packet_propagation.png"
+                        output_dir / f"packet_propagation_{var_slug}.png"
                     ),
                 )
             propagation_report = {
@@ -6716,9 +7029,11 @@ def _process_transient_analysis(config, probe_data=None):
                     "Band-limited packet kinematics; not an LST group-"
                     "velocity calculation"
                 ),
+                "signal_name": var_meta["name"],
+                "signal_unit_cgs": var_meta["unit_cgs"],
             })
-            report_path = output_dir / "packet_propagation.json"
-            temporary = output_dir / ".packet_propagation.json.tmp"
+            report_path = output_dir / f"packet_propagation_{var_slug}.json"
+            temporary = output_dir / f".packet_propagation_{var_slug}.json.tmp"
             with temporary.open("w", encoding="utf-8") as stream:
                 json.dump(propagation_report, stream, indent=2, sort_keys=True)
                 stream.write("\n")
@@ -6748,7 +7063,9 @@ def _process_nonlinear_diagnostics(config, probe_data=None):
         output_dir.mkdir(parents=True, exist_ok=True)
         label = "nonlinear"
 
-        var_col = config.get("fft_var_col", 4)
+        var_col = int(config.get("fft_var_col", 3))
+        var_meta = _fft_variable_meta(var_col)
+        var_slug = var_meta["slug"]
         nt_skip = config.get("fft_nt_skip", 0)
         max_probes = config.get("fft_max_probes", None)
         nperseg = config.get("nonlinear_nperseg", 256)
@@ -6923,19 +7240,20 @@ def _process_nonlinear_diagnostics(config, probe_data=None):
                     "candidate downstream mode-mode coupling."
                 ),
             }
-            temporary = output_dir / ".nonlinear_significance.json.tmp"
+            temporary = output_dir / f".nonlinear_significance_{var_slug}.json.tmp"
             with temporary.open("w", encoding="utf-8") as stream:
                 json.dump(
                     significance_report, stream, indent=2, sort_keys=True
                 )
                 stream.write("\n")
             os.replace(
-                temporary, output_dir / "nonlinear_significance.json"
+                temporary,
+                output_dir / f"nonlinear_significance_{var_slug}.json",
             )
             if completed:
                 labels = completed[0]["result"]["triad_labels"]
                 np.savez_compressed(
-                    output_dir / "nonlinear_significance.npz",
+                    output_dir / f"nonlinear_significance_{var_slug}.npz",
                     probe_indices=np.asarray([
                         item["probe_index"] for item in completed
                     ], dtype=int),
@@ -6968,6 +7286,8 @@ def _process_nonlinear_diagnostics(config, probe_data=None):
                         item["result"]["laser_harmonic_related"]
                         for item in completed
                     ]),
+                    signal_name=np.array(var_meta["name"]),
+                    signal_unit_cgs=np.array(var_meta["unit_cgs"]),
                 )
 
         # Triad bicoherence vs x for all probes
@@ -7004,7 +7324,9 @@ def _process_nonlinear_diagnostics(config, probe_data=None):
                 triad_sorted = [triad_all[i] for i in sort_idx]
                 pdb.plot_bicoherence_vs_x(
                     x_sorted, triad_sorted,
-                    output_path=str(output_dir / "bicoherence_vs_x.png"),
+                    output_path=str(
+                        output_dir / f"bicoherence_vs_x_{var_slug}.png"
+                    ),
                     reference_threshold=config.get(
                         "nonlinear_reference_threshold"
                     ),
@@ -7020,12 +7342,14 @@ def _process_nonlinear_diagnostics(config, probe_data=None):
                         if key in item:
                             triad_values[row, col] = item[key]
                 np.savez_compressed(
-                    output_dir / "triad_bicoherence.npz",
+                    output_dir / f"triad_bicoherence_{var_slug}.npz",
                     probe_x_cm=x_sorted,
                     triad_labels=np.asarray(triad_labels),
                     bicoherence_squared=triad_values,
                     nperseg=np.array(nperseg),
                     noverlap=np.array(noverlap),
+                    signal_name=np.array(var_meta["name"]),
+                    signal_unit_cgs=np.array(var_meta["unit_cgs"]),
                 )
                 _ts("  [NL] Saved bicoherence vs x")
         except Exception as exc:
@@ -7060,6 +7384,429 @@ def _print_results(results, desc):
     for r in results:
         if not r[1]:
             _ts(f"  ✗ [FAIL] {r[0]}: {r[2]}")
+
+
+def _process_spatial_fft_probes(config, probe_data=None):
+    """Measure spatial response spectra along the fixed probe aperture."""
+    label = "spatial_fft"
+    try:
+        output_dir = Path(config["output_dir"]) / "Spatial-FFT"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        spatial_cfg = config.get("spatial_fft", {})
+        var_col = int(config.get("fft_var_col", 3))
+        var_meta = _fft_variable_meta(var_col)
+        var_slug = var_meta["slug"]
+        signal_name = var_meta["name"].lower()
+        if probe_data is None:
+            probe_data = _load_probe_timeseries(
+                config, var_col,
+                nt_skip=config.get("fft_nt_skip", 0),
+                max_probes=config.get("fft_max_probes", None),
+            )
+        if not probe_data:
+            return (label, False, "No probe data could be loaded")
+
+        time_s, signal_matrix, dt_use, _ = _probe_matrix_on_common_time(
+            probe_data,
+            resample=config.get("fft_resample", True),
+            target_dt=config.get("fft_target_dt"),
+        )
+        if isinstance(probe_data, HDF5ProbeStore):
+            probe_x_cm = np.asarray(probe_data.x, dtype=float)
+            probe_y_cm = np.asarray(probe_data.y, dtype=float)
+        else:
+            probe_x_cm = np.asarray([item["x"] for item in probe_data], dtype=float)
+            probe_y_cm = np.asarray([item["y"] for item in probe_data], dtype=float)
+        complete = np.all(np.isfinite(signal_matrix), axis=0)
+        if np.count_nonzero(complete) < 4:
+            raise ValueError("Spatial FFT requires at least four complete probes")
+        signal_matrix = np.asarray(signal_matrix[:, complete], dtype=float)
+        probe_x_cm = probe_x_cm[complete]
+        probe_y_cm = probe_y_cm[complete]
+        order = np.argsort(probe_x_cm)
+        signal_matrix = signal_matrix[:, order]
+        probe_x_cm = probe_x_cm[order]
+        probe_y_cm = probe_y_cm[order]
+
+        configured_indices = spatial_cfg.get("snapshot_indices")
+        configured_times = spatial_cfg.get("snapshot_times_s")
+        if configured_indices is not None:
+            snapshot_indices = np.asarray(configured_indices, dtype=int).ravel()
+            snapshot_indices = snapshot_indices[
+                (snapshot_indices >= 0) & (snapshot_indices < len(time_s))
+            ]
+        elif configured_times is not None:
+            snapshot_indices = np.unique([
+                int(np.argmin(np.abs(time_s - float(value))))
+                for value in configured_times
+            ])
+        else:
+            maximum = spatial_cfg.get("max_snapshots")
+            if maximum is None:
+                snapshot_indices = np.arange(len(time_s), dtype=int)
+            else:
+                maximum = max(1, int(maximum))
+                snapshot_indices = np.unique(np.linspace(
+                    0, len(time_s) - 1, min(maximum, len(time_s)), dtype=int
+                ))
+        if snapshot_indices.size == 0:
+            raise ValueError("No valid spatial FFT snapshots were selected")
+
+        x_m = probe_x_cm * 1.0e-2
+        y_m = probe_y_cm * 1.0e-2
+        selected_signals = signal_matrix[snapshot_indices, :]
+        fft_kwargs = {
+            "mean_subtraction": spatial_cfg.get("mean_subtraction", "mean"),
+            "window": spatial_cfg.get("window", "hann"),
+            "window_compensation": spatial_cfg.get("window_compensation", True),
+            "zero_padding": int(spatial_cfg.get("zero_padding", 0)),
+        }
+        response = fdb.compute_spatial_fft(selected_signals, x_m, **fft_kwargs)
+        model = str(spatial_cfg.get("model", "wang_kernel")).lower()
+        source_kwargs = {
+            "mean_subtraction": fft_kwargs["mean_subtraction"],
+            "window": fft_kwargs["window"],
+            "window_compensation": fft_kwargs["window_compensation"],
+            "zero_padding": fft_kwargs["zero_padding"],
+            "center_x_m": 1.0e-2 * float(spatial_cfg.get("center_x_cm", 2.5)),
+            "center_y_m": 1.0e-2 * float(spatial_cfg.get("center_y_cm", 2.5)),
+        }
+        if model == "gaussian":
+            source_kwargs["radius_m"] = 1.0e-2 * float(
+                spatial_cfg["radius_cm"]
+            )
+        else:
+            source_kwargs["wang_parameters"] = {
+                "length_m": 1.0e-2 * float(spatial_cfg["wang_length_cm"]),
+                "aspect_ratio": float(spatial_cfg["wang_aspect_ratio"]),
+                "asymmetry": float(spatial_cfg["wang_asymmetry"]),
+            }
+        source = fdb.compute_spatial_source_spectrum(
+            x_m, y_m, model=model, **source_kwargs
+        )
+        if not np.allclose(
+                response["wavenumber_rad_per_m"],
+                source["wavenumber_rad_per_m"],
+                rtol=1.0e-10, atol=1.0e-8):
+            raise RuntimeError("Spatial source and response grids do not match")
+        transfer = fdb.compute_spatial_transfer_function(
+            source["complex_spectrum"][0], response["complex_spectrum"],
+            minimum_relative_source_amplitude=float(
+                spatial_cfg.get("minimum_relative_source_amplitude", 1.0e-3)
+            ),
+        )
+        summary = {
+            "wavenumber_rad_per_m": response["wavenumber_rad_per_m"],
+            "probe_x_m": response["probe_x_m"],
+            "probe_y_m": y_m[order],
+            "source_profile": source["profile"],
+            "source_spatial_integral_m2": np.array(
+                source["spatial_integral_m2"]
+            ),
+            "source_profile_units": np.array("m^-2"),
+            "source_complex": source["complex_spectrum"][0],
+            "source_amplitude": source["amplitude"][0],
+            "response_complex": response["complex_spectrum"],
+            "response_amplitude": response["amplitude"],
+            "response_signal_name": np.array(signal_name),
+            "response_signal_unit_cgs": np.array(var_meta["unit_cgs"]),
+            "transfer_magnitude": transfer["magnitude"],
+            "transfer_phase_rad": transfer["phase_rad"],
+            "valid_wavenumber": transfer["valid_wavenumber"],
+            "snapshot_time_s": time_s[snapshot_indices],
+            "snapshot_indices": snapshot_indices,
+            "sample_interval_s": np.array(dt_use),
+            "dx_m": np.array(response["dx_m"]),
+            "physical_aperture_m": np.array(response["physical_aperture_m"]),
+            "zero_padding": np.array(response["zero_padding"]),
+            "wavenumber_colorbar_vmax": np.array(
+                spatial_cfg.get("wavenumber_colorbar_vmax", np.nan)
+            ),
+            "source_model": np.array(model),
+            "transform_convention": np.array(response["transform_convention"]),
+        }
+        np.savez_compressed(
+            output_dir / f"spatial_spectral_summary_{var_slug}.npz", **summary
+        )
+        source_plot_data = dict(source)
+        pdb.plot_spatial_source_spectrum(
+            source_plot_data,
+            output_path=str(
+                output_dir / f"spatial_source_spectrum_{var_slug}.png"
+            ),
+        )
+        pdb.plot_spatial_response_spectrum(
+            summary,
+            output_path=str(
+                output_dir / f"spatial_response_spectrum_{var_slug}.png"
+            ),
+        )
+        fft_probe_output_dir = Path(config["output_dir"]) / "FFT-Probes"
+        fft_probe_output_dir.mkdir(parents=True, exist_ok=True)
+        probe_prefix = config.get("probe_prefix", "kernel-probe")
+        pdb.plot_wavenumber_time_contour(
+            summary,
+            output_path=str(
+                fft_probe_output_dir
+                / f"{probe_prefix}_{var_slug}_wavenumber_vs_time_contour.png"
+            ),
+        )
+        pdb.plot_spatial_transfer_function(
+            summary,
+            output_path=str(
+                output_dir / f"spatial_transfer_wavenumber_{var_slug}.png"
+            ),
+        )
+        _ts(
+            f"  Spatial FFT: {len(snapshot_indices)} snapshots x "
+            f"{len(probe_x_cm)} probes; aperture={response['physical_aperture_m']:.6e} m"
+        )
+        return (label, True, None)
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return (label, False, str(exc))
+
+
+def _process_spatial_case_comparison(config):
+    """Compare saved spatial source/response spectra for two cases."""
+    label = "spatial_case_comparison"
+    try:
+        comparison_cfg = config.get("spatial_case_comparison", {})
+        root = Path(__file__).resolve().parent
+
+        def archive_path(key):
+            path = Path(comparison_cfg[key]).expanduser()
+            return path if path.is_absolute() else root / path
+
+        paths = {
+            "baseline": archive_path("baseline_archive"),
+            "comparison": archive_path("comparison_archive"),
+        }
+        loaded = {}
+        for name, path in paths.items():
+            if not path.is_file():
+                raise FileNotFoundError(f"Spatial comparison archive not found: {path}")
+            loaded[name] = np.load(path)
+        try:
+            baseline = loaded["baseline"]
+            comparison = loaded["comparison"]
+            required = {
+                "wavenumber_rad_per_m", "probe_x_m", "source_amplitude",
+                "response_amplitude",
+            }
+            for name, archive in loaded.items():
+                missing = required - set(archive.files)
+                if missing:
+                    raise ValueError(f"{name} spatial archive missing {sorted(missing)}")
+            frequency = np.asarray(baseline["wavenumber_rad_per_m"], dtype=float)
+            if (not np.allclose(frequency, comparison["wavenumber_rad_per_m"],
+                                rtol=1.0e-10, atol=1.0e-8)
+                    or not np.allclose(baseline["probe_x_m"], comparison["probe_x_m"],
+                                       rtol=1.0e-10, atol=1.0e-12)):
+                raise ValueError("Spatial case coordinates or wavenumber grids do not match")
+            baseline_response = np.nanmean(np.asarray(baseline["response_amplitude"]), axis=0)
+            comparison_response = np.nanmean(np.asarray(comparison["response_amplitude"]), axis=0)
+            response_signal_name = "selected probe signal"
+            if "response_signal_name" in baseline.files:
+                response_signal_name = str(
+                    np.asarray(baseline["response_signal_name"]).item()
+                )
+            if ("response_signal_name" in baseline.files
+                    and "response_signal_name" in comparison.files
+                    and response_signal_name != str(
+                        np.asarray(comparison["response_signal_name"]).item()
+                    )):
+                raise ValueError("Spatial comparison probe variables do not match")
+            plot_data = {
+                "wavenumber_rad_per_m": frequency,
+                "baseline_source_amplitude": np.asarray(baseline["source_amplitude"]),
+                "comparison_source_amplitude": np.asarray(comparison["source_amplitude"]),
+                "baseline_response_amplitude": baseline_response,
+                "comparison_response_amplitude": comparison_response,
+                "response_signal_name": response_signal_name,
+                "baseline_snapshot_count": np.asarray(
+                    baseline["response_amplitude"]
+                ).shape[0],
+                "comparison_snapshot_count": np.asarray(
+                    comparison["response_amplitude"]
+                ).shape[0],
+                "baseline_label": str(comparison_cfg.get("baseline_label", "baseline")),
+                "comparison_label": str(comparison_cfg.get("comparison_label", "comparison")),
+            }
+        finally:
+            for archive in loaded.values():
+                archive.close()
+        output_dir = Path(config["output_dir"]) / "SpatialCaseComparison"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        ratio = comparison_response / np.maximum(baseline_response, np.finfo(float).tiny)
+        np.savez_compressed(
+            output_dir / "spatial_case_comparison.npz",
+            **plot_data,
+            comparison_to_baseline_response_ratio=ratio,
+        )
+        pdb.plot_spatial_case_comparison(
+            plot_data,
+            output_path=str(output_dir / "spatial_source_response_comparison.png"),
+        )
+        return (label, True, None)
+    except Exception as exc:
+        return (label, False, str(exc))
+
+
+def _process_case_spectrum_comparison(config):
+    """Compare stored source/transfer spectra for two named simulation cases."""
+    label = "case_spectrum_comparison"
+    try:
+        comparison_cfg = config.get("case_spectrum_comparison", {})
+        root = Path(__file__).resolve().parent
+
+        def archive_path(key):
+            path = Path(comparison_cfg[key]).expanduser()
+            return path if path.is_absolute() else root / path
+
+        baseline_source_path = archive_path("baseline_source_response_archive")
+        baseline_summary_path = archive_path("baseline_spectral_summary_archive")
+        comparison_source_path = archive_path(
+            "comparison_source_response_archive"
+        )
+        comparison_summary_path = archive_path(
+            "comparison_spectral_summary_archive"
+        )
+        required_source = {
+            "frequency_hz", "source_processed_amplitude",
+            "transfer_magnitude", "valid_transfer_frequency",
+        }
+        required_summary = {"source_probe_indices", "probe_x_cm"}
+        for path in (
+                baseline_source_path, baseline_summary_path,
+                comparison_source_path, comparison_summary_path):
+            if not path.is_file():
+                raise FileNotFoundError(f"Comparison archive not found: {path}")
+
+        with np.load(baseline_source_path) as baseline_source, \
+                np.load(baseline_summary_path) as baseline_summary, \
+                np.load(comparison_source_path) as comparison_source, \
+                np.load(comparison_summary_path) as comparison_summary:
+            for name, archive in (
+                    ("baseline source", baseline_source),
+                    ("comparison source", comparison_source)):
+                missing = required_source - set(archive.files)
+                if missing:
+                    raise ValueError(f"{name} archive missing keys: {sorted(missing)}")
+            for name, archive in (
+                    ("baseline summary", baseline_summary),
+                    ("comparison summary", comparison_summary)):
+                missing = required_summary - set(archive.files)
+                if missing:
+                    raise ValueError(f"{name} archive missing keys: {sorted(missing)}")
+
+            frequency = np.asarray(baseline_source["frequency_hz"], dtype=float)
+            comparison_frequency = np.asarray(
+                comparison_source["frequency_hz"], dtype=float
+            )
+            if not np.allclose(frequency, comparison_frequency, rtol=1.0e-10,
+                               atol=max(abs(frequency[1]) * 1.0e-10, 1.0e-15)):
+                raise ValueError("Case source frequency grids do not match")
+
+            baseline_ids = np.asarray(
+                baseline_summary["source_probe_indices"], dtype=int
+            )
+            comparison_ids = np.asarray(
+                comparison_summary["source_probe_indices"], dtype=int
+            )
+            baseline_x = np.asarray(baseline_summary["probe_x_cm"], dtype=float)
+            comparison_x = np.asarray(
+                comparison_summary["probe_x_cm"], dtype=float
+            )
+            if (not np.array_equal(baseline_ids, comparison_ids)
+                    or baseline_x.shape != comparison_x.shape
+                    or not np.allclose(baseline_x, comparison_x)):
+                raise ValueError(
+                    "Case probe IDs or physical x coordinates do not match"
+                )
+
+            baseline_transfer = np.asarray(
+                baseline_source["transfer_magnitude"], dtype=float
+            )
+            comparison_transfer = np.asarray(
+                comparison_source["transfer_magnitude"], dtype=float
+            )
+            if (baseline_transfer.shape != comparison_transfer.shape
+                    or baseline_transfer.shape != (frequency.size, baseline_ids.size)):
+                raise ValueError("Case transfer arrays do not match probe/frequency grids")
+
+            requested_ids = comparison_cfg.get("probe_indices", [])
+            if not requested_ids:
+                requested_ids = baseline_ids.tolist()
+            index_by_id = {int(probe_id): index for index, probe_id in enumerate(baseline_ids)}
+            selected_columns = []
+            for probe_id in requested_ids:
+                probe_id = int(probe_id)
+                if probe_id not in index_by_id:
+                    raise ValueError(f"Comparison probe ID {probe_id} is unavailable")
+                selected_columns.append(index_by_id[probe_id])
+            selected_columns = np.asarray(sorted(set(selected_columns)), dtype=int)
+            selected_ids = baseline_ids[selected_columns]
+            selected_x = baseline_x[selected_columns]
+            station_labels = [
+                f"Probe {probe_id} (x={x_value:.4f} cm)"
+                for probe_id, x_value in zip(selected_ids, selected_x)
+            ]
+            valid_frequency = (
+                np.asarray(baseline_source["valid_transfer_frequency"], dtype=bool)
+                & np.asarray(comparison_source["valid_transfer_frequency"], dtype=bool)
+            )
+            baseline_source_amplitude = np.asarray(
+                baseline_source["source_processed_amplitude"], dtype=float
+            )
+            comparison_source_amplitude = np.asarray(
+                comparison_source["source_processed_amplitude"], dtype=float
+            )
+
+        baseline_label = str(comparison_cfg.get("baseline_label", "baseline"))
+        comparison_label = str(comparison_cfg.get("comparison_label", "comparison"))
+        output_dir = Path(config["output_dir"]) / "CaseComparison"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        plot_fmax = comparison_cfg.get("plot_fmax_hz")
+        floor = np.finfo(float).tiny
+        ratio = comparison_transfer[:, selected_columns] / np.maximum(
+            baseline_transfer[:, selected_columns], floor
+        )
+        np.savez_compressed(
+            output_dir / "gaus_baseline_vs_asym_spectra.npz",
+            frequency_hz=frequency,
+            baseline_label=np.array(baseline_label),
+            comparison_label=np.array(comparison_label),
+            baseline_source_processed_amplitude=baseline_source_amplitude,
+            comparison_source_processed_amplitude=comparison_source_amplitude,
+            selected_source_probe_indices=selected_ids,
+            selected_probe_x_cm=selected_x,
+            baseline_transfer_magnitude=baseline_transfer[:, selected_columns],
+            comparison_transfer_magnitude=comparison_transfer[:, selected_columns],
+            comparison_to_baseline_transfer_ratio=ratio,
+            valid_transfer_frequency=valid_frequency,
+        )
+        pdb.plot_case_source_spectrum_comparison(
+            frequency, baseline_source_amplitude, comparison_source_amplitude,
+            baseline_label, comparison_label,
+            output_path=str(output_dir / "source_fft_comparison.png"),
+            fmax=plot_fmax,
+        )
+        pdb.plot_case_transfer_comparison(
+            frequency, baseline_transfer[:, selected_columns],
+            comparison_transfer[:, selected_columns], valid_frequency,
+            station_labels, baseline_label, comparison_label,
+            output_path=str(output_dir / "fluid_transfer_comparison.png"),
+            fmax=plot_fmax,
+        )
+        _ts(
+            f"  Saved {comparison_label} versus {baseline_label} source and "
+            "fluid-response comparison products"
+        )
+        return (label, True, None)
+    except Exception as exc:
+        return (label, False, str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -7521,6 +8268,10 @@ def main(config=None):
         compact_plot_data = None
         compact_file = config.get("probe_compact_file")
         if compact_file:
+            if not HDF5_PROBE_STORE_AVAILABLE:
+                raise ImportError(
+                    "Compact HDF5 probe input requires the optional h5py package"
+                )
             compact_path = Path(compact_file).expanduser()
             if not compact_path.is_absolute():
                 compact_path = Path(config.get("data_source", ".")) / compact_path
@@ -7548,12 +8299,49 @@ def main(config=None):
                     for probe in range(len(store))
                 }
 
+        native_plot_data = None
+        if compact_plot_data is None and config.get("probe_bin_files"):
+            bin_files = _expand_probe_binary_files(
+                config["probe_bin_files"]
+            )
+            if bin_files and {_probe_binary_version(path) for path in bin_files} == {2}:
+                _ts("Loading chunked binary probes for time-history plots.")
+                field_columns = {"rho": 1, "u": 2, "p": 3, "T": 4}
+                field_data = {
+                    name: _load_probe_data_from_binary(
+                        config, column, max_probes=probe_max
+                    )
+                    for name, column in field_columns.items()
+                }
+                counts = {name: len(data) for name, data in field_data.items()}
+                if len(set(counts.values())) != 1:
+                    raise ValueError(
+                        "Chunked probe field counts differ: "
+                        f"{counts}"
+                    )
+                native_plot_data = {
+                    probe_id: {
+                        "probe_id": probe_id,
+                        "probe_x": field_data["rho"][probe_id]["x"],
+                        "probe_y": field_data["rho"][probe_id]["y"],
+                        "time": field_data["rho"][probe_id]["time"],
+                        **{
+                            name: field_data[name][probe_id]["signal"]
+                            for name in field_columns
+                        },
+                    }
+                    for probe_id in range(counts["rho"])
+                }
+
         # Check if conversion already done
         dat_files = list(probe_out.glob("flow_probe_*.dat"))
 
         if compact_plot_data is not None:
             probe_out = None
             _ts("Using compact HDF5 directly for probe-history plots.")
+        elif native_plot_data is not None:
+            probe_out = None
+            _ts("Using chunked binary probes directly for time-history plots.")
         elif len(dat_files) == 0:
             _ts("Converting binary probe files to ASCII .dat ...")
             converter = Path(__file__).parent / "convert_probes.py"
@@ -7584,6 +8372,16 @@ def main(config=None):
                 output_dir=out_dir / "Probes",
                 laser_start_time=config.get("laser_start_time"),
                 convert_to_mks=config.get("probe_convert_to_mks", False),
+                station_time_window_s=config.get("probe_station_time_window_s"),
+            )
+            _ts(f"Probe plots saved to {out_dir / 'Probes'}")
+        elif native_plot_data is not None:
+            pdb.plot_probe_timeseries(
+                native_plot_data,
+                output_dir=out_dir / "Probes",
+                laser_start_time=config.get("laser_start_time"),
+                convert_to_mks=config.get("probe_convert_to_mks", False),
+                station_time_window_s=config.get("probe_station_time_window_s"),
             )
             _ts(f"Probe plots saved to {out_dir / 'Probes'}")
         elif probe_out is not None:
@@ -7602,6 +8400,7 @@ def main(config=None):
                         output_dir=out_dir / "Probes",
                         laser_start_time=config.get("laser_start_time"),
                         convert_to_mks=config.get("probe_convert_to_mks", False),
+                        station_time_window_s=config.get("probe_station_time_window_s"),
                     )
                     _ts(f"Probe plots saved to {out_dir / 'Probes'}")
             except Exception as exc:
@@ -7615,6 +8414,7 @@ def main(config=None):
     shared_probe_data = None
     probe_workflows_enabled = any((
         config.get("make_fft_probes", False),
+        config.get("make_spatial_fft", False),
         (
             config.get("make_stability_diagnostics", False)
             and not config.get("stability_gip_only", False)
@@ -7634,7 +8434,7 @@ def main(config=None):
             )
             shared_probe_data = _load_probe_timeseries(
                 config,
-                config.get("fft_var_col", 4),
+                int(config.get("fft_var_col", 3)),
                 nt_skip=config.get("fft_nt_skip", 0),
                 max_probes=shared_max_probes,
             )
@@ -7668,6 +8468,37 @@ def main(config=None):
         except Exception as exc:
             analysis_results.append(("fft_probes", False, str(exc)))
             _ts(f"✗ FFT probe analysis -> FAIL — {exc}")
+
+    if config.get("make_spatial_fft", False):
+        _ts("Running spatial FFT probe analysis ...")
+        try:
+            r = _process_spatial_fft_probes(config, shared_probe_data)
+            analysis_results.append(r)
+            if r[1]:
+                _ts("Spatial FFT probe analysis -> OK")
+            else:
+                _ts(f"✗ Spatial FFT probe analysis -> FAIL — {r[2]}")
+        except Exception as exc:
+            analysis_results.append(("spatial_fft", False, str(exc)))
+            _ts(f"✗ Spatial FFT probe analysis -> FAIL — {exc}")
+
+    if config.get("make_spatial_case_comparison", False):
+        _ts("Running spatial Gaus_JW-baseline case comparison ...")
+        r = _process_spatial_case_comparison(config)
+        analysis_results.append(r)
+        if r[1]:
+            _ts("Spatial Gaus_JW-baseline case comparison -> OK")
+        else:
+            _ts(f"✗ Spatial case comparison -> FAIL — {r[2]}")
+
+    if config.get("make_case_spectrum_comparison", False):
+        _ts("Running Gaus_JW-baseline case spectrum comparison ...")
+        r = _process_case_spectrum_comparison(config)
+        analysis_results.append(r)
+        if r[1]:
+            _ts("Gaus_JW-baseline case comparison -> OK")
+        else:
+            _ts(f"✗ Gaus_JW-baseline case comparison -> FAIL — {r[2]}")
 
     # ------------------------------------------------------------------
     # 4. Stability diagnostics (runs once, not per-snapshot)

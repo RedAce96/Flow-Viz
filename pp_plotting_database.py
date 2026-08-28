@@ -732,7 +732,7 @@ def plot_streamlines(streamline_sets, title=None, output_path=None,
         ax.set_xlim(xlim)
     if ylim is not None:
         ax.set_ylim(ylim)
-    ax.grid(True, alpha=0.3)
+    ax.grid(False)
 
     if legend_handles:
         ax.legend(handles=legend_handles)
@@ -919,7 +919,7 @@ def plot_overlay(dataset, base_key="schlieren", overlay_key="vorticity",
     if title is not None:
         ax.set_title(title, fontsize=14)
     ax.set_aspect("equal", adjustable="box")
-    ax.grid(True, alpha=0.3)
+    ax.grid(False)
 
     if output_path is not None:
         fig.tight_layout()
@@ -975,7 +975,7 @@ def plot_surface_geometry(surfaces, dataset, snapshot="",
     ax.set_ylabel("y [m]", fontsize=12)
     ax.set_title(f"Surface Geometry Detection — {snapshot}", fontsize=14)
     ax.legend()
-    ax.grid(True, alpha=0.3)
+    ax.grid(False)
     ax.set_aspect("equal", adjustable="box")
 
     # Set reasonable limits
@@ -1050,7 +1050,7 @@ def plot_surface_properties(surface_data, snapshot="",
         a.set_xlabel("x [m]", fontsize=10)
         a.set_ylabel(ylabel, fontsize=10)
         a.legend()
-        a.grid(True, alpha=0.3)
+        a.grid(False)
 
     if created_figure:
         plt.suptitle(f"Surface Properties — {snapshot}", fontsize=14)
@@ -1125,7 +1125,7 @@ def plot_surface_properties_group(surface_data_dict, snapshot_list,
         ax.set_xlabel("x [m]", fontsize=10)
         ax.set_ylabel(ylabel, fontsize=10)
         ax.legend(fontsize=8, ncol=2, loc="best")
-        ax.grid(True, alpha=0.3)
+        ax.grid(False)
 
     plt.suptitle(
         f"Surface Properties — {', '.join(str(s) for s in snapshot_list)}",
@@ -1199,7 +1199,7 @@ def plot_forces_vs_time(forces_dict, output_path=None, figsize=(14, 10),
     ax1.set_ylabel("Force Coefficient", fontsize=12)
     ax1.set_title("Integrated Force Coefficients vs Time", fontsize=14)
     ax1.legend(fontsize=10)
-    ax1.grid(True, alpha=0.3)
+    ax1.grid(False)
 
     # Bottom: pressure vs viscous drag
     ax2.plot(times, C_Dp_arr, "g-o", markersize=3, linewidth=1.5, label=r"$C_{D,p}$ (pressure)")
@@ -1210,7 +1210,7 @@ def plot_forces_vs_time(forces_dict, output_path=None, figsize=(14, 10),
     ax2.set_ylabel("Drag Coefficient", fontsize=12)
     ax2.set_title("Pressure vs Viscous Drag Contribution", fontsize=14)
     ax2.legend(fontsize=10)
-    ax2.grid(True, alpha=0.3)
+    ax2.grid(False)
 
     plt.tight_layout()
     if output_path is not None:
@@ -1278,7 +1278,7 @@ def plot_certified_force_timeseries(
     )
     axes[2].set_xlabel(r"Time from laser start [ns]")
     for axis in axes:
-        axis.grid(True, alpha=0.25)
+        axis.grid(False)
     title = (
         "Certified one-sided flat-plate load increments"
         if has_increment else "Certified one-sided flat-plate loads"
@@ -1354,7 +1354,7 @@ def plot_packet_propagation(propagation, output_path=None):
     axes[2].set_ylabel("Peak envelope")
     axes[2].set_xlabel("x [m]")
     for axis in axes:
-        axis.grid(True, alpha=0.25)
+        axis.grid(False)
     figure.suptitle("Band-limited transient packet propagation")
     figure.tight_layout()
     if output_path is not None:
@@ -1456,7 +1456,7 @@ def plot_spacetime(surface_data_series, field_key="C_p", output_path=None,
     ax.set_xlabel(xlabel, fontsize=12)
     ax.set_ylabel(ylabel, fontsize=12)
     ax.set_title(f"Space-Time Evolution of {field_key}", fontsize=14)
-    ax.grid(True, alpha=0.2)
+    ax.grid(False)
 
     plt.tight_layout()
     if output_path is not None:
@@ -1548,7 +1548,7 @@ def plot_contour_with_surface_loading(dataset, surfaces, surface_data,
     ax_loading.set_ylabel(loading_key, fontsize=12)
     ax_loading.set_title(f"Surface {loading_key} Distribution", fontsize=14)
     ax_loading.legend(fontsize=9)
-    ax_loading.grid(True, alpha=0.3)
+    ax_loading.grid(False)
 
     plt.tight_layout()
     if output_path is not None:
@@ -1702,7 +1702,7 @@ def animate_contour_with_surface(dataset_series, field_key,
         ax_loading.set_xlabel("x [m]", fontsize=12)
         ax_loading.set_ylabel(field_label(loading_key), fontsize=12)
         ax_loading.set_title(f"Surface {field_title(loading_key)}", fontsize=14)
-        ax_loading.grid(True, alpha=0.3)
+        ax_loading.grid(False)
         if xlim is not None:
             ax_loading.set_xlim(xlim)
         elif loading_x_values:
@@ -1793,7 +1793,8 @@ def animate_contour_with_surface(dataset_series, field_key,
 def plot_probe_timeseries(probe_data, output_dir,
                           station_probes=None,
                           laser_start_time=None,
-                          convert_to_mks=False):
+                          convert_to_mks=False,
+                          station_time_window_s=None):
     """Plot probe time-history visualizations.
 
     Creates:
@@ -1814,6 +1815,10 @@ def plot_probe_timeseries(probe_data, output_dir,
         Vertical dashed line marker for laser turn-on.
     convert_to_mks : bool
         If True, convert CGS to MKS units.
+    station_time_window_s : float, optional
+        Duration of the individual station-plot window after laser start.
+        The station x-axis is set to
+        ``[laser_start_time, laser_start_time + station_time_window_s]``.
     """
     from pathlib import Path
 
@@ -1863,7 +1868,7 @@ def plot_probe_timeseries(probe_data, output_dir,
         ax.set_xlabel("Time [s]", fontsize=11)
         ax.set_ylabel(ylabel, fontsize=11)
         ax.set_title(clabel.split("[")[0].strip(), fontsize=13)
-        ax.grid(True, alpha=0.3)
+        ax.grid(False)
 
     # Colorbar
     sm = ScalarMappable(norm=norm, cmap=cmap_obj)
@@ -1889,6 +1894,14 @@ def plot_probe_timeseries(probe_data, output_dir,
     stations_dir = output_dir / "stations"
     stations_dir.mkdir(parents=True, exist_ok=True)
 
+    station_xlim = None
+    if (station_time_window_s is not None and laser_start_time is not None
+            and float(station_time_window_s) > 0.0):
+        station_xlim = (
+            float(laser_start_time),
+            float(laser_start_time) + float(station_time_window_s),
+        )
+
     for pid in station_probes:
         if pid not in probe_data:
             continue
@@ -1909,7 +1922,9 @@ def plot_probe_timeseries(probe_data, output_dir,
             ax.set_xlabel("Time [s]", fontsize=11)
             ax.set_ylabel(ylabel, fontsize=11)
             ax.set_title(clabel.split("[")[0].strip(), fontsize=13)
-            ax.grid(True, alpha=0.3)
+            if station_xlim is not None:
+                ax.set_xlim(station_xlim)
+            ax.grid(False)
 
         px = pd.get("probe_x", float(pid))
         py = pd.get("probe_y", 0.0)
@@ -1980,7 +1995,7 @@ def plot_stability_summary(data, output_path=None, figsize=(18, 14)):
     handles, labels = ax1.get_legend_handles_labels()
     if handles:
         ax1.legend(handles, labels, fontsize=8, loc="best")
-    ax1.grid(True, alpha=0.3)
+    ax1.grid(False)
 
     # -- Panel 2: Phase speed
     ps = data.get("phase_speed", {})
@@ -2059,7 +2074,7 @@ def plot_stability_summary(data, output_path=None, figsize=(18, 14)):
     handles, labels = ax2.get_legend_handles_labels()
     if handles:
         ax2.legend(handles, labels, fontsize=8, loc="best")
-    ax2.grid(True, alpha=0.3)
+    ax2.grid(False)
 
     # -- Panel 3: Growth rate
     gd = data.get("growth_rate", {})
@@ -2172,7 +2187,7 @@ def plot_stability_summary(data, output_path=None, figsize=(18, 14)):
     handles, labels = ax4.get_legend_handles_labels()
     if handles:
         ax4.legend(handles, labels, fontsize=8, loc="best")
-    ax4.grid(True, alpha=0.3)
+    ax4.grid(False)
 
     plt.suptitle("Stability screening — heuristic scales, not an LST eigensolution",
                  fontsize=15, fontweight="bold")
@@ -2307,7 +2322,7 @@ def plot_wavenumber_summary(data, output_path=None, figsize=(18, 13)):
         ax.set_yscale("log")
         ax.set_xlabel("x [m]")
         ax.set_ylabel("Frequency [Hz]")
-        ax.grid(True, which="both", alpha=0.15)
+        ax.grid(False)
     fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.94])
     if output_path is not None:
         fig.savefig(output_path, dpi=220, bbox_inches="tight")
@@ -2368,7 +2383,7 @@ def plot_phase_speed_dispersion(data, output_path=None, n_stations=5,
                 label=r"$U_e+a_e$",
             )
         ax.set_title(f"x = {x[index]:.4f} m")
-        ax.grid(True, which="both", alpha=0.3)
+        ax.grid(False)
     for ax in axes.flat[len(indices):]:
         ax.set_visible(False)
     for ax in axes[-1, :]:
@@ -2415,9 +2430,404 @@ def plot_pair_coherence(pair_results, output_path=None, fmax=None,
     ax2.set_ylabel("Cross-spectral phase [rad]")
     ax2.set_title(r"Phase convention: $\arg\{X_1^*X_2\}$")
     for ax in (ax1, ax2):
-        ax.grid(True, which="both", alpha=0.3)
+        ax.grid(False)
     if pair_results:
         ax1.legend(fontsize=8, ncol=2)
+    fig.tight_layout()
+    if output_path is not None:
+        fig.savefig(output_path, dpi=250, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def _positive_wavenumber_view(wavenumber, values):
+    wavenumber = np.asarray(wavenumber, dtype=float)
+    values = np.asarray(values)
+    mask = wavenumber >= 0.0
+    return wavenumber[mask], values[..., mask], mask
+
+
+def plot_spatial_source_spectrum(source_result, output_path=None,
+                                 figsize=(11, 7)):
+    """Plot the exact source profile and its signed spatial spectrum."""
+    x = np.asarray(source_result["probe_x_m"], dtype=float)
+    profile = np.asarray(source_result["profile"], dtype=float)
+    k = np.asarray(source_result["wavenumber_rad_per_m"], dtype=float)
+    amplitude = np.asarray(source_result["amplitude"], dtype=float).reshape(-1)
+    positive_k, positive_amplitude, _ = _positive_wavenumber_view(k, amplitude)
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+    axes[0].plot(x, profile, color="C0")
+    axes[0].set_xlabel("Probe-line x [m]")
+    axes[0].set_ylabel("Kernel profile [relative]")
+    axes[0].set_title(f"{source_result.get('model', 'source')} source profile")
+    axes[1].plot(positive_k, positive_amplitude, color="C3")
+    axes[1].set_xlabel(r"Wavenumber $|k|$ [rad m$^{-1}$]")
+    axes[1].set_ylabel("Source amplitude [relative]")
+    axes[1].set_title("Exact spatial source spectrum")
+    for ax in axes:
+        ax.grid(False)
+    fig.tight_layout()
+    if output_path is not None:
+        fig.savefig(output_path, dpi=250, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_spatial_response_spectrum(data, output_path=None, figsize=(12, 8)):
+    """Plot spatial response magnitude versus time and wavenumber."""
+    k = np.asarray(data["wavenumber_rad_per_m"], dtype=float)
+    amplitude = np.asarray(data["response_amplitude"], dtype=float)
+    time = np.asarray(data.get("snapshot_time_s", np.arange(amplitude.shape[0])))
+    positive_k, positive_amplitude, _ = _positive_wavenumber_view(k, amplitude)
+    reference = np.nanmax(positive_amplitude)
+    response_db = 20.0 * np.log10(
+        np.maximum(positive_amplitude, np.finfo(float).tiny)
+        / max(reference, np.finfo(float).tiny)
+    )
+    fig, axes = plt.subplots(2, 1, figsize=figsize, sharex=True)
+    mesh = axes[0].pcolormesh(
+        time, positive_k, positive_amplitude.T, shading="auto", cmap="magma"
+    )
+    fig.colorbar(mesh, ax=axes[0], label="Response amplitude [relative]")
+    axes[0].set_ylabel(r"Wavenumber $|k|$ [rad m$^{-1}$]")
+    axes[0].set_title("Measured spatial response: wavenumber versus time")
+    mesh = axes[1].pcolormesh(
+        time, positive_k, response_db.T, shading="auto", cmap="viridis",
+        vmin=-60.0, vmax=0.0,
+    )
+    fig.colorbar(mesh, ax=axes[1], label="Response amplitude [dB re max]")
+    axes[1].set_xlabel("Snapshot time [s]")
+    axes[1].set_ylabel(r"Wavenumber $|k|$ [rad m$^{-1}$]")
+    for ax in axes:
+        ax.grid(False)
+    fig.tight_layout()
+    if output_path is not None:
+        fig.savefig(output_path, dpi=250, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_wavenumber_time_contour(data, output_path=None, figsize=(12, 7)):
+    """Plot one-sided spatial-spectrum amplitude versus time and wavenumber."""
+    k = np.asarray(data["wavenumber_rad_per_m"], dtype=float)
+    amplitude = np.asarray(data["response_amplitude"], dtype=float)
+    time = np.asarray(data.get("snapshot_time_s", np.arange(amplitude.shape[0])))
+    aperture = float(data["physical_aperture_m"])
+    dx = float(data["dx_m"])
+    if aperture <= 0.0 or dx <= 0.0:
+        raise ValueError("physical_aperture_m and dx_m must be positive")
+
+    positive_k, positive_amplitude, _ = _positive_wavenumber_view(k, amplitude)
+    one_sided_amplitude = positive_amplitude.copy()
+    one_sided_amplitude[..., positive_k > 0.0] *= 2.0
+    delta_k = 2.0 * np.pi / aperture
+    k_nyquist = np.pi / dx
+    colorbar_vmax = float(data.get("wavenumber_colorbar_vmax", np.nanmax(
+        one_sided_amplitude
+    )))
+    if not np.isfinite(colorbar_vmax) or colorbar_vmax <= 0.0:
+        raise ValueError("wavenumber_colorbar_vmax must be positive")
+    fig, ax = plt.subplots(figsize=figsize)
+    mesh = ax.pcolormesh(
+        time, positive_k, one_sided_amplitude.T, shading="auto", cmap="magma",
+        vmin=0.0, vmax=colorbar_vmax,
+    )
+    fig.colorbar(
+        mesh, ax=ax,
+        label="One-sided spatial FFT amplitude",
+    )
+    ax.axhline(delta_k, color="white", linestyle="--", linewidth=0.8)
+    ax.set_xlabel("Snapshot time [s]")
+    ax.set_ylabel(r"Wavenumber $k \, (k \geq 0)$ [rad m$^{-1}$]")
+    ax.set_title(
+        "Measured spatial spectrum: one-sided wavenumber amplitude versus time\n"
+        rf"$\Delta k={delta_k:.3g}$ rad m$^{{-1}}$ "
+        rf"(first nonzero bin; aperture $L={aperture:.3g}$ m); "
+        rf"$k_{{Ny}}={k_nyquist:.3g}$ rad m$^{{-1}}$ "
+        rf"($\lambda_{{min}}=2\Delta x={2.0 * dx:.3g}$ m)"
+    )
+    ax.text(
+        0.01, 0.01, r"One-sided amplitude: $2|\hat{q}(k)|$ for $k>0$; DC undoubled",
+        transform=ax.transAxes, color="white", fontsize=9,
+        verticalalignment="bottom",
+    )
+    ax.grid(False)
+    fig.tight_layout()
+    if output_path is not None:
+        fig.savefig(output_path, dpi=250, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_spatial_transfer_function(data, output_path=None, figsize=(12, 8)):
+    """Plot spatial response/source magnitude and phase."""
+    k = np.asarray(data["wavenumber_rad_per_m"], dtype=float)
+    magnitude = np.asarray(data["transfer_magnitude"], dtype=float)
+    phase = np.asarray(data["transfer_phase_rad"], dtype=float)
+    valid = np.asarray(data["valid_wavenumber"], dtype=bool)
+    valid_rows = np.isfinite(magnitude) & valid[None, :]
+    valid_count = np.sum(valid_rows, axis=0)
+    mean_magnitude = np.divide(
+        np.nansum(np.where(valid_rows, magnitude, 0.0), axis=0),
+        valid_count,
+        out=np.full(k.shape, np.nan), where=valid_count > 0,
+    )
+    phase_vectors = np.where(valid_rows, np.exp(1j * phase), 0.0)
+    mean_phase = np.angle(np.divide(
+        np.sum(phase_vectors, axis=0),
+        valid_count,
+        out=np.full(k.shape, np.nan + 1j * np.nan), where=valid_count > 0,
+    ))
+    positive_k, positive_magnitude, mask = _positive_wavenumber_view(k, mean_magnitude)
+    _, positive_phase, _ = _positive_wavenumber_view(k, mean_phase)
+    fig, axes = plt.subplots(2, 1, figsize=figsize, sharex=True)
+    axes[0].plot(positive_k, positive_magnitude, color="C2")
+    axes[0].set_ylabel("Transfer magnitude [relative]")
+    axes[0].set_title("Spatial response/source transfer")
+    axes[1].plot(positive_k, positive_phase, color="C4")
+    axes[1].set_xlabel(r"Wavenumber $|k|$ [rad m$^{-1}$]")
+    axes[1].set_ylabel("Transfer phase [rad]")
+    for ax in axes:
+        ax.grid(False)
+    fig.tight_layout()
+    if output_path is not None:
+        fig.savefig(output_path, dpi=250, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_spatial_case_comparison(data, output_path=None, figsize=(12, 8)):
+    """Compare static source shapes and time-mean response spectra by case."""
+    k = np.asarray(data["wavenumber_rad_per_m"], dtype=float)
+    positive_k, baseline_source, _ = _positive_wavenumber_view(
+        k, data["baseline_source_amplitude"]
+    )
+    _, comparison_source, _ = _positive_wavenumber_view(
+        k, data["comparison_source_amplitude"]
+    )
+    _, baseline_response, _ = _positive_wavenumber_view(
+        k, data["baseline_response_amplitude"]
+    )
+    _, comparison_response, _ = _positive_wavenumber_view(
+        k, data["comparison_response_amplitude"]
+    )
+    fig, axes = plt.subplots(2, 1, figsize=figsize, sharex=True)
+    axes[0].plot(
+        positive_k, baseline_source, "o-", markersize=3,
+        label=data["baseline_label"],
+    )
+    axes[0].plot(
+        positive_k, comparison_source, "o-", markersize=3,
+        label=data["comparison_label"],
+    )
+    axes[0].set_ylabel(r"Unit-integral source-shape FFT amplitude [m$^{-2}$]")
+    axes[0].set_title("Static spatial source-shape spectra")
+    axes[1].plot(
+        positive_k, baseline_response, "o-", markersize=3,
+        label=data["baseline_label"],
+    )
+    axes[1].plot(
+        positive_k, comparison_response, "o-", markersize=3,
+        label=data["comparison_label"],
+    )
+    axes[1].set_xlabel(r"Wavenumber $|k|$ [rad m$^{-1}$]")
+    axes[1].set_ylabel(
+        f"Time-mean {data.get('response_signal_name', 'probe signal')} "
+        "FFT amplitude"
+    )
+    axes[1].set_title(
+        "Measured spatial response spectra; mean over "
+        f"{data.get('baseline_snapshot_count', '?')} / "
+        f"{data.get('comparison_snapshot_count', '?')} selected snapshots"
+    )
+    for ax in axes:
+        ax.grid(False)
+        ax.legend()
+    fig.suptitle(
+        "Spatial spectra comparison; panels have different input quantities "
+        "and are not on a common amplitude scale"
+    )
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.96])
+    if output_path is not None:
+        fig.savefig(output_path, dpi=250, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_single_pulse_source_spectrum(source_result, output_path=None,
+                                      fmax=None, energy_unit="erg/cm"):
+    """Plot the ideal and solver-gated temporal source spectra."""
+    frequency = np.asarray(source_result["frequency_hz"])
+    positive = frequency > 0.0
+    if fmax is not None:
+        positive &= frequency <= float(fmax)
+    fig, ax = plt.subplots(figsize=(9, 5))
+    floor = np.finfo(float).tiny
+    ax.semilogy(
+        frequency[positive],
+        np.maximum(source_result["ideal_spectrum"][positive], floor),
+        label="Ideal Gaussian",
+    )
+    ax.semilogy(
+        frequency[positive],
+        np.maximum(source_result["physical_spectrum"][positive], floor),
+        "--", label=r"Sampled, $\pm4\sigma$ gated",
+    )
+    ax.set_xlabel("Frequency [Hz]")
+    ax.set_ylabel(f"Source spectral magnitude [{energy_unit}]")
+    ax.set_title("Single-pulse source spectrum")
+    ax.grid(False)
+    ax.legend()
+    fig.tight_layout()
+    if output_path is not None:
+        fig.savefig(output_path, dpi=250, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_normalized_source_response_spectra(
+        frequency_hz, source_amplitude, response_amplitude, labels,
+        output_path=None, fmax=None):
+    """Plot like-for-like normalized source and selected response spectra."""
+    frequency = np.asarray(frequency_hz)
+    source = np.asarray(source_amplitude, dtype=float)
+    response = np.asarray(response_amplitude, dtype=float)
+    positive = frequency > 0.0
+    if fmax is not None:
+        positive &= frequency <= float(fmax)
+    floor = np.finfo(float).tiny
+    fig, ax = plt.subplots(figsize=(9, 5))
+    source_norm = source / max(float(np.max(source)), floor)
+    ax.semilogy(frequency[positive], np.maximum(source_norm[positive], floor),
+                color="k", linewidth=2.2, label="Source, matched processing")
+    for column, label in enumerate(labels):
+        values = response[:, column]
+        values = values / max(float(np.max(values)), floor)
+        ax.semilogy(frequency[positive], np.maximum(values[positive], floor),
+                    linewidth=1.2, label=label)
+    ax.set_xlabel("Frequency [Hz]")
+    ax.set_ylabel("Amplitude / peak amplitude")
+    ax.set_title("Normalized source and fluid-response spectra")
+    ax.grid(False)
+    ax.legend(fontsize=8, ncol=2)
+    fig.tight_layout()
+    if output_path is not None:
+        fig.savefig(output_path, dpi=250, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_single_pulse_transfer_functions(
+        frequency_hz, transfer_magnitude, transfer_phase_rad, valid_frequency,
+        labels, output_path=None, fmax=None):
+    """Plot the direct finite-record source-to-response magnitude ratio."""
+    frequency = np.asarray(frequency_hz)
+    magnitude = np.asarray(transfer_magnitude, dtype=float)
+    mask = (frequency > 0.0) & np.asarray(valid_frequency, dtype=bool)
+    if fmax is not None:
+        mask &= frequency <= float(fmax)
+    fig, ax_mag = plt.subplots(figsize=(9, 5))
+    floor = np.finfo(float).tiny
+    for column, label in enumerate(labels):
+        ax_mag.semilogy(
+            frequency[mask], np.maximum(magnitude[mask, column], floor),
+            linewidth=1.2, label=label,
+        )
+    ax_mag.set_ylabel("|H(f)| [response / source-power]")
+    ax_mag.set_title("Direct single-pulse source-to-response transfer ratio")
+    ax_mag.set_xlabel("Frequency [Hz]")
+    ax_mag.grid(False)
+    ax_mag.legend(fontsize=8, ncol=2)
+    fig.tight_layout()
+    if output_path is not None:
+        fig.savefig(output_path, dpi=250, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_case_source_spectrum_comparison(
+        frequency_hz, baseline_amplitude, comparison_amplitude,
+        baseline_label, comparison_label, output_path=None, fmax=None):
+    """Compare matched source spectra with the declared baseline in title."""
+    frequency = np.asarray(frequency_hz, dtype=float)
+    baseline = np.asarray(baseline_amplitude, dtype=float)
+    comparison = np.asarray(comparison_amplitude, dtype=float)
+    mask = frequency > 0.0
+    if fmax is not None:
+        mask &= frequency <= float(fmax)
+    floor = np.finfo(float).tiny
+    baseline /= max(float(np.nanmax(baseline)), floor)
+    comparison /= max(float(np.nanmax(comparison)), floor)
+
+    fig, axis = plt.subplots(figsize=(9, 5))
+    axis.semilogy(
+        frequency[mask], np.maximum(baseline[mask], floor),
+        color="k", linewidth=2.2, label=f"{baseline_label} (baseline)",
+    )
+    axis.semilogy(
+        frequency[mask], np.maximum(comparison[mask], floor),
+        color="C3", linestyle="--", linewidth=1.8, label=comparison_label,
+    )
+    axis.set_xlabel("Frequency [Hz]")
+    axis.set_ylabel("Amplitude / peak amplitude")
+    axis.set_title(
+        f"Matched source spectra: {comparison_label} vs {baseline_label} "
+        f"(baseline: {baseline_label})"
+    )
+    axis.grid(False)
+    axis.legend()
+    fig.tight_layout()
+    if output_path is not None:
+        fig.savefig(output_path, dpi=250, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_case_transfer_comparison(
+        frequency_hz, baseline_transfer, comparison_transfer, valid_frequency,
+        station_labels, baseline_label, comparison_label, output_path=None,
+        fmax=None):
+    """Overlay paired transfer magnitudes and their ratio against baseline."""
+    frequency = np.asarray(frequency_hz, dtype=float)
+    baseline = np.asarray(baseline_transfer, dtype=float)
+    comparison = np.asarray(comparison_transfer, dtype=float)
+    mask = (frequency > 0.0) & np.asarray(valid_frequency, dtype=bool)
+    if fmax is not None:
+        mask &= frequency <= float(fmax)
+    floor = np.finfo(float).tiny
+    colors = plt.cm.tab10(np.linspace(0.0, 1.0, max(len(station_labels), 1)))
+    fig, (axis_magnitude, axis_ratio) = plt.subplots(
+        2, 1, figsize=(10, 8), sharex=True,
+    )
+    for column, (label, color) in enumerate(zip(station_labels, colors)):
+        axis_magnitude.semilogy(
+            frequency[mask], np.maximum(baseline[mask, column], floor),
+            color=color, linewidth=1.7,
+            label=f"{label}: {baseline_label} baseline",
+        )
+        axis_magnitude.semilogy(
+            frequency[mask], np.maximum(comparison[mask, column], floor),
+            color=color, linestyle="--", linewidth=1.2,
+            label=f"{label}: {comparison_label}",
+        )
+        ratio = comparison[:, column] / np.maximum(baseline[:, column], floor)
+        axis_ratio.semilogy(
+            frequency[mask], np.maximum(ratio[mask], floor),
+            color=color, linewidth=1.4, label=label,
+        )
+    axis_magnitude.set_ylabel("|H(f)| [response / source-power]")
+    axis_magnitude.set_title(
+        f"Source-to-pressure transfer: {comparison_label} vs {baseline_label} "
+        f"(baseline: {baseline_label})"
+    )
+    axis_magnitude.grid(False)
+    axis_magnitude.legend(fontsize=7, ncol=2)
+    axis_ratio.axhline(1.0, color="k", linewidth=1.0)
+    axis_ratio.set_xlabel("Frequency [Hz]")
+    axis_ratio.set_ylabel(f"{comparison_label} / {baseline_label}")
+    axis_ratio.set_title(f"Transfer-magnitude ratio (baseline: {baseline_label})")
+    axis_ratio.grid(False)
+    axis_ratio.legend(fontsize=8, ncol=2)
     fig.tight_layout()
     if output_path is not None:
         fig.savefig(output_path, dpi=250, bbox_inches="tight")
@@ -2440,7 +2850,7 @@ def plot_common_mode_validation(time, model, probe_x, output_path=None,
     ax1.set_xlabel("Probe x [cm]")
     ax1.set_ylabel("Relative RMS error")
     ax1.set_title("Shared-frequency model: in-sample vs held-out error")
-    ax1.grid(True, alpha=0.3)
+    ax1.grid(False)
     ax1.legend()
 
     validation_time = time[n_train:]
@@ -2454,7 +2864,7 @@ def plot_common_mode_validation(time, model, probe_x, output_path=None,
         f"Held-out prediction at x={probe_x[example_column]:.3f} cm; "
         f"relative RMS={validation_error[example_column]:.3f}"
     )
-    ax2.grid(True, alpha=0.3)
+    ax2.grid(False)
     ax2.legend()
     fig.tight_layout()
     if output_path is not None:
@@ -2488,7 +2898,7 @@ def plot_modal_summary(pod_result, spod_result, dmd_result, output_path=None,
     axes[1].set_xlabel("Frequency [Hz]")
     axes[1].set_ylabel("SPOD eigenvalue")
     axes[1].set_title("SPOD spectrum")
-    axes[1].grid(True, which="both", alpha=0.3)
+    axes[1].grid(False)
     axes[1].legend(fontsize=8)
 
     eigen = np.asarray(dmd_result["eigenvalues"])
@@ -2586,7 +2996,7 @@ def plot_gpi_profiles(bl_profiles, gpi_results, output_path=None,
         ax.set_title(f"x = {x_pos:.4f} m   (GPI: {gpi_marker})",
                      fontsize=11)
         ax.legend(fontsize=8, loc="upper left")
-        ax.grid(True, alpha=0.2)
+        ax.grid(False)
 
     for j in range(i + 1, len(axes.flat)):
         axes.flat[j].set_visible(False)
@@ -2902,7 +3312,7 @@ def plot_harmonic_reconstruction(time, measured, reconstructed, residual,
     if meta_str:
         title0 += f"\n{meta_str}"
     axes[0].set_title(title0, fontsize=11)
-    axes[0].grid(True, alpha=0.3)
+    axes[0].grid(False)
     axes[0].legend(fontsize=7, loc="upper right")
 
     # ---------------------------------------------------------------
@@ -2935,7 +3345,7 @@ def plot_harmonic_reconstruction(time, measured, reconstructed, residual,
     else:
         rel_rms = float(relative_rms)
     axes[1].set_title(f"Measured vs reconstruction  |  rel. RMS = {rel_rms:.3f}", fontsize=12)
-    axes[1].grid(True, alpha=0.3)
+    axes[1].grid(False)
     axes[1].legend(fontsize=9, loc="upper right")
 
     # ---------------------------------------------------------------
@@ -2953,7 +3363,7 @@ def plot_harmonic_reconstruction(time, measured, reconstructed, residual,
         offset += max(np.abs(sig)) * 1.5
     axes[2].set_ylabel("Signal (offset)", fontsize=11)
     axes[2].set_title("Per-frequency contributions", fontsize=12)
-    axes[2].grid(True, alpha=0.3)
+    axes[2].grid(False)
     if harmonic_signals:
         axes[2].legend(fontsize=8, loc="upper right", ncol=2)
 
@@ -2968,7 +3378,7 @@ def plot_harmonic_reconstruction(time, measured, reconstructed, residual,
     axes[3].set_xlabel("Time [s]", fontsize=11)
     axes[3].set_ylabel("Residual", fontsize=11)
     axes[3].set_title(f"Residual (zero-mean basis)  |  RMS = {rms_err:.3f}", fontsize=12)
-    axes[3].grid(True, alpha=0.3)
+    axes[3].grid(False)
     axes[3].legend(fontsize=9, loc="upper right")
 
     plt.tight_layout()
@@ -3057,7 +3467,7 @@ def plot_disturbance_window_diagnostics(time, signal, detection_metric,
 
     axes[0].set_ylabel("Signal", fontsize=11)
     axes[0].set_title(f"Disturbance window detector — {probe_label}", fontsize=12)
-    axes[0].grid(True, alpha=0.3)
+    axes[0].grid(False)
     axes[0].legend(fontsize=8, loc="upper right")
 
     # --- Panel 2: Detection metric ---
@@ -3081,7 +3491,7 @@ def plot_disturbance_window_diagnostics(time, signal, detection_metric,
 
     axes[1].set_ylabel("Detection metric", fontsize=11)
     axes[1].set_title(f"Detection metric — {meta}", fontsize=11)
-    axes[1].grid(True, alpha=0.3)
+    axes[1].grid(False)
     axes[1].legend(fontsize=8, loc="upper right")
 
     # --- Panel 3: Zoom on onset ---
@@ -3106,7 +3516,7 @@ def plot_disturbance_window_diagnostics(time, signal, detection_metric,
             axes[2].set_xlabel("Time [s]", fontsize=11)
             axes[2].set_ylabel("Signal / Metric", fontsize=11)
             axes[2].set_title("Onset zoom", fontsize=11)
-            axes[2].grid(True, alpha=0.3)
+            axes[2].grid(False)
             axes[2].legend(fontsize=8, loc="upper right")
     else:
         axes[2].text(0.5, 0.5, "No onset detected",
@@ -3169,7 +3579,7 @@ def plot_energy_budget_vs_x(probe_x, energy_budgets, output_path=None,
     ax1.set_title(title1, fontsize=12)
     ax1.legend(fontsize=9, loc="upper right")
     ax1.set_ylim(0, 1.05)
-    ax1.grid(True, alpha=0.3)
+    ax1.grid(False)
 
     # Bottom: log total energy
     ax2.semilogy(probe_x, E_total, "ko-", markersize=3, linewidth=1.0,
@@ -3177,7 +3587,7 @@ def plot_energy_budget_vs_x(probe_x, energy_budgets, output_path=None,
     ax2.set_xlabel("x [cm]", fontsize=11)
     ax2.set_ylabel("Mean-square energy", fontsize=11)
     ax2.set_title("Total disturbance energy (zero-mean basis)", fontsize=12)
-    ax2.grid(True, alpha=0.3)
+    ax2.grid(False)
     ax2.legend(fontsize=9)
 
     # Add annotation
@@ -3231,7 +3641,7 @@ def plot_residual_vs_x(probe_x, residual_stats, output_path=None,
     axes[0].plot(probe_x, rms_rel, "bo-", markersize=4, linewidth=1.0)
     axes[0].set_ylabel("RMS residual (rel.)", fontsize=11)
     axes[0].set_title("Residual RMS (rel. to measured signal variance)", fontsize=12)
-    axes[0].grid(True, alpha=0.3)
+    axes[0].grid(False)
 
     axes[1].plot(probe_x, R_sq, "go-", markersize=4, linewidth=1.0)
     axes[1].axhline(0.95, color="gray", linestyle=":", alpha=0.5, label="0.95")
@@ -3239,20 +3649,20 @@ def plot_residual_vs_x(probe_x, residual_stats, output_path=None,
     axes[1].set_ylabel("R²", fontsize=11)
     axes[1].set_title("Coefficient of determination (1 = perfect reconstruction)", fontsize=12)
     axes[1].legend(fontsize=8)
-    axes[1].grid(True, alpha=0.3)
+    axes[1].grid(False)
 
     axes[2].plot(probe_x, skew, "mo-", markersize=4, linewidth=1.0)
     axes[2].axhline(0, color="gray", linestyle=":", alpha=0.5)
     axes[2].set_ylabel("Skewness", fontsize=11)
     axes[2].set_title("Residual skewness (0 = symmetric; |skew| > 2 suggests nonlinearity)", fontsize=12)
-    axes[2].grid(True, alpha=0.3)
+    axes[2].grid(False)
 
     axes[3].plot(probe_x, kurt, "co-", markersize=4, linewidth=1.0)
     axes[3].axhline(0, color="gray", linestyle=":", alpha=0.5)
     axes[3].set_xlabel("x [cm]", fontsize=11)
     axes[3].set_ylabel("Kurtosis (excess)", fontsize=11)
     axes[3].set_title("Residual excess kurtosis (0 = Gaussian; >> 0 = heavy tails)", fontsize=12)
-    axes[3].grid(True, alpha=0.3)
+    axes[3].grid(False)
 
     plt.tight_layout()
     if output_path is not None:
@@ -3374,7 +3784,7 @@ def plot_spectrogram(time, signal, fs, output_path=None, fmax=None,
     ax.set_title(title, fontsize=12)
     if fmax is not None:
         ax.set_ylim(0, fmax)
-    ax.grid(True, alpha=0.2, which="both")
+    ax.grid(False)
 
     plt.tight_layout()
     if output_path is not None:
@@ -3477,7 +3887,7 @@ def plot_fft_stft_comparison(
     if fmax is not None:
         axes[2].set_ylim(0.0, float(fmax) * 1.0e-6)
     for axis in axes:
-        axis.grid(True, alpha=0.25)
+        axis.grid(False)
     figure.suptitle(
         f"{title}\nAbsolute record start: {time[0]:.9f} s"
     )
@@ -3523,7 +3933,7 @@ def plot_envelope_with_signal(time, signal_raw, signal_filtered, envelope,
     ax.plot(time, signal_filtered, "r-", linewidth=1.0, label="Filtered")
     ax.set_ylabel("Signal", fontsize=11)
     ax.legend(fontsize=9, loc="upper right")
-    ax.grid(True, alpha=0.3)
+    ax.grid(False)
     ax.set_title(title, fontsize=12)
 
     ax = axes[1]
@@ -3539,7 +3949,7 @@ def plot_envelope_with_signal(time, signal_raw, signal_filtered, envelope,
                    linestyle="--", alpha=0.5, label="Arrival")
     ax.set_ylabel("Amplitude", fontsize=11)
     ax.legend(fontsize=9, loc="upper right")
-    ax.grid(True, alpha=0.3)
+    ax.grid(False)
 
     ax = axes[2]
     if instantaneous_frequency is not None:
@@ -3558,7 +3968,7 @@ def plot_envelope_with_signal(time, signal_raw, signal_filtered, envelope,
                 transform=ax.transAxes, ha="center", va="center")
         ax.set_ylabel("Frequency", fontsize=11)
     ax.set_xlabel("Time [s]", fontsize=11)
-    ax.grid(True, alpha=0.3)
+    ax.grid(False)
 
     plt.tight_layout()
     if output_path is not None:
@@ -3593,7 +4003,7 @@ def plot_envelope_growth(probe_x, packet_stats_list, output_path=None,
     ax.semilogy(probe_x, peak_amp, "ro-", markersize=4, linewidth=1.0)
     ax.set_ylabel("Peak envelope amplitude", fontsize=11)
     ax.set_title("Envelope peak growth vs x", fontsize=12)
-    ax.grid(True, alpha=0.3)
+    ax.grid(False)
 
     ax = axes[1]
     valid = np.isfinite(arrival)
@@ -3601,14 +4011,14 @@ def plot_envelope_growth(probe_x, packet_stats_list, output_path=None,
         ax.plot(probe_x[valid], arrival[valid], "bs-", markersize=4, linewidth=1.0)
         ax.set_ylabel("Arrival time [s]", fontsize=11)
         ax.set_title("Envelope arrival time vs x", fontsize=12)
-        ax.grid(True, alpha=0.3)
+        ax.grid(False)
 
     ax = axes[2]
     ax.semilogy(probe_x, energy, "go-", markersize=4, linewidth=1.0)
     ax.set_xlabel("x [cm]", fontsize=11)
     ax.set_ylabel("Integrated energy", fontsize=11)
     ax.set_title("Wavepacket energy vs x", fontsize=12)
-    ax.grid(True, alpha=0.3)
+    ax.grid(False)
 
     plt.tight_layout()
     if output_path is not None:
@@ -3712,7 +4122,7 @@ def plot_bicoherence_vs_x(probe_x, triad_bicoh_list, output_path=None,
     ax.set_ylabel(r"$b^2$", fontsize=12)
     ax.set_title("Triad bicoherence vs streamwise position", fontsize=13)
     ax.legend(fontsize=8, loc="best", ncol=2)
-    ax.grid(True, alpha=0.3)
+    ax.grid(False)
 
     plt.tight_layout()
     if output_path is not None:
