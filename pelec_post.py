@@ -5,9 +5,10 @@
 #  User-friendly entry point for running the PeleC post-processing pipeline.
 #
 #  For interns / new GRAs:
-#    - Edit the CONFIG dict below to control what gets processed.
-#    - Run with:  python pelec_post.py
-#    - You should NOT need to edit the functions in the *_database.py files.
+#    - Keep scientific case settings in a committed configs/*.json profile.
+#    - Keep server paths in an ignored configs/local/*.json overlay.
+#    - Run both with repeated --config arguments; later files take precedence.
+#    - You should not edit the functions in the *_database.py files.
 # =============================================================================
 
 import argparse
@@ -481,20 +482,16 @@ def _write_analysis_evidence_report(
 
 CONFIG = {
     # --- Data source ---
-    "data_source": (
-        "/lustre/isaac24/scratch/sbrollia/TS-Driver/"
-        "FP-Extended-Domain/pltFile"
-    ),
-    "plot_prefix": "pltFlatPlateFlow",
-    "output_dir": (
-        "/lustre/isaac24/scratch/sbrollia/TS-Driver/"
-        "FP-Extended-Domain/3-Plot-Outputs/GIP-PreLaser"
-    ),
+    # Portable fallbacks only. Real data/output locations belong in a
+    # configs/local/*.json server overlay.
+    "data_source": "../data",
+    "plot_prefix": "plt",
+    "output_dir": "post_processing_output",
 
     # --- Snapshot range ---
     # Set to None to process all discovered plotfiles.
-    "snapshot_start": 210729,
-    "snapshot_end": 210729,
+    "snapshot_start": None,
+    "snapshot_end": None,
     "snapshot_step": 1,
 
     # --- Field aliases ---
@@ -620,7 +617,7 @@ CONFIG = {
     "line_blasius_compressible_overlay": False,
     "line_compare_overlay": False,
     
-    "line_compare_plotfile": "/lustre/isaac24/scratch/sbrollia/TS-Driver/FP-ED-Refined-1/pltFile/pltFlatPlateFlow260631",   # Optional external plotfile directory to overlay against current simulation
+    "line_compare_plotfile": None,
     "line_compare_label": "Refined-ED",
     "line_compare_color": "C6",
     "line_compare_linestyle": "--",
@@ -755,21 +752,18 @@ CONFIG = {
     "num_processes": 2,
 
     # --- Probe processing settings ---
-    "probe_bin_files": [
-        "../TS-Driver/Asym_Kernel_Tests/Asym_JW/probes/"
-        "kernel-probe.segment*.pbin",
-    ],
+    "probe_bin_files": [],
     # Optional self-contained archive produced by compact_probes.py. When
     # configured, this takes precedence over .pbin and ASCII sources.
     "probe_compact_file": None,
-    "probe_output_dir": "../TS-Driver/Asym_Kernel_Tests/Asym_JW/probes",
+    "probe_output_dir": "probes",
     "probe_max": 50,
     "probe_fields": ["rho", "u", "p", "T"],
     "probe_convert_to_mks": False,
 
     # --- FFT probe analysis settings ---
     "fft_use_binary": True,        # read probes directly from binary for FFT/stability
-    "probe_dir": "../TS-Driver/Asym_Kernel_Tests/Asym_JW/probes",
+    "probe_dir": "probes",
     "probe_prefix": "kernel-probe",
     # Probe column for FFT/stability/transient/modal/nonlinear analysis:
     # 1=density, 2=streamwise velocity, 3=pressure, 4=temperature.
@@ -812,7 +806,7 @@ CONFIG = {
     # The source is the domain-integrated temporal deposition model. It is
     # analytically exact for fixed-volume deposition and the uniform-density
     # calibration reference for fixed-specific-energy deposition.
-    "make_source_response_analysis": True,
+    "make_source_response_analysis": False,
     "source_response": {
         "model": "single_gaussian",
         "spatial_shape_label": "gaussian_kernel",
@@ -826,6 +820,12 @@ CONFIG = {
         # source history for transfer ratios. Probe mean subtraction removes
         # the ambient-state baseline and remains controlled by fft_* above.
         "transfer_source_mean_subtraction": "none",
+        # A single pulse is analyzed as a finite record. A rectangular window
+        # avoids weighting the source and delayed response by different Hann
+        # coefficients; the response baseline comes only from quiescent data.
+        "transfer_window": "none",
+        "response_baseline_end_time_s": None,
+        "minimum_baseline_samples": 8,
         # Direct ratios are masked when the processed source is this far below
         # its peak, preventing division by its negligible high-frequency tail.
         "minimum_relative_source_amplitude": 1.0e-3,
@@ -835,7 +835,7 @@ CONFIG = {
     # --- Spatial FFT along the fixed y=2.5 cm probe aperture ---
     # The transform is descriptive: it measures spatial energy and a
     # response/source ratio, but does not identify an LST eigenmode.
-    "make_spatial_fft": True,
+    "make_spatial_fft": False,
     "spatial_fft": {
         "model": "wang_kernel",
         "center_x_cm": 2.5,
@@ -844,7 +844,12 @@ CONFIG = {
         "wang_length_cm": 0.184,
         "wang_aspect_ratio": 3.23,
         "wang_asymmetry": 1.24,
-        "mean_subtraction": "mean",
+        # A quiescent pre-event interval defines q0(x); spectra use q-q0.
+        # Keep spatial DC by default because net heating is physical.
+        "baseline_mode": "pre_event_mean",  # "pre_event_mean" | "none"
+        "baseline_end_time_s": None,  # None -> start of truncated source pulse
+        "minimum_baseline_samples": 8,
+        "mean_subtraction": "none",
         "window": "hann",
         "window_compensation": True,
         "zero_padding": 0,
@@ -855,44 +860,36 @@ CONFIG = {
         # only when a reduced, evenly spaced snapshot set is desired.
         "max_snapshots": None,
         "wavenumber_colorbar_vmax": 50000.0,
+        "make_k_omega": True,
+        "k_omega_temporal_window": "none",
+        "k_omega_spatial_window": "hann",
+        "k_omega_temporal_mean_subtraction": "none",
+        "k_omega_spatial_mean_subtraction": "none",
+        "k_omega_temporal_zero_padding": 0,
+        "k_omega_spatial_zero_padding": 0,
+        "k_omega_frequency_max_hz": 200.0e6,
+        "k_omega_db_floor": -80.0,
+        "k_omega_trustworthy_nyquist_fraction": 0.8,
     },
-    "make_spatial_case_comparison": True,
+    "make_spatial_case_comparison": False,
     "spatial_case_comparison": {
         "baseline_label": "Gaus_JW",
-        "baseline_archive": (
-            "../TS-Driver/Asym_Kernel_Tests/Gaus_JW/Plots/Spatial-FFT/"
-            "spatial_spectral_summary_temperature.npz"
-        ),
+        "baseline_archive": None,
         "comparison_label": "Asym_JW",
-        "comparison_archive": (
-            "../TS-Driver/Asym_Kernel_Tests/Asym_JW/Plots/Spatial-FFT/"
-            "spatial_spectral_summary_temperature.npz"
-        ),
+        "comparison_archive": None,
     },
     # --- Direct Gaussian-versus-Asym spectral comparison ---
     # Gaus_JW is deliberately the reference in both the figure titles and
     # Asym_JW/Gaus_JW ratio; station IDs are checked against physical x values.
     # FFT filenames include the selected variable slug (e.g. _pressure below).
-    "make_case_spectrum_comparison": True,
+    "make_case_spectrum_comparison": False,
     "case_spectrum_comparison": {
         "baseline_label": "Gaus_JW",
-        "baseline_source_response_archive": (
-            "../TS-Driver/Asym_Kernel_Tests/Gaus_JW/Plots/FFT-Probes/"
-            "source_response_spectrum_temperature.npz"
-        ),
-        "baseline_spectral_summary_archive": (
-            "../TS-Driver/Asym_Kernel_Tests/Gaus_JW/Plots/FFT-Probes/"
-            "spectral_summary_temperature.npz"
-        ),
+        "baseline_source_response_archive": None,
+        "baseline_spectral_summary_archive": None,
         "comparison_label": "Asym_JW",
-        "comparison_source_response_archive": (
-            "../TS-Driver/Asym_Kernel_Tests/Asym_JW/Plots/FFT-Probes/"
-            "source_response_spectrum_temperature.npz"
-        ),
-        "comparison_spectral_summary_archive": (
-            "../TS-Driver/Asym_Kernel_Tests/Asym_JW/Plots/FFT-Probes/"
-            "spectral_summary_temperature.npz"
-        ),
+        "comparison_source_response_archive": None,
+        "comparison_spectral_summary_archive": None,
         "probe_indices": [0, 10, 20, 30, 40, 49],
         "plot_fmax_hz": 200.0e6,
     },
@@ -4769,31 +4766,75 @@ def _process_fft_probes(config, probe_data=None):
                 mean_subtraction=source_cfg.get(
                     "transfer_source_mean_subtraction", "none"
                 ),
-                window=config.get("fft_window", "hann"),
-                window_compensation=config.get(
-                    "fft_window_compensation", True
-                ),
+                window=source_cfg.get("transfer_window", "none"),
+                window_compensation=True,
             )
             if not np.allclose(source_result["frequency_hz"], freq):
                 raise RuntimeError(
                     "Source and probe FFT frequency grids do not match"
                 )
-            response_complex = np.fft.rfft(signal_matrix, axis=0)
-            response_complex *= win_scale / L
+            baseline_end = source_cfg.get("response_baseline_end_time_s")
+            if baseline_end is None:
+                baseline_end = (
+                    source_result["center_s"]
+                    - float(source_cfg.get("cutoff_sigma", 4.0))
+                    * source_result["sigma_s"]
+                )
+            baseline_mask = time_uniform < float(baseline_end)
+            minimum_baseline_samples = int(source_cfg.get(
+                "minimum_baseline_samples", 8
+            ))
+            if np.count_nonzero(baseline_mask) < minimum_baseline_samples:
+                raise ValueError(
+                    "Single-pulse response baseline contains fewer than "
+                    f"{minimum_baseline_samples} quiescent samples"
+                )
+            transfer_window, transfer_gain = fdb._fft_window(
+                L, source_cfg.get("transfer_window", "none")
+            )
+            response_complex = np.empty((n_freq, n_valid), dtype=complex)
+            response_baseline = np.empty(n_valid, dtype=float)
+            for first in range(0, n_valid, fft_batch_size):
+                last = min(first + fft_batch_size, n_valid)
+                raw_batch = np.asarray(raw_matrix[:, first:last], dtype=float)
+                if not np.all(np.isfinite(raw_batch)):
+                    raise ValueError(
+                        "Probe response contains NaN or infinite values"
+                    )
+                batch_baseline = np.mean(
+                    raw_batch[baseline_mask, :], axis=0
+                )
+                response_baseline[first:last] = batch_baseline
+                response_work = raw_batch - batch_baseline[None, :]
+                response_work *= transfer_window[:, None]
+                response_complex[:, first:last] = (
+                    np.fft.rfft(response_work, axis=0)
+                    * transfer_gain / L
+                )
             transfer_result = fdb.compute_single_pulse_transfer_function(
                 source_result["processed_complex"], response_complex,
                 minimum_relative_source_amplitude=source_cfg.get(
                     "minimum_relative_source_amplitude", 1.0e-3
                 ),
             )
+            response_amplitude = np.abs(response_complex)
+            if L % 2 == 0 and response_amplitude.shape[0] > 2:
+                response_amplitude[1:-1, :] *= 2.0
+            elif L % 2 == 1 and response_amplitude.shape[0] > 1:
+                response_amplitude[1:, :] *= 2.0
             source_response_result = {
                 "source": source_result,
                 "transfer": transfer_result,
                 "config": source_cfg,
+                "response_baseline": response_baseline,
+                "response_amplitude": response_amplitude,
+                "baseline_start_time_s": float(time_uniform[baseline_mask][0]),
+                "baseline_end_time_s": float(time_uniform[baseline_mask][-1]),
+                "baseline_sample_count": int(np.count_nonzero(baseline_mask)),
             }
             _ts(
-                "  Computed single-pulse source spectrum and direct "
-                "source-to-response transfer ratio"
+                "  Computed single-pulse source spectrum and quiescent-"
+                "baseline finite-record deconvolution"
             )
 
         # Auto-detect dominant frequency from FFT spectrum (exclude DC)
@@ -4898,6 +4939,9 @@ def _process_fft_probes(config, probe_data=None):
                 source_physical_spectrum=source_result["physical_spectrum"],
                 source_ideal_spectrum=source_result["ideal_spectrum"],
                 source_processed_amplitude=source_result["processed_amplitude"],
+                response_processed_amplitude=source_response_result[
+                    "response_amplitude"
+                ],
                 source_sigma_s=np.array(source_result["sigma_s"]),
                 source_center_s=np.array(source_result["center_s"]),
                 source_energy_per_pulse=np.array(
@@ -4921,6 +4965,24 @@ def _process_fft_probes(config, probe_data=None):
                 transfer_minimum_source_amplitude=np.array(
                     transfer_result["minimum_source_amplitude"]
                 ),
+                response_quiescent_baseline=source_response_result[
+                    "response_baseline"
+                ],
+                response_baseline_start_time_s=np.array(
+                    source_response_result["baseline_start_time_s"]
+                ),
+                response_baseline_end_time_s=np.array(
+                    source_response_result["baseline_end_time_s"]
+                ),
+                response_baseline_sample_count=np.array(
+                    source_response_result["baseline_sample_count"]
+                ),
+                transfer_estimator=np.array(
+                    "single-pulse finite-record deconvolution"
+                ),
+                transfer_window=np.array(
+                    source_cfg.get("transfer_window", "none")
+                ),
                 signal_name=np.array(var_meta["name"]),
                 signal_unit_cgs=np.array(var_meta["unit_cgs"]),
             )
@@ -4935,7 +4997,8 @@ def _process_fft_probes(config, probe_data=None):
             )
             pdb.plot_normalized_source_response_spectra(
                 freq, source_result["processed_amplitude"],
-                P1[:, transfer_indices], transfer_labels,
+                source_response_result["response_amplitude"][:, transfer_indices],
+                transfer_labels,
                 output_path=str(
                     output_dir
                     / f"normalized_source_response_spectra_{var_slug}.png"
@@ -6147,6 +6210,8 @@ def _process_stability_diagnostics(config, probe_data=None):
                     "omega_t_minus_alpha_x",
                 ),
             )
+            wave_data["signal_name"] = var_meta["name"]
+            wave_data["signal_unit_cgs"] = var_meta["unit_cgs"]
             wave_x = wave_data["x_center_m"]
             wave_u_edge = np.interp(
                 wave_x, bl_x, freq_data["u_edge"]
@@ -7454,7 +7519,43 @@ def _process_spatial_fft_probes(config, probe_data=None):
 
         x_m = probe_x_cm * 1.0e-2
         y_m = probe_y_cm * 1.0e-2
-        selected_signals = signal_matrix[snapshot_indices, :]
+        baseline_mode = str(
+            spatial_cfg.get("baseline_mode", "pre_event_mean")
+        ).lower()
+        if baseline_mode == "pre_event_mean":
+            baseline_end = spatial_cfg.get("baseline_end_time_s")
+            if baseline_end is None:
+                source_cfg = config.get("source_response", {})
+                pulse_fwhm = float(source_cfg["pulse_fwhm_s"])
+                sigma = pulse_fwhm / (
+                    2.0 * np.sqrt(2.0 * np.log(2.0))
+                )
+                pulse_center = (
+                    float(source_cfg.get("start_time_s", 0.0))
+                    + 0.5 * float(source_cfg["pulse_period_s"])
+                )
+                baseline_end = pulse_center - float(
+                    source_cfg.get("cutoff_sigma", 4.0)
+                ) * sigma
+            baseline_result = fdb.subtract_quiescent_probe_baseline(
+                time_s, signal_matrix, float(baseline_end),
+                minimum_samples=int(
+                    spatial_cfg.get("minimum_baseline_samples", 8)
+                ),
+            )
+            disturbance_matrix = baseline_result["disturbance"]
+            baseline = baseline_result["baseline"]
+        elif baseline_mode == "none":
+            disturbance_matrix = np.asarray(signal_matrix, dtype=float)
+            baseline = np.zeros(disturbance_matrix.shape[1], dtype=float)
+            baseline_result = {
+                "baseline_start_time_s": np.nan,
+                "baseline_end_time_s": np.nan,
+                "baseline_sample_count": 0,
+            }
+        else:
+            raise ValueError("spatial_fft.baseline_mode must be pre_event_mean or none")
+        selected_signals = disturbance_matrix[snapshot_indices, :]
         fft_kwargs = {
             "mean_subtraction": spatial_cfg.get("mean_subtraction", "mean"),
             "window": spatial_cfg.get("window", "hann"),
@@ -7498,7 +7599,7 @@ def _process_spatial_fft_probes(config, probe_data=None):
         summary = {
             "wavenumber_rad_per_m": response["wavenumber_rad_per_m"],
             "probe_x_m": response["probe_x_m"],
-            "probe_y_m": y_m[order],
+            "probe_y_m": y_m,
             "source_profile": source["profile"],
             "source_spatial_integral_m2": np.array(
                 source["spatial_integral_m2"]
@@ -7510,6 +7611,24 @@ def _process_spatial_fft_probes(config, probe_data=None):
             "response_amplitude": response["amplitude"],
             "response_signal_name": np.array(signal_name),
             "response_signal_unit_cgs": np.array(var_meta["unit_cgs"]),
+            "response_definition": np.array(
+                "per-probe disturbance q'(x,t)=q(x,t)-q0(x)"
+            ),
+            "quiescent_baseline": baseline,
+            "baseline_mode": np.array(baseline_mode),
+            "baseline_start_time_s": np.array(
+                baseline_result["baseline_start_time_s"]
+            ),
+            "baseline_end_time_s": np.array(
+                baseline_result["baseline_end_time_s"]
+            ),
+            "baseline_sample_count": np.array(
+                baseline_result["baseline_sample_count"]
+            ),
+            "event_start_time_s": np.array(
+                float(baseline_end) if baseline_mode == "pre_event_mean"
+                else np.nan
+            ),
             "transfer_magnitude": transfer["magnitude"],
             "transfer_phase_rad": transfer["phase_rad"],
             "valid_wavenumber": transfer["valid_wavenumber"],
@@ -7517,13 +7636,33 @@ def _process_spatial_fft_probes(config, probe_data=None):
             "snapshot_indices": snapshot_indices,
             "sample_interval_s": np.array(dt_use),
             "dx_m": np.array(response["dx_m"]),
+            "sample_span_m": np.array(response["sample_span_m"]),
             "physical_aperture_m": np.array(response["physical_aperture_m"]),
+            "dft_record_length_m": np.array(response["dft_record_length_m"]),
+            "transform_record_length_m": np.array(
+                response["transform_record_length_m"]
+            ),
+            "native_delta_k_rad_per_m": np.array(
+                response["native_delta_k_rad_per_m"]
+            ),
+            "display_delta_k_rad_per_m": np.array(
+                response["display_delta_k_rad_per_m"]
+            ),
+            "nyquist_wavenumber_rad_per_m": np.array(
+                response["nyquist_wavenumber_rad_per_m"]
+            ),
+            "n_spatial_samples": np.array(response["n_spatial_samples"]),
+            "transform_length": np.array(response["transform_length"]),
             "zero_padding": np.array(response["zero_padding"]),
             "wavenumber_colorbar_vmax": np.array(
                 spatial_cfg.get("wavenumber_colorbar_vmax", np.nan)
             ),
             "source_model": np.array(model),
             "transform_convention": np.array(response["transform_convention"]),
+            "source_response_ratio_interpretation": np.array(
+                "diagnostic source-shape-normalized response; not a "
+                "dimensionless transfer function"
+            ),
         }
         np.savez_compressed(
             output_dir / f"spatial_spectral_summary_{var_slug}.npz", **summary
@@ -7557,6 +7696,72 @@ def _process_spatial_fft_probes(config, probe_data=None):
                 output_dir / f"spatial_transfer_wavenumber_{var_slug}.png"
             ),
         )
+        if spatial_cfg.get("make_k_omega", True):
+            k_omega = fdb.compute_wavenumber_frequency_spectrum(
+                disturbance_matrix, time_s, x_m,
+                temporal_window=spatial_cfg.get(
+                    "k_omega_temporal_window", "none"
+                ),
+                spatial_window=spatial_cfg.get(
+                    "k_omega_spatial_window", "hann"
+                ),
+                temporal_mean_subtraction=spatial_cfg.get(
+                    "k_omega_temporal_mean_subtraction", "none"
+                ),
+                spatial_mean_subtraction=spatial_cfg.get(
+                    "k_omega_spatial_mean_subtraction", "none"
+                ),
+                temporal_zero_padding=int(spatial_cfg.get(
+                    "k_omega_temporal_zero_padding", 0
+                )),
+                spatial_zero_padding=int(spatial_cfg.get(
+                    "k_omega_spatial_zero_padding", 0
+                )),
+                window_compensation=bool(spatial_cfg.get(
+                    "window_compensation", True
+                )),
+            )
+            k_omega_archive = output_dir / f"k_omega_spectrum_{var_slug}.npz"
+            np.savez_compressed(
+                k_omega_archive,
+                frequency_hz=k_omega["frequency_hz"],
+                wavenumber_rad_per_m=k_omega["wavenumber_rad_per_m"],
+                power=k_omega["power"],
+                amplitude=k_omega["amplitude"],
+                native_frequency_resolution_hz=np.array(
+                    k_omega["native_frequency_resolution_hz"]
+                ),
+                display_frequency_spacing_hz=np.array(
+                    k_omega["display_frequency_spacing_hz"]
+                ),
+                native_wavenumber_resolution_rad_per_m=np.array(
+                    k_omega["native_wavenumber_resolution_rad_per_m"]
+                ),
+                display_wavenumber_spacing_rad_per_m=np.array(
+                    k_omega["display_wavenumber_spacing_rad_per_m"]
+                ),
+                nyquist_frequency_hz=np.array(k_omega["nyquist_frequency_hz"]),
+                nyquist_wavenumber_rad_per_m=np.array(
+                    k_omega["nyquist_wavenumber_rad_per_m"]
+                ),
+                direction_convention=np.array(k_omega["direction_convention"]),
+                response_signal_name=np.array(signal_name),
+                response_signal_unit_cgs=np.array(var_meta["unit_cgs"]),
+            )
+            pdb.plot_wavenumber_frequency_spectrum(
+                k_omega,
+                output_path=str(
+                    output_dir / f"k_omega_spectrum_{var_slug}.png"
+                ),
+                frequency_max_hz=spatial_cfg.get(
+                    "k_omega_frequency_max_hz"
+                ),
+                db_floor=float(spatial_cfg.get("k_omega_db_floor", -80.0)),
+                trustworthy_nyquist_fraction=float(spatial_cfg.get(
+                    "k_omega_trustworthy_nyquist_fraction", 0.8
+                )),
+                signal_name=var_meta["name"],
+            )
         _ts(
             f"  Spatial FFT: {len(snapshot_indices)} snapshots x "
             f"{len(probe_x_cm)} probes; aperture={response['physical_aperture_m']:.6e} m"
@@ -7605,8 +7810,12 @@ def _process_spatial_case_comparison(config):
                     or not np.allclose(baseline["probe_x_m"], comparison["probe_x_m"],
                                        rtol=1.0e-10, atol=1.0e-12)):
                 raise ValueError("Spatial case coordinates or wavenumber grids do not match")
-            baseline_response = np.nanmean(np.asarray(baseline["response_amplitude"]), axis=0)
-            comparison_response = np.nanmean(np.asarray(comparison["response_amplitude"]), axis=0)
+            baseline_response = np.sqrt(np.nanmean(
+                np.asarray(baseline["response_amplitude"]) ** 2, axis=0
+            ))
+            comparison_response = np.sqrt(np.nanmean(
+                np.asarray(comparison["response_amplitude"]) ** 2, axis=0
+            ))
             response_signal_name = "selected probe signal"
             if "response_signal_name" in baseline.files:
                 response_signal_name = str(
@@ -7860,6 +8069,10 @@ def main(config=None):
     _ts(f"  Force animation:  {'ON  ✓' if config.get('make_force_animation', False) else 'OFF ✗'}")
     _ts(f"  Probe plots:      {'ON  ✓' if config.get('make_probe_plots', False) else 'OFF ✗'}")
     _ts(f"  FFT probes:       {'ON  ✓' if config.get('make_fft_probes', False) else 'OFF ✗'}")
+    _ts(f"  Pulse deconv:     {'ON  ✓' if config.get('make_source_response_analysis', False) else 'OFF ✗'}")
+    _ts(f"  Spatial FFT:      {'ON  ✓' if config.get('make_spatial_fft', False) else 'OFF ✗'}")
+    _ts(f"  Spatial compare:  {'ON  ✓' if config.get('make_spatial_case_comparison', False) else 'OFF ✗'}")
+    _ts(f"  Spectrum compare: {'ON  ✓' if config.get('make_case_spectrum_comparison', False) else 'OFF ✗'}")
     _ts(f"  p' contours:      {'ON  ✓' if config.get('make_pprime_contour', False) else 'OFF ✗'}")
     _ts(f"  Stability diag:   {'ON  ✓' if config.get('make_stability_diagnostics', False) else 'OFF ✗'}")
     _ts(f"  Disturbance recon:{'ON  ✓' if config.get('make_disturbance_reconstruction', False) else 'OFF ✗'}")
@@ -8806,7 +9019,11 @@ def _parse_command_line(argv=None):
     )
     parser.add_argument(
         "--config",
-        help="partial JSON configuration overlay (unknown keys are rejected)",
+        action="append",
+        help=(
+            "partial JSON configuration overlay; repeat in precedence order "
+            "(unknown keys are rejected)"
+        ),
     )
     parser.add_argument("--output-dir", help="override the configured output directory")
     parser.add_argument("--snapshot-start", type=int)

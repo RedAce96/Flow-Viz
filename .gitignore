@@ -6,3 +6,4 @@
 *.npz
 Delta*
 *.txt
+configs/local/*.json

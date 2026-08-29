@@ -2210,7 +2210,8 @@ def _robust_symmetric_limit(values, percentile=98.0):
     return limit if limit > 0.0 else 1.0
 
 
-def plot_wavenumber_summary(data, output_path=None, figsize=(18, 13)):
+def plot_wavenumber_summary(
+        data, output_path=None, figsize=(18, 13), show_grid=True):
     """Plot measured frequency-resolved wavenumber and phase-speed products.
 
     These panels show dominant coherent wave estimates from the probe line.
@@ -2243,7 +2244,8 @@ def plot_wavenumber_summary(data, output_path=None, figsize=(18, 13)):
         shading="auto", cmap="magma", vmin=-60.0, vmax=0.0,
     )
     fig.colorbar(mesh, ax=ax_power, label="Local spectral power [dB re max]")
-    ax_power.set_title("Measured pressure energy")
+    signal_name = str(np.asarray(data.get("signal_name", "probe signal")).item())
+    ax_power.set_title(f"Measured {signal_name.lower()} spectral energy")
 
     real_plot = np.where(phase_valid, alpha_real, np.nan)
     real_limit = _robust_symmetric_limit(real_plot)
@@ -2322,7 +2324,10 @@ def plot_wavenumber_summary(data, output_path=None, figsize=(18, 13)):
         ax.set_yscale("log")
         ax.set_xlabel("x [m]")
         ax.set_ylabel("Frequency [Hz]")
-        ax.grid(False)
+        if show_grid:
+            ax.grid(True, which="both", alpha=0.15)
+        else:
+            ax.grid(False)
     fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.94])
     if output_path is not None:
         fig.savefig(output_path, dpi=220, bbox_inches="tight")
@@ -2331,7 +2336,7 @@ def plot_wavenumber_summary(data, output_path=None, figsize=(18, 13)):
 
 
 def plot_phase_speed_dispersion(data, output_path=None, n_stations=5,
-                                figsize=(16, 9)):
+                                figsize=(16, 9), show_grid=True):
     """Plot local measured phase-speed dispersion with acoustic references."""
     frequency = np.asarray(data["frequency_hz"], dtype=float)
     x = np.asarray(data["x_center_m"], dtype=float)
@@ -2383,7 +2388,10 @@ def plot_phase_speed_dispersion(data, output_path=None, n_stations=5,
                 label=r"$U_e+a_e$",
             )
         ax.set_title(f"x = {x[index]:.4f} m")
-        ax.grid(False)
+        if show_grid:
+            ax.grid(True, which="both", alpha=0.2)
+        else:
+            ax.grid(False)
     for ax in axes.flat[len(indices):]:
         ax.set_visible(False)
     for ax in axes[-1, :]:
@@ -2440,11 +2448,38 @@ def plot_pair_coherence(pair_results, output_path=None, fmax=None,
     return fig
 
 
-def _positive_wavenumber_view(wavenumber, values):
+def _positive_wavenumber_view(wavenumber, values, one_sided_amplitude=False):
+    """Return non-negative bins, preserving the even-length Nyquist sample.
+
+    ``fftshift`` stores the unique Nyquist sample at negative k for an even
+    transform.  It is moved to +k here.  When requested, paired interior
+    amplitudes are doubled while DC and Nyquist remain undoubled.
+    """
     wavenumber = np.asarray(wavenumber, dtype=float)
     values = np.asarray(values)
-    mask = wavenumber >= 0.0
-    return wavenumber[mask], values[..., mask], mask
+    if wavenumber.ndim != 1 or values.shape[-1] != wavenumber.size:
+        raise ValueError("values must end with the wavenumber dimension")
+    if wavenumber.size < 2 or not np.all(np.diff(wavenumber) > 0.0):
+        raise ValueError("wavenumber must be a strictly increasing grid")
+    tolerance = 16.0 * np.finfo(float).eps * max(
+        1.0, float(np.max(np.abs(wavenumber)))
+    )
+    indices = np.flatnonzero(wavenumber >= -tolerance)
+    positive_k = np.maximum(wavenumber[indices], 0.0)
+    positive_values = values[..., indices].copy()
+    nyquist_appended = False
+    if abs(wavenumber[0]) > wavenumber[-1] + tolerance:
+        positive_k = np.concatenate((positive_k, [-wavenumber[0]]))
+        positive_values = np.concatenate(
+            (positive_values, values[..., :1]), axis=-1
+        )
+        nyquist_appended = True
+    if one_sided_amplitude:
+        doubled = positive_k > tolerance
+        if nyquist_appended:
+            doubled[-1] = False
+        positive_values[..., doubled] *= 2.0
+    return positive_k, positive_values, indices
 
 
 def plot_spatial_source_spectrum(source_result, output_path=None,
@@ -2454,15 +2489,17 @@ def plot_spatial_source_spectrum(source_result, output_path=None,
     profile = np.asarray(source_result["profile"], dtype=float)
     k = np.asarray(source_result["wavenumber_rad_per_m"], dtype=float)
     amplitude = np.asarray(source_result["amplitude"], dtype=float).reshape(-1)
-    positive_k, positive_amplitude, _ = _positive_wavenumber_view(k, amplitude)
+    positive_k, positive_amplitude, _ = _positive_wavenumber_view(
+        k, amplitude, one_sided_amplitude=True
+    )
     fig, axes = plt.subplots(1, 2, figsize=figsize)
     axes[0].plot(x, profile, color="C0")
     axes[0].set_xlabel("Probe-line x [m]")
     axes[0].set_ylabel("Kernel profile [relative]")
     axes[0].set_title(f"{source_result.get('model', 'source')} source profile")
     axes[1].plot(positive_k, positive_amplitude, color="C3")
-    axes[1].set_xlabel(r"Wavenumber $|k|$ [rad m$^{-1}$]")
-    axes[1].set_ylabel("Source amplitude [relative]")
+    axes[1].set_xlabel(r"Wavenumber $k$ [rad m$^{-1}$]")
+    axes[1].set_ylabel(r"One-sided source coefficient [m$^{-2}$]")
     axes[1].set_title("Exact spatial source spectrum")
     for ax in axes:
         ax.grid(False)
@@ -2478,26 +2515,39 @@ def plot_spatial_response_spectrum(data, output_path=None, figsize=(12, 8)):
     k = np.asarray(data["wavenumber_rad_per_m"], dtype=float)
     amplitude = np.asarray(data["response_amplitude"], dtype=float)
     time = np.asarray(data.get("snapshot_time_s", np.arange(amplitude.shape[0])))
-    positive_k, positive_amplitude, _ = _positive_wavenumber_view(k, amplitude)
+    event_start = float(data.get("event_start_time_s", 0.0))
+    if not np.isfinite(event_start):
+        event_start = 0.0
+    time_plot = (time - event_start) * 1.0e6
+    positive_k, positive_amplitude, _ = _positive_wavenumber_view(
+        k, amplitude, one_sided_amplitude=True
+    )
     reference = np.nanmax(positive_amplitude)
+    if not np.isfinite(reference) or reference <= 0.0:
+        raise ValueError("spatial response amplitude is identically zero")
     response_db = 20.0 * np.log10(
         np.maximum(positive_amplitude, np.finfo(float).tiny)
         / max(reference, np.finfo(float).tiny)
     )
     fig, axes = plt.subplots(2, 1, figsize=figsize, sharex=True)
     mesh = axes[0].pcolormesh(
-        time, positive_k, positive_amplitude.T, shading="auto", cmap="magma"
+        time_plot, positive_k, positive_amplitude.T, shading="auto", cmap="magma"
     )
-    fig.colorbar(mesh, ax=axes[0], label="Response amplitude [relative]")
-    axes[0].set_ylabel(r"Wavenumber $|k|$ [rad m$^{-1}$]")
+    signal_name = str(np.asarray(data.get("response_signal_name", "signal")).item())
+    signal_unit = str(np.asarray(data.get("response_signal_unit_cgs", "")).item())
+    amplitude_label = f"One-sided {signal_name} coefficient"
+    if signal_unit:
+        amplitude_label += f" [{signal_unit}]"
+    fig.colorbar(mesh, ax=axes[0], label=amplitude_label)
+    axes[0].set_ylabel(r"Wavenumber $k$ [rad m$^{-1}$]")
     axes[0].set_title("Measured spatial response: wavenumber versus time")
     mesh = axes[1].pcolormesh(
-        time, positive_k, response_db.T, shading="auto", cmap="viridis",
+        time_plot, positive_k, response_db.T, shading="auto", cmap="viridis",
         vmin=-60.0, vmax=0.0,
     )
     fig.colorbar(mesh, ax=axes[1], label="Response amplitude [dB re max]")
-    axes[1].set_xlabel("Snapshot time [s]")
-    axes[1].set_ylabel(r"Wavenumber $|k|$ [rad m$^{-1}$]")
+    axes[1].set_xlabel("Time from source onset [µs]")
+    axes[1].set_ylabel(r"Wavenumber $k$ [rad m$^{-1}$]")
     for ax in axes:
         ax.grid(False)
     fig.tight_layout()
@@ -2507,51 +2557,145 @@ def plot_spatial_response_spectrum(data, output_path=None, figsize=(12, 8)):
     return fig
 
 
-def plot_wavenumber_time_contour(data, output_path=None, figsize=(12, 7)):
+def plot_wavenumber_time_contour(
+        data, output_path=None, figsize=(12, 7), show_grid=False):
     """Plot one-sided spatial-spectrum amplitude versus time and wavenumber."""
     k = np.asarray(data["wavenumber_rad_per_m"], dtype=float)
     amplitude = np.asarray(data["response_amplitude"], dtype=float)
     time = np.asarray(data.get("snapshot_time_s", np.arange(amplitude.shape[0])))
+    event_start = float(data.get("event_start_time_s", 0.0))
+    if not np.isfinite(event_start):
+        event_start = 0.0
+    time_plot = (time - event_start) * 1.0e6
     aperture = float(data["physical_aperture_m"])
     dx = float(data["dx_m"])
     if aperture <= 0.0 or dx <= 0.0:
         raise ValueError("physical_aperture_m and dx_m must be positive")
 
-    positive_k, positive_amplitude, _ = _positive_wavenumber_view(k, amplitude)
-    one_sided_amplitude = positive_amplitude.copy()
-    one_sided_amplitude[..., positive_k > 0.0] *= 2.0
-    delta_k = 2.0 * np.pi / aperture
-    k_nyquist = np.pi / dx
-    colorbar_vmax = float(data.get("wavenumber_colorbar_vmax", np.nanmax(
-        one_sided_amplitude
-    )))
+    positive_k, one_sided_amplitude, _ = _positive_wavenumber_view(
+        k, amplitude, one_sided_amplitude=True
+    )
+    native_delta_k = float(data.get(
+        "native_delta_k_rad_per_m", 2.0 * np.pi / aperture
+    ))
+    display_delta_k = float(data.get(
+        "display_delta_k_rad_per_m",
+        np.median(np.diff(positive_k)) if positive_k.size > 1 else native_delta_k,
+    ))
+    k_nyquist = float(data.get("nyquist_wavenumber_rad_per_m", np.pi / dx))
+    configured_vmax = data.get("wavenumber_colorbar_vmax")
+    try:
+        configured_vmax = (
+            None if configured_vmax is None
+            or np.asarray(configured_vmax).item() is None
+            else float(configured_vmax)
+        )
+    except (TypeError, ValueError):
+        configured_vmax = None
+    colorbar_vmax = (
+        float(np.nanpercentile(one_sided_amplitude, 99.5))
+        if configured_vmax is None or not np.isfinite(configured_vmax)
+        else configured_vmax
+    )
     if not np.isfinite(colorbar_vmax) or colorbar_vmax <= 0.0:
         raise ValueError("wavenumber_colorbar_vmax must be positive")
     fig, ax = plt.subplots(figsize=figsize)
     mesh = ax.pcolormesh(
-        time, positive_k, one_sided_amplitude.T, shading="auto", cmap="magma",
+        time_plot, positive_k, one_sided_amplitude.T, shading="auto", cmap="magma",
         vmin=0.0, vmax=colorbar_vmax,
     )
     fig.colorbar(
         mesh, ax=ax,
         label="One-sided spatial FFT amplitude",
     )
-    ax.axhline(delta_k, color="white", linestyle="--", linewidth=0.8)
-    ax.set_xlabel("Snapshot time [s]")
+    ax.axhline(native_delta_k, color="white", linestyle="--", linewidth=0.8)
+    ax.set_xlabel("Time from source onset [µs]")
     ax.set_ylabel(r"Wavenumber $k \, (k \geq 0)$ [rad m$^{-1}$]")
     ax.set_title(
         "Measured spatial spectrum: one-sided wavenumber amplitude versus time\n"
-        rf"$\Delta k={delta_k:.3g}$ rad m$^{{-1}}$ "
-        rf"(first nonzero bin; aperture $L={aperture:.3g}$ m); "
+        rf"native resolution $\Delta k={native_delta_k:.3g}$ rad m$^{{-1}}$; "
+        rf"display spacing ${display_delta_k:.3g}$ rad m$^{{-1}}$; "
+        rf"DFT length $L={aperture:.3g}$ m; "
         rf"$k_{{Ny}}={k_nyquist:.3g}$ rad m$^{{-1}}$ "
         rf"($\lambda_{{min}}=2\Delta x={2.0 * dx:.3g}$ m)"
     )
     ax.text(
-        0.01, 0.01, r"One-sided amplitude: $2|\hat{q}(k)|$ for $k>0$; DC undoubled",
+        0.01, 0.01,
+        r"One-sided amplitude: paired bins doubled; DC and Nyquist undoubled",
         transform=ax.transAxes, color="white", fontsize=9,
         verticalalignment="bottom",
     )
-    ax.grid(False)
+    if show_grid:
+        ax.grid(True, alpha=0.15)
+    else:
+        ax.grid(False)
+    fig.tight_layout()
+    if output_path is not None:
+        fig.savefig(output_path, dpi=250, bbox_inches="tight")
+        plt.close(fig)
+    return fig
+
+
+def plot_wavenumber_frequency_spectrum(
+        data, output_path=None, frequency_max_hz=None, db_floor=-80.0,
+        trustworthy_nyquist_fraction=0.8, signal_name="signal",
+        figsize=(13, 8), show_grid=False):
+    """Plot a directional positive-frequency, signed-wavenumber spectrum."""
+    frequency = np.asarray(data["frequency_hz"], dtype=float)
+    wavenumber = np.asarray(data["wavenumber_rad_per_m"], dtype=float)
+    power = np.asarray(data["power"], dtype=float)
+    if power.shape != (frequency.size, wavenumber.size):
+        raise ValueError("k-omega power shape does not match coordinate grids")
+    if not 0.0 < float(trustworthy_nyquist_fraction) <= 1.0:
+        raise ValueError("trustworthy_nyquist_fraction must lie in (0, 1]")
+    if float(db_floor) >= 0.0:
+        raise ValueError("db_floor must be negative")
+    frequency_mask = np.isfinite(frequency) & (frequency >= 0.0)
+    if frequency_max_hz is not None:
+        frequency_mask &= frequency <= float(frequency_max_hz)
+    k_nyquist = float(data["nyquist_wavenumber_rad_per_m"])
+    trusted_limit = float(trustworthy_nyquist_fraction) * k_nyquist
+    wavenumber_mask = np.abs(wavenumber) <= trusted_limit
+    selected_power = power[np.ix_(frequency_mask, wavenumber_mask)]
+    finite_positive = selected_power[
+        np.isfinite(selected_power) & (selected_power > 0.0)
+    ]
+    if finite_positive.size == 0:
+        raise ValueError("k-omega spectrum has no positive finite power")
+    reference = float(np.max(finite_positive))
+    power_db = 10.0 * np.log10(
+        np.maximum(selected_power, np.finfo(float).tiny) / reference
+    )
+    power_db = np.clip(power_db, float(db_floor), 0.0)
+    selected_frequency = frequency[frequency_mask]
+    frequency_scale = 1.0e-6 if np.nanmax(selected_frequency) >= 1.0e6 else 1.0
+    frequency_unit = "MHz" if frequency_scale == 1.0e-6 else "Hz"
+
+    fig, ax = plt.subplots(figsize=figsize)
+    mesh = ax.pcolormesh(
+        wavenumber[wavenumber_mask],
+        selected_frequency * frequency_scale,
+        power_db,
+        shading="auto", cmap="magma", vmin=float(db_floor), vmax=0.0,
+    )
+    fig.colorbar(
+        mesh, ax=ax,
+        label=f"{signal_name} directional spectral power [dB re max]",
+    )
+    ax.axvline(0.0, color="white", linewidth=0.8, alpha=0.8)
+    ax.set_xlabel(r"Signed streamwise wavenumber $k$ [rad m$^{-1}$]")
+    ax.set_ylabel(f"Frequency [{frequency_unit}]")
+    ax.set_title(
+        r"Directional $k$-$\omega$ spectrum: $k>0$ is downstream for "
+        r"$\cos(\omega t-kx)$" + "\n"
+        + rf"displayed range $|k|\leq{trustworthy_nyquist_fraction:.2g}k_{{Ny}}$; "
+        + rf"native $\Delta k={float(data['native_wavenumber_resolution_rad_per_m']):.3g}$ "
+        + r"rad m$^{-1}$"
+    )
+    if show_grid:
+        ax.grid(True, alpha=0.15)
+    else:
+        ax.grid(False)
     fig.tight_layout()
     if output_path is not None:
         fig.savefig(output_path, dpi=250, bbox_inches="tight")
@@ -2560,7 +2704,7 @@ def plot_wavenumber_time_contour(data, output_path=None, figsize=(12, 7)):
 
 
 def plot_spatial_transfer_function(data, output_path=None, figsize=(12, 8)):
-    """Plot spatial response/source magnitude and phase."""
+    """Plot the diagnostic source-shape-normalized response."""
     k = np.asarray(data["wavenumber_rad_per_m"], dtype=float)
     magnitude = np.asarray(data["transfer_magnitude"], dtype=float)
     phase = np.asarray(data["transfer_phase_rad"], dtype=float)
@@ -2573,22 +2717,36 @@ def plot_spatial_transfer_function(data, output_path=None, figsize=(12, 8)):
         out=np.full(k.shape, np.nan), where=valid_count > 0,
     )
     phase_vectors = np.where(valid_rows, np.exp(1j * phase), 0.0)
-    mean_phase = np.angle(np.divide(
+    mean_phase_vector = np.divide(
         np.sum(phase_vectors, axis=0),
         valid_count,
         out=np.full(k.shape, np.nan + 1j * np.nan), where=valid_count > 0,
-    ))
-    positive_k, positive_magnitude, mask = _positive_wavenumber_view(k, mean_magnitude)
+    )
+    mean_phase = np.angle(mean_phase_vector)
+    phase_consistency = np.abs(mean_phase_vector)
+    positive_k, positive_magnitude, _ = _positive_wavenumber_view(k, mean_magnitude)
     _, positive_phase, _ = _positive_wavenumber_view(k, mean_phase)
-    fig, axes = plt.subplots(2, 1, figsize=figsize, sharex=True)
+    _, positive_consistency, _ = _positive_wavenumber_view(k, phase_consistency)
+    fig, axes = plt.subplots(3, 1, figsize=figsize, sharex=True)
     axes[0].plot(positive_k, positive_magnitude, color="C2")
-    axes[0].set_ylabel("Transfer magnitude [relative]")
-    axes[0].set_title("Spatial response/source transfer")
-    axes[1].plot(positive_k, positive_phase, color="C4")
-    axes[1].set_xlabel(r"Wavenumber $|k|$ [rad m$^{-1}$]")
-    axes[1].set_ylabel("Transfer phase [rad]")
+    signal_unit = str(np.asarray(data.get("response_signal_unit_cgs", "signal")).item())
+    axes[0].set_ylabel(rf"Mean $|\hat q/\hat S|$ [{signal_unit} m$^2$]")
+    axes[0].set_title(
+        "Source-shape-normalized spatial response (diagnostic, not a transfer function)"
+    )
+    phase_reliable = positive_consistency >= 0.5
+    axes[1].plot(
+        positive_k, np.where(phase_reliable, positive_phase, np.nan), color="C4"
+    )
+    axes[1].set_ylabel("Response/source-shape phase [rad]")
+    axes[1].set_title("Circular-mean phase shown only where consistency ≥ 0.5")
+    axes[2].plot(positive_k, positive_consistency, color="C0")
+    axes[2].axhline(0.5, color="0.4", linestyle="--", linewidth=0.8)
+    axes[2].set_ylim(0.0, 1.02)
+    axes[2].set_ylabel("Phase consistency")
+    axes[2].set_xlabel(r"Wavenumber $k$ [rad m$^{-1}$]")
     for ax in axes:
-        ax.grid(False)
+        ax.grid(True, alpha=0.15)
     fig.tight_layout()
     if output_path is not None:
         fig.savefig(output_path, dpi=250, bbox_inches="tight")
@@ -2600,16 +2758,16 @@ def plot_spatial_case_comparison(data, output_path=None, figsize=(12, 8)):
     """Compare static source shapes and time-mean response spectra by case."""
     k = np.asarray(data["wavenumber_rad_per_m"], dtype=float)
     positive_k, baseline_source, _ = _positive_wavenumber_view(
-        k, data["baseline_source_amplitude"]
+        k, data["baseline_source_amplitude"], one_sided_amplitude=True
     )
     _, comparison_source, _ = _positive_wavenumber_view(
-        k, data["comparison_source_amplitude"]
+        k, data["comparison_source_amplitude"], one_sided_amplitude=True
     )
     _, baseline_response, _ = _positive_wavenumber_view(
-        k, data["baseline_response_amplitude"]
+        k, data["baseline_response_amplitude"], one_sided_amplitude=True
     )
     _, comparison_response, _ = _positive_wavenumber_view(
-        k, data["comparison_response_amplitude"]
+        k, data["comparison_response_amplitude"], one_sided_amplitude=True
     )
     fig, axes = plt.subplots(2, 1, figsize=figsize, sharex=True)
     axes[0].plot(
@@ -2632,11 +2790,11 @@ def plot_spatial_case_comparison(data, output_path=None, figsize=(12, 8)):
     )
     axes[1].set_xlabel(r"Wavenumber $|k|$ [rad m$^{-1}$]")
     axes[1].set_ylabel(
-        f"Time-mean {data.get('response_signal_name', 'probe signal')} "
-        "FFT amplitude"
+        f"RMS {data.get('response_signal_name', 'probe signal')} "
+        "spatial coefficient"
     )
     axes[1].set_title(
-        "Measured spatial response spectra; mean over "
+        "Measured disturbance spectra; RMS over "
         f"{data.get('baseline_snapshot_count', '?')} / "
         f"{data.get('comparison_snapshot_count', '?')} selected snapshots"
     )
@@ -2699,7 +2857,8 @@ def plot_normalized_source_response_spectra(
     fig, ax = plt.subplots(figsize=(9, 5))
     source_norm = source / max(float(np.max(source)), floor)
     ax.semilogy(frequency[positive], np.maximum(source_norm[positive], floor),
-                color="k", linewidth=2.2, label="Source, matched processing")
+                color="k", linewidth=2.2,
+                label="Source, finite-record processing")
     for column, label in enumerate(labels):
         values = response[:, column]
         values = values / max(float(np.max(values)), floor)
@@ -2734,7 +2893,10 @@ def plot_single_pulse_transfer_functions(
             linewidth=1.2, label=label,
         )
     ax_mag.set_ylabel("|H(f)| [response / source-power]")
-    ax_mag.set_title("Direct single-pulse source-to-response transfer ratio")
+    ax_mag.set_title(
+        "Single-pulse finite-record deconvolution\n"
+        "quiescent response baseline removed; rectangular observation window"
+    )
     ax_mag.set_xlabel("Frequency [Hz]")
     ax_mag.grid(False)
     ax_mag.legend(fontsize=8, ncol=2)

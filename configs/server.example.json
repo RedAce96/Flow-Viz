@@ -1,0 +1,12 @@
+{
+  "data_source": "../path/to/plotfiles",
+  "output_dir": "../path/to/post-processing-output",
+  "plot_prefix": "pltCaseName",
+  "snapshot_start": null,
+  "snapshot_end": null,
+  "probe_bin_files": [
+    "../path/to/probes/kernel-probe.segment*.pbin"
+  ],
+  "probe_dir": "../path/to/probes",
+  "probe_output_dir": "../path/to/probes"
+}

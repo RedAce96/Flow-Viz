@@ -355,6 +355,22 @@ class PlottingTests(unittest.TestCase):
         self.assertIn("One-sided spatial FFT amplitude", fig.axes[1].get_ylabel())
         self.assertEqual(fig.axes[0].collections[0].get_clim(), (0.0, 1.5))
 
+    def test_directional_k_omega_plot_renders_signed_wavenumber(self):
+        data = {
+            "frequency_hz": np.linspace(0.0, 2.0e6, 5),
+            "wavenumber_rad_per_m": np.linspace(-40.0, 40.0, 9),
+            "power": np.ones((5, 9)),
+            "nyquist_wavenumber_rad_per_m": 50.0,
+            "native_wavenumber_resolution_rad_per_m": 10.0,
+        }
+        fig = plotting.plot_wavenumber_frequency_spectrum(
+            data, frequency_max_hz=2.0e6, signal_name="Temperature"
+        )
+        fig.canvas.draw()
+        self.assertIn("Signed", fig.axes[0].get_xlabel())
+        self.assertIn("downstream", fig.axes[0].get_title())
+        self.assertIn("Temperature", fig.axes[1].get_ylabel())
+
 
 class BinaryProbeLoaderTests(unittest.TestCase):
     def test_canonical_field_selection_expands_solver_aliases(self):
@@ -1017,6 +1033,131 @@ class AnalysisCorrectionTests(unittest.TestCase):
         scaled["spectral_power"] = 1.0e12 * base["spectral_power"]
         second = functions.compute_probe_amplification(scaled)
         np.testing.assert_allclose(first["n_direct"], second["n_direct"])
+
+    def test_spatial_fft_linear_detrending_removes_affine_profile(self):
+        x = 0.3 + 0.01 * np.arange(16)
+        signals = np.vstack((2.0 + 3.0 * x, -4.0 + 0.5 * x))
+        result = functions.compute_spatial_fft(
+            signals, x, mean_subtraction="linear", window="none"
+        )
+        self.assertLess(np.max(result["amplitude"]), 1.0e-12)
+
+    def test_spatial_fft_uses_physical_coordinate_phase(self):
+        count = 16
+        dx = 0.01
+        x = 0.37 + dx * np.arange(count)
+        wavenumber = 2.0 * np.pi / (count * dx)
+        phase = 0.43
+        signal = np.cos(wavenumber * x + phase)
+        result = functions.compute_spatial_fft(
+            signal, x, mean_subtraction="none", window="none"
+        )
+        index = int(np.argmin(np.abs(
+            result["wavenumber_rad_per_m"] - wavenumber
+        )))
+        np.testing.assert_allclose(
+            result["complex_spectrum"][0, index],
+            0.5 * np.exp(1j * phase), atol=1.0e-12,
+        )
+
+    def test_spatial_fft_reports_native_and_padded_spacing(self):
+        x = 0.1 * np.arange(8)
+        result = functions.compute_spatial_fft(
+            np.cos(2.0 * np.pi * np.arange(8) / 8.0), x,
+            mean_subtraction="none", window="none", zero_padding=8,
+        )
+        self.assertAlmostEqual(result["sample_span_m"], 0.7)
+        self.assertAlmostEqual(result["dft_record_length_m"], 0.8)
+        self.assertAlmostEqual(
+            result["native_delta_k_rad_per_m"], 2.0 * np.pi / 0.8
+        )
+        self.assertAlmostEqual(
+            result["display_delta_k_rad_per_m"], 2.0 * np.pi / 1.6
+        )
+
+    def test_one_sided_spatial_view_preserves_even_nyquist(self):
+        x = 0.1 * np.arange(8)
+        signal = np.cos(np.pi * np.arange(8))
+        result = functions.compute_spatial_fft(
+            signal, x, mean_subtraction="none", window="none"
+        )
+        positive_k, amplitude, _ = plotting._positive_wavenumber_view(
+            result["wavenumber_rad_per_m"], result["amplitude"][0],
+            one_sided_amplitude=True,
+        )
+        self.assertAlmostEqual(positive_k[-1], np.pi / 0.1)
+        self.assertAlmostEqual(amplitude[-1], 1.0)
+
+    def test_spatial_fft_sorts_coordinates_and_rejects_nonuniform_grid(self):
+        x = np.array([0.3, 0.0, 0.2, 0.1])
+        result = functions.compute_spatial_fft(
+            np.cos(2.0 * np.pi * x / 0.4), x,
+            mean_subtraction="none", window="none",
+        )
+        np.testing.assert_allclose(result["probe_x_m"], np.sort(x))
+        with self.assertRaisesRegex(ValueError, "uniformly spaced"):
+            functions.compute_spatial_fft(
+                np.ones(4), [0.0, 0.1, 0.21, 0.3]
+            )
+
+    def test_quiescent_baseline_subtraction_preserves_post_event_signal(self):
+        time = np.arange(20, dtype=float)
+        values = np.full((20, 3), [10.0, 20.0, 30.0])
+        values[8:, :] += np.arange(12)[:, None]
+        result = functions.subtract_quiescent_probe_baseline(
+            time, values, baseline_end_time_s=8.0, minimum_samples=8
+        )
+        np.testing.assert_allclose(result["baseline"], [10.0, 20.0, 30.0])
+        np.testing.assert_allclose(result["disturbance"][:8], 0.0)
+        np.testing.assert_allclose(result["disturbance"][9], 1.0)
+
+    def test_k_omega_recovers_downstream_wavenumber_and_frequency(self):
+        sample_rate = 1024.0
+        time = np.arange(1024) / sample_rate
+        x = np.arange(64) * 0.01
+        frequency = 128.0
+        wavenumber = 2.0 * np.pi * 8.0 / (64 * 0.01)
+        signal = np.cos(
+            2.0 * np.pi * frequency * time[:, None]
+            - wavenumber * x[None, :]
+        )
+        result = functions.compute_wavenumber_frequency_spectrum(
+            signal, time, x, temporal_window="none", spatial_window="none"
+        )
+        peak = np.unravel_index(
+            np.argmax(result["power"]), result["power"].shape
+        )
+        self.assertAlmostEqual(result["frequency_hz"][peak[0]], frequency)
+        self.assertAlmostEqual(
+            result["wavenumber_rad_per_m"][peak[1]], wavenumber
+        )
+
+    def test_single_pulse_deconvolution_recovers_gain_and_delay(self):
+        dt = 1.0e-3
+        time = np.arange(2048) * dt
+        source = functions.compute_single_pulse_source_spectrum(
+            time, energy_per_pulse=2.0, pulse_fwhm_s=0.02,
+            pulse_period_s=0.4, start_time_s=0.0, cutoff_sigma=4.0,
+            mean_subtraction="none", window="none",
+        )
+        delay_samples = 100
+        gain = 3.5
+        response = np.zeros_like(source["power"])
+        response[delay_samples:] = gain * source["power"][:-delay_samples]
+        response_complex = np.fft.rfft(response) / response.size
+        transfer = functions.compute_single_pulse_transfer_function(
+            source["processed_complex"], response_complex,
+            minimum_relative_source_amplitude=1.0e-2,
+        )
+        valid = transfer["valid_frequency"]
+        np.testing.assert_allclose(
+            transfer["magnitude"][valid, 0], gain, rtol=1.0e-10
+        )
+        expected = -2.0 * np.pi * source["frequency_hz"] * delay_samples * dt
+        phase_error = np.angle(np.exp(1j * (
+            transfer["phase_rad"][:, 0] - expected
+        )))
+        np.testing.assert_allclose(phase_error[valid], 0.0, atol=1.0e-10)
 
     def test_frequency_resolved_complex_wavenumber(self):
         fs = 4096.0
@@ -1726,6 +1867,20 @@ class CertifiedForceAnalysisTests(unittest.TestCase):
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_case_specific_workflows_are_disabled_in_code_defaults(self):
+        for key in (
+                "make_source_response_analysis", "make_spatial_fft",
+                "make_spatial_case_comparison", "make_case_spectrum_comparison"):
+            self.assertFalse(pelec_post.CONFIG[key])
+        self.assertNotIn("/lustre/", repr(pelec_post.CONFIG))
+        self.assertNotIn("../TS-Driver", repr(pelec_post.CONFIG))
+
+    def test_command_line_accepts_ordered_config_overlays(self):
+        arguments = pelec_post._parse_command_line([
+            "--config", "case.json", "--config", "server.json"
+        ])
+        self.assertEqual(arguments.config, ["case.json", "server.json"])
+
     def test_probe_coordinate_policy_is_validated(self):
         config = dict(pelec_post.CONFIG)
         config["probe_coordinate_policy"] = "ignore"
@@ -1768,6 +1923,25 @@ class ConfigurationTests(unittest.TestCase):
             config = pp_config.build_config(pelec_post.CONFIG, path)
         self.assertEqual(config["snapshot_start"], 42)
         self.assertNotEqual(pelec_post.CONFIG["snapshot_start"], 42)
+
+    def test_json_overlays_apply_in_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "case.json"
+            second = Path(tmp) / "server.json"
+            first.write_text(
+                '{"snapshot_start": 10, "spatial_fft": {"window": "none"}}',
+                encoding="utf-8",
+            )
+            second.write_text(
+                '{"snapshot_start": 20, "output_dir": "server-output"}',
+                encoding="utf-8",
+            )
+            config = pp_config.build_config(
+                pelec_post.CONFIG, [first, second]
+            )
+        self.assertEqual(config["snapshot_start"], 20)
+        self.assertEqual(config["output_dir"], "server-output")
+        self.assertEqual(config["spatial_fft"]["window"], "none")
 
     def test_json_overlay_deep_merges_reference_settings(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1932,6 +2106,130 @@ class TestFFTVariableSelection(unittest.TestCase):
                         str(archive["signal_unit_cgs"].item()),
                         meta["unit_cgs"],
                     )
+
+    def test_spatial_workflow_uses_quiescent_baseline_and_sorted_coordinates(self):
+        time = np.arange(256, dtype=float) * 1.0e-4
+        x_cm = np.array([2.0, 0.0, 3.0, 1.0])
+        y_cm = np.array([0.02, 0.00, 0.03, 0.01])
+        baseline = np.array([12.0, 10.0, 13.0, 11.0])
+        event = time >= 8.0e-3
+        matrix = np.tile(baseline, (time.size, 1))
+        matrix[event, :] += np.cos(
+            2.0 * np.pi * 200.0 * time[event, None]
+            - 2.0 * np.pi * x_cm[None, :] / 4.0
+        )
+        probes = [
+            {
+                "time": time,
+                "signal": matrix[:, index],
+                "x": x_cm[index],
+                "y": y_cm[index],
+                "dt": 1.0e-4,
+            }
+            for index in range(x_cm.size)
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            config = dict(pelec_post.CONFIG)
+            config.update({
+                "output_dir": tmp,
+                "fft_var_col": 4,
+                "fft_resample": False,
+                "fft_max_probes": None,
+            })
+            config["spatial_fft"] = dict(pelec_post.CONFIG["spatial_fft"])
+            config["spatial_fft"].update({
+                "model": "gaussian",
+                "center_x_cm": 1.5,
+                "center_y_cm": 0.015,
+                "radius_cm": 0.2,
+                "baseline_mode": "pre_event_mean",
+                "baseline_end_time_s": 8.0e-3,
+                "minimum_baseline_samples": 8,
+                "mean_subtraction": "none",
+                "window": "none",
+                "max_snapshots": 16,
+                "wavenumber_colorbar_vmax": None,
+                "make_k_omega": True,
+                "k_omega_temporal_window": "none",
+                "k_omega_spatial_window": "none",
+                "k_omega_frequency_max_hz": 1000.0,
+            })
+            result = pelec_post._process_spatial_fft_probes(config, probes)
+            self.assertTrue(result[1], result[2])
+            archive_path = (
+                Path(tmp) / "Spatial-FFT"
+                / "spatial_spectral_summary_temperature.npz"
+            )
+            with np.load(archive_path, allow_pickle=False) as archive:
+                np.testing.assert_allclose(
+                    archive["probe_x_m"], [0.0, 0.01, 0.02, 0.03]
+                )
+                np.testing.assert_allclose(
+                    archive["probe_y_m"], [0.0, 0.0001, 0.0002, 0.0003]
+                )
+                np.testing.assert_allclose(
+                    archive["quiescent_baseline"], [10.0, 11.0, 12.0, 13.0]
+                )
+            self.assertTrue((
+                Path(tmp) / "Spatial-FFT" / "k_omega_spectrum_temperature.npz"
+            ).is_file())
+
+    def test_fft_workflow_uses_rectangular_quiescent_pulse_deconvolution(self):
+        n_probes = 4
+        requested_x = np.arange(n_probes, dtype=float)
+        requested_y = np.zeros(n_probes)
+        sample_rate_hz = 1.0e9
+        times = np.arange(512) / sample_rate_hz
+        steps = np.arange(times.size)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            probe_dir = root / "probes"
+            probe_dir.mkdir()
+            output_dir = root / "output"
+            self._write_probe_segment(
+                probe_dir / "probe.segment0000.pbin",
+                n_probes, requested_x, requested_y,
+                requested_x, requested_y, steps, times,
+            )
+            config = dict(pelec_post.CONFIG)
+            config.update({
+                "output_dir": str(output_dir),
+                "probe_bin_files": [str(probe_dir / "probe.segment*.pbin")],
+                "fft_use_binary": True,
+                "fft_var_col": 4,
+                "fft_max_probes": n_probes,
+                "fft_plot_probe_indices": [0],
+                "fft_plot_contour": False,
+                "fft_plot_harmonics": False,
+                "fft_plot_spectral_slope": False,
+                "fft_plot_growth_curves": False,
+                "make_source_response_analysis": True,
+                "make_coherence_analysis": False,
+                "make_modal_analysis": False,
+                "fft_resample": True,
+                "fft_target_dt": 1.0 / sample_rate_hz,
+            })
+            config["source_response"] = dict(
+                pelec_post.CONFIG["source_response"]
+            )
+            config["source_response"].update({
+                "transfer_window": "none",
+                "minimum_baseline_samples": 8,
+                "plot_probe_indices": [0],
+            })
+            result = pelec_post._process_fft_probes(config)
+            self.assertTrue(result[1], result[2])
+            archive_path = (
+                output_dir / "FFT-Probes"
+                / "source_response_spectrum_temperature.npz"
+            )
+            with np.load(archive_path, allow_pickle=False) as archive:
+                self.assertEqual(
+                    str(archive["transfer_estimator"].item()),
+                    "single-pulse finite-record deconvolution",
+                )
+                self.assertEqual(str(archive["transfer_window"].item()), "none")
+                self.assertGreater(int(archive["response_baseline_sample_count"]), 8)
 
 
 if __name__ == "__main__":

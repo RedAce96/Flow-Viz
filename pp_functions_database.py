@@ -5701,7 +5701,7 @@ def _fft_window(length, window_name):
 def compute_single_pulse_source_spectrum(
         time_s, energy_per_pulse, pulse_fwhm_s, pulse_period_s,
         start_time_s=0.0, cutoff_sigma=4.0, mean_subtraction="mean",
-        window="hann", window_compensation=True):
+        window="none", window_compensation=True):
     """Construct a code-matched single Gaussian source and its spectra.
 
     The source is the domain-integrated deposition power of the analytic
@@ -5730,7 +5730,7 @@ def compute_single_pulse_source_spectrum(
     if cutoff_sigma <= 0.0:
         raise ValueError("cutoff_sigma must be positive")
 
-    sigma_s = pulse_fwhm_s / 2.355
+    sigma_s = pulse_fwhm_s / (2.0 * np.sqrt(2.0 * np.log(2.0)))
     centre_s = float(start_time_s) + 0.5 * pulse_period_s
     source_power = np.zeros_like(time_s)
     active = np.abs(time_s - centre_s) <= cutoff_sigma * sigma_s
@@ -5763,8 +5763,10 @@ def compute_single_pulse_source_spectrum(
         np.fft.rfft(processed) / processed.size * gain_correction
     )
     processed_amplitude = np.abs(processed_complex)
-    if processed_amplitude.size > 2:
+    if processed.size % 2 == 0 and processed_amplitude.size > 2:
         processed_amplitude[1:-1] *= 2.0
+    elif processed.size % 2 == 1 and processed_amplitude.size > 1:
+        processed_amplitude[1:] *= 2.0
 
     return {
         "time_s": time_s,
@@ -5845,7 +5847,7 @@ def compute_spatial_fft(
         processed -= np.mean(processed, axis=1, keepdims=True)
     elif mode == "linear":
         design = np.column_stack((x - np.mean(x), np.ones_like(x)))
-        coefficients = np.linalg.lstsq(design.T, processed.T, rcond=None)[0]
+        coefficients = np.linalg.lstsq(design, processed.T, rcond=None)[0]
         processed -= (design @ coefficients).T
     elif mode != "none":
         raise ValueError("mean_subtraction must be mean, linear, or none")
@@ -5865,18 +5867,176 @@ def compute_spatial_fft(
     wavenumber = np.fft.fftshift(
         2.0 * np.pi * np.fft.fftfreq(transform_length, d=dx)
     )
+    # np.fft assumes the first sample is located at x=0. Apply the missing
+    # origin phase so the documented transform is evaluated at physical x.
+    spectrum *= np.exp(-1j * wavenumber[None, :] * x[0])
+    record_length = float(x.size * dx)
+    transform_record_length = float(transform_length * dx)
     return {
         "wavenumber_rad_per_m": wavenumber,
         "complex_spectrum": spectrum,
         "amplitude": np.abs(spectrum),
         "probe_x_m": x,
         "dx_m": dx,
-        "physical_aperture_m": float(x[-1] - x[0] + dx),
+        "sample_span_m": float(x[-1] - x[0]),
+        "physical_aperture_m": record_length,
+        "dft_record_length_m": record_length,
+        "transform_record_length_m": transform_record_length,
+        "native_delta_k_rad_per_m": 2.0 * np.pi / record_length,
+        "display_delta_k_rad_per_m": 2.0 * np.pi / transform_record_length,
+        "nyquist_wavenumber_rad_per_m": np.pi / dx,
+        "n_spatial_samples": int(x.size),
+        "transform_length": int(transform_length),
         "window": str(window),
         "window_amplitude_scale": float(gain_correction),
         "mean_subtraction": mode,
         "zero_padding": requested_padding,
         "transform_convention": "exp(-i*k*x)",
+    }
+
+
+def subtract_quiescent_probe_baseline(
+        time_s, signal_matrix, baseline_end_time_s, minimum_samples=8):
+    """Subtract a per-probe mean from a quiescent pre-event interval.
+
+    The baseline is a DC/reference field only; no spectrum is estimated from
+    the pre-event samples.
+    """
+    time = np.asarray(time_s, dtype=float).ravel()
+    values = np.asarray(signal_matrix, dtype=float)
+    if values.ndim == 1:
+        values = values[:, None]
+    if values.ndim != 2 or values.shape[0] != time.size:
+        raise ValueError("signal_matrix must have shape (len(time_s), n_probe)")
+    if not np.all(np.isfinite(time)) or not np.all(np.isfinite(values)):
+        raise ValueError("baseline inputs must be finite")
+    minimum_samples = int(minimum_samples)
+    if minimum_samples < 1:
+        raise ValueError("minimum_samples must be positive")
+    mask = time < float(baseline_end_time_s)
+    if np.count_nonzero(mask) < minimum_samples:
+        raise ValueError(
+            "Quiescent baseline interval contains fewer than "
+            f"{minimum_samples} samples"
+        )
+    baseline = np.mean(values[mask, :], axis=0)
+    disturbance = values - baseline[None, :]
+    return {
+        "disturbance": disturbance,
+        "baseline": baseline,
+        "baseline_mask": mask,
+        "baseline_start_time_s": float(time[mask][0]),
+        "baseline_end_time_s": float(time[mask][-1]),
+        "baseline_sample_count": int(np.count_nonzero(mask)),
+    }
+
+
+def compute_wavenumber_frequency_spectrum(
+        signal_matrix, time_s, probe_x_m, temporal_window="none",
+        spatial_window="hann", temporal_mean_subtraction="none",
+        spatial_mean_subtraction="none", temporal_zero_padding=0,
+        spatial_zero_padding=0, window_compensation=True):
+    """Compute a directional positive-frequency, signed-wavenumber spectrum.
+
+    Positive reported wavenumber corresponds to a downstream wave represented
+    as ``cos(omega*t - k*x)``. Inputs are expected to be disturbance signals;
+    baseline subtraction is deliberately kept outside this transform.
+    """
+    values = np.asarray(signal_matrix, dtype=float)
+    time = np.asarray(time_s, dtype=float).ravel()
+    x = np.asarray(probe_x_m, dtype=float).ravel()
+    if values.ndim != 2 or values.shape != (time.size, x.size):
+        raise ValueError(
+            "signal_matrix must have shape (len(time_s), len(probe_x_m))"
+        )
+    if time.size < 8 or x.size < 4:
+        raise ValueError("k-omega analysis requires at least 8 times and 4 probes")
+    if not np.all(np.isfinite(values)):
+        raise ValueError("signal_matrix must be finite")
+    time_step = np.diff(time)
+    dt = float(np.median(time_step))
+    if dt <= 0.0 or not np.allclose(
+            time_step, dt, rtol=1.0e-8,
+            atol=max(abs(dt) * 1.0e-10, 1.0e-15)):
+        raise ValueError("time_s must be uniformly sampled")
+    order = np.argsort(x)
+    x = x[order]
+    values = values[:, order]
+    spacing = np.diff(x)
+    dx = float(np.median(spacing))
+    if dx <= 0.0 or not np.allclose(
+            spacing, dx, rtol=1.0e-5, atol=1.0e-12):
+        raise ValueError("probe_x_m must be uniformly spaced")
+
+    processed = values.copy()
+    temporal_mode = str(temporal_mean_subtraction).lower()
+    if temporal_mode == "mean":
+        processed -= np.mean(processed, axis=0, keepdims=True)
+    elif temporal_mode != "none":
+        raise ValueError("temporal_mean_subtraction must be mean or none")
+    spatial_mode = str(spatial_mean_subtraction).lower()
+    if spatial_mode == "mean":
+        processed -= np.mean(processed, axis=1, keepdims=True)
+    elif spatial_mode != "none":
+        raise ValueError("spatial_mean_subtraction must be mean or none")
+
+    time_window_values, time_gain = _fft_window(time.size, temporal_window)
+    space_window_values, space_gain = _fft_window(x.size, spatial_window)
+    if not window_compensation:
+        time_gain = 1.0
+        space_gain = 1.0
+    processed *= time_window_values[:, None] * space_window_values[None, :]
+    temporal_padding = int(temporal_zero_padding)
+    spatial_padding = int(spatial_zero_padding)
+    if temporal_padding < 0 or spatial_padding < 0:
+        raise ValueError("zero padding must be non-negative")
+    n_time_fft = time.size + temporal_padding
+    n_space_fft = x.size + spatial_padding
+    spectrum = np.fft.fft2(
+        processed, s=(n_time_fft, n_space_fft), axes=(0, 1)
+    )
+    spectrum *= time_gain * space_gain / (time.size * x.size)
+    frequency_all = np.fft.fftfreq(n_time_fft, d=dt)
+    raw_wavenumber = 2.0 * np.pi * np.fft.fftfreq(n_space_fft, d=dx)
+    spectrum *= np.exp(-1j * frequency_all[:, None] * 2.0 * np.pi * time[0])
+    spectrum *= np.exp(-1j * raw_wavenumber[None, :] * x[0])
+
+    # For q=cos(omega*t-k*x), the positive-frequency FFT peak is stored at
+    # raw FFT wavenumber -k. Reverse the sign so downstream waves report k>0.
+    reported_wavenumber = -raw_wavenumber
+    spatial_order = np.argsort(reported_wavenumber)
+    reported_wavenumber = reported_wavenumber[spatial_order]
+    spectrum = spectrum[:, spatial_order]
+    positive_frequency = frequency_all >= 0.0
+    frequency = frequency_all[positive_frequency]
+    spectrum = spectrum[positive_frequency, :]
+    amplitude = np.abs(spectrum)
+    power = amplitude ** 2
+    return {
+        "frequency_hz": frequency,
+        "wavenumber_rad_per_m": reported_wavenumber,
+        "complex_spectrum": spectrum,
+        "amplitude": amplitude,
+        "power": power,
+        "probe_x_m": x,
+        "dt_s": dt,
+        "dx_m": dx,
+        "native_frequency_resolution_hz": 1.0 / (time.size * dt),
+        "display_frequency_spacing_hz": 1.0 / (n_time_fft * dt),
+        "native_wavenumber_resolution_rad_per_m": (
+            2.0 * np.pi / (x.size * dx)
+        ),
+        "display_wavenumber_spacing_rad_per_m": (
+            2.0 * np.pi / (n_space_fft * dx)
+        ),
+        "nyquist_frequency_hz": 0.5 / dt,
+        "nyquist_wavenumber_rad_per_m": np.pi / dx,
+        "temporal_window": str(temporal_window),
+        "spatial_window": str(spatial_window),
+        "direction_convention": (
+            "positive k is downstream for cos(omega*t-k*x)"
+        ),
+        "normalization": "window-compensated Fourier-series coefficient",
     }
 
 
@@ -6044,7 +6204,11 @@ def compute_spatial_source_spectrum(
 
 def compute_spatial_transfer_function(
         source_complex, response_complex, minimum_relative_source_amplitude=1.0e-3):
-    """Return the spatial response/source ratio at each wavenumber."""
+    """Return a diagnostic response/source-shape ratio at each wavenumber.
+
+    The source is a normalized spatial shape, not the complete dimensional
+    forcing. Consequently this ratio is not a dimensionless transfer function.
+    """
     source = np.asarray(source_complex, dtype=complex).ravel()
     response = np.asarray(response_complex, dtype=complex)
     if response.ndim == 1:
@@ -6063,6 +6227,10 @@ def compute_spatial_transfer_function(
         "phase_rad": np.angle(transfer),
         "valid_wavenumber": valid,
         "minimum_source_amplitude": threshold * np.max(np.abs(source)),
+        "interpretation": (
+            "diagnostic source-shape-normalized response; not a "
+            "dimensionless transfer function"
+        ),
     }
 
 

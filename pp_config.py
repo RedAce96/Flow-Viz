@@ -32,14 +32,25 @@ def _unknown_configuration_paths(defaults, overlay, prefix=""):
 
 
 def build_config(defaults, json_path=None, command_line_overrides=None):
-    """Deep-copy defaults, apply a checked JSON overlay, and validate it."""
+    """Deep-copy defaults, apply checked JSON overlays, and validate them.
+
+    ``json_path`` may be one path or an ordered sequence.  Later overlays win,
+    which lets a committed scientific case profile be combined with an
+    uncommitted server-local path profile.
+    """
     config = copy.deepcopy(defaults)
-    if json_path is not None:
-        with Path(json_path).open(encoding="utf-8") as stream:
+    if json_path is None:
+        json_paths = []
+    elif isinstance(json_path, (str, Path)):
+        json_paths = [json_path]
+    else:
+        json_paths = list(json_path)
+    for current_path in json_paths:
+        with Path(current_path).open(encoding="utf-8") as stream:
             overlay = json.load(stream)
         if not isinstance(overlay, dict):
             raise ValueError("Configuration JSON must contain one object")
-        unknown = sorted(_unknown_configuration_paths(config, overlay))
+        unknown = sorted(_unknown_configuration_paths(defaults, overlay))
         if unknown:
             raise ValueError(f"Unknown configuration keys: {', '.join(unknown)}")
         legacy_force_mapping = {
@@ -139,6 +150,115 @@ def validate_config(config):
         raise ValueError("fft_batch_size must be at least 1")
     if int(config.get("fft_var_col", 3)) not in (1, 2, 3, 4):
         raise ValueError("fft_var_col must be 1, 2, 3, or 4")
+    valid_fft_windows = ("none", "rect", "rectangular", "hann", "hamming", "blackman")
+    if config.get("make_source_response_analysis", False):
+        source = config.get("source_response")
+        if not isinstance(source, dict):
+            raise ValueError(
+                "make_source_response_analysis requires source_response"
+            )
+        for key in (
+                "energy_per_pulse", "pulse_fwhm_s", "pulse_period_s",
+                "cutoff_sigma"):
+            if source.get(key) is None or float(source[key]) <= 0.0:
+                raise ValueError(f"source_response.{key} must be positive")
+        if source.get("transfer_source_mean_subtraction", "none") != "none":
+            raise ValueError(
+                "single-pulse source transfer requires "
+                "transfer_source_mean_subtraction='none'"
+            )
+        if str(source.get("transfer_window", "none")).lower() not in (
+                "none", "rect", "rectangular"):
+            raise ValueError(
+                "single-pulse transfer_window must be rectangular; tapered "
+                "windows weight the source and delayed response differently"
+            )
+        if int(source.get("minimum_baseline_samples", 8)) < 1:
+            raise ValueError(
+                "source_response.minimum_baseline_samples must be positive"
+            )
+        threshold = float(source.get(
+            "minimum_relative_source_amplitude", 1.0e-3
+        ))
+        if not 0.0 < threshold < 1.0:
+            raise ValueError(
+                "source_response.minimum_relative_source_amplitude must lie "
+                "in (0, 1)"
+            )
+    if config.get("make_spatial_fft", False):
+        spatial = config.get("spatial_fft")
+        if not isinstance(spatial, dict):
+            raise ValueError("make_spatial_fft requires spatial_fft")
+        if str(spatial.get("baseline_mode", "pre_event_mean")).lower() not in (
+                "pre_event_mean", "none"):
+            raise ValueError(
+                "spatial_fft.baseline_mode must be pre_event_mean or none"
+            )
+        if int(spatial.get("minimum_baseline_samples", 8)) < 1:
+            raise ValueError(
+                "spatial_fft.minimum_baseline_samples must be positive"
+            )
+        if str(spatial.get("mean_subtraction", "none")).lower() not in (
+                "none", "mean", "linear"):
+            raise ValueError(
+                "spatial_fft.mean_subtraction must be none, mean, or linear"
+            )
+        for key in ("window", "k_omega_temporal_window", "k_omega_spatial_window"):
+            if str(spatial.get(key, "none")).lower() not in valid_fft_windows:
+                raise ValueError(f"spatial_fft.{key} is invalid")
+        for key in (
+                "zero_padding", "k_omega_temporal_zero_padding",
+                "k_omega_spatial_zero_padding"):
+            if int(spatial.get(key, 0)) < 0:
+                raise ValueError(f"spatial_fft.{key} must be non-negative")
+        colorbar_vmax = spatial.get("wavenumber_colorbar_vmax")
+        if colorbar_vmax is not None and float(colorbar_vmax) <= 0.0:
+            raise ValueError(
+                "spatial_fft.wavenumber_colorbar_vmax must be positive or null"
+            )
+        db_floor = float(spatial.get("k_omega_db_floor", -80.0))
+        if db_floor >= 0.0:
+            raise ValueError("spatial_fft.k_omega_db_floor must be negative")
+        trusted = float(spatial.get(
+            "k_omega_trustworthy_nyquist_fraction", 0.8
+        ))
+        if not 0.0 < trusted <= 1.0:
+            raise ValueError(
+                "spatial_fft.k_omega_trustworthy_nyquist_fraction must lie "
+                "in (0, 1]"
+            )
+        model = str(spatial.get("model", "wang_kernel")).lower()
+        if model not in ("gaussian", "wang", "wang_kernel"):
+            raise ValueError("spatial_fft.model must be gaussian or wang_kernel")
+        if model == "gaussian" and float(spatial.get("radius_cm", 0.0)) <= 0.0:
+            raise ValueError("spatial_fft.radius_cm must be positive")
+        if model in ("wang", "wang_kernel"):
+            for key in ("wang_length_cm", "wang_aspect_ratio", "wang_asymmetry"):
+                if float(spatial.get(key, 0.0)) <= 0.0:
+                    raise ValueError(f"spatial_fft.{key} must be positive")
+    if config.get("make_spatial_case_comparison", False):
+        comparison = config.get("spatial_case_comparison", {})
+        missing = [
+            key for key in ("baseline_archive", "comparison_archive")
+            if not comparison.get(key)
+        ]
+        if missing:
+            raise ValueError(
+                "spatial_case_comparison is missing: " + ", ".join(missing)
+            )
+    if config.get("make_case_spectrum_comparison", False):
+        comparison = config.get("case_spectrum_comparison", {})
+        required_comparison = (
+            "baseline_source_response_archive",
+            "baseline_spectral_summary_archive",
+            "comparison_source_response_archive",
+            "comparison_spectral_summary_archive",
+        )
+        missing = [key for key in required_comparison if not comparison.get(key)]
+        if missing:
+            raise ValueError(
+                "case_spectrum_comparison is missing: " + ", ".join(missing)
+            )
     coordinate_policy = str(
         config.get("probe_coordinate_policy", "strict")
     ).lower()
