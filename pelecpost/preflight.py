@@ -238,6 +238,12 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                     f"Estimated baseline has {count} samples; {analysis.minimum_baseline_samples} required.",
                     analysis.id,
                 ))
+        if analysis.recipe == "aerodynamic_forces" and analysis.baseline != "none":
+            findings.append(Finding(
+                Severity.BLOCKER, "BASELINE_INPUT_REQUIRED",
+                f"Baseline mode {analysis.baseline!r} requires a versioned baseline input contract; "
+                "none is configured in machine.yaml.", analysis.id,
+            ))
         if analysis.recipe == "directional_wave":
             if inventory.probes is not None and inventory.probes.probe_count < 5:
                 findings.append(Finding(

@@ -44,6 +44,9 @@ def _analysis(recipe: str, inventory: Any, console: Console) -> dict[str, Any]:
     elif recipe == "boundary_layer_reference":
         result["stations_x_m"] = [typer.prompt("Streamwise station [m]", type=float)]
         result["maximum_height_m"] = typer.prompt("Maximum profile height [m]", type=float)
+        result["wall_temperature_k"] = typer.prompt("Wall temperature [K]", type=float)
+        result["dynamic_viscosity_pa_s"] = typer.prompt("Dynamic viscosity [Pa s]", type=float)
+        result["conductivity_w_m_k"] = typer.prompt("Thermal conductivity [W/(m K)]", type=float)
     elif recipe == "surface_diagnostics":
         pass
     elif recipe == "aerodynamic_forces":

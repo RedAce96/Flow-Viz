@@ -318,7 +318,7 @@ def _compute_native_amr_vorticity(ds):
 
 def load_pelec_plotfile(plotfile_path, field_names=None, alias_map=None,
                         convert_to_mks=True, derive_native_vorticity=False,
-                        maximum_level=None):
+                        maximum_level=None, region_bounds_m=None):
     """Load a single PeleC / AMReX plotfile into a ``StandardDataset``.
 
     Parameters
@@ -338,6 +338,9 @@ def load_pelec_plotfile(plotfile_path, field_names=None, alias_map=None,
         Cap the covering-grid level. This is primarily intended for bounded
         control-volume validation where a full finest-level array is
         unnecessarily expensive.
+    region_bounds_m : pair of pairs, optional
+        Requested ``((x_min, x_max), (y_min, y_max))`` SI bounds. The
+        covering grid is cropped before field arrays are materialized.
 
     Returns
     -------
@@ -360,26 +363,47 @@ def load_pelec_plotfile(plotfile_path, field_names=None, alias_map=None,
     if maximum_level is not None:
         finest_level = min(finest_level, int(maximum_level))
     refine_factor = ds.refine_by ** finest_level
-    dims = ds.domain_dimensions * refine_factor
+    dims = np.asarray(ds.domain_dimensions * refine_factor, dtype=int)
     if ds.dimensionality < 3:
         dims = np.asarray(dims, dtype=int)
         dims[ds.dimensionality:] = 1
 
+    full_dims = dims.copy()
+    domain_left = np.asarray(ds.domain_left_edge.d, dtype=float)
+    domain_right = np.asarray(ds.domain_right_edge.d, dtype=float)
+    cell_width = (domain_right - domain_left) / full_dims
+    crop_start = np.zeros(3, dtype=int)
+    crop_end = full_dims.copy()
+    if region_bounds_m is not None:
+        bounds = np.asarray(region_bounds_m, dtype=float)
+        if bounds.shape != (2, 2) or np.any(bounds[:, 1] <= bounds[:, 0]):
+            raise ValueError("region_bounds_m must be ((x_min,x_max),(y_min,y_max))")
+        solver_bounds = bounds * (100.0 if convert_to_mks else 1.0)
+        crop_start[:2] = np.floor(
+            (solver_bounds[:, 0] - domain_left[:2]) / cell_width[:2]
+        ).astype(int)
+        crop_end[:2] = np.ceil(
+            (solver_bounds[:, 1] - domain_left[:2]) / cell_width[:2]
+        ).astype(int)
+        crop_start = np.maximum(crop_start, 0)
+        crop_end = np.minimum(crop_end, full_dims)
+        if np.any(crop_end[:2] <= crop_start[:2]):
+            raise ValueError("requested plot region does not intersect the domain")
+        dims = crop_end - crop_start
+    grid_left_values = domain_left + crop_start * cell_width
+    grid_left = ds.arr(grid_left_values, ds.domain_left_edge.units)
     cover = None
     if field_map or derive_native_vorticity:
         cover = ds.covering_grid(
             level=finest_level,
-            left_edge=ds.domain_left_edge,
+            left_edge=grid_left,
             dims=dims,
         )
 
-    left_edge = ds.domain_left_edge.d
-    right_edge = ds.domain_right_edge.d
     nx, ny = int(dims[0]), int(dims[1])
-    dx = (right_edge[0] - left_edge[0]) / nx
-    dy = (right_edge[1] - left_edge[1]) / ny
-    x = np.linspace(left_edge[0], right_edge[0], nx, endpoint=False) + 0.5 * dx
-    y = np.linspace(left_edge[1], right_edge[1], ny, endpoint=False) + 0.5 * dy
+    dx, dy = float(cell_width[0]), float(cell_width[1])
+    x = grid_left_values[0] + (np.arange(nx) + 0.5) * dx
+    y = grid_left_values[1] + (np.arange(ny) + 0.5) * dy
 
     if convert_to_mks:
         x = x / 100.0
@@ -433,7 +457,10 @@ def load_pelec_plotfile(plotfile_path, field_names=None, alias_map=None,
         raw_field_names[canonical] = matched_raw
 
     if native_vorticity_needed and "vorticity" not in fields:
-        fields["vorticity"] = _compute_native_amr_vorticity(ds)
+        native_vorticity = _compute_native_amr_vorticity(ds)
+        fields["vorticity"] = native_vorticity[
+            crop_start[0]:crop_end[0], crop_start[1]:crop_end[1]
+        ]
         raw_field_names["vorticity"] = (
             "native_amr_dv_dx_minus_du_dy"
         )
@@ -459,8 +486,9 @@ def load_pelec_plotfile(plotfile_path, field_names=None, alias_map=None,
         "amr_refine_by": int(ds.refine_by),
         "grid_shape": (nx, ny),
         "domain_length_x": float(
-            (right_edge[0] - left_edge[0]) / (100.0 if convert_to_mks else 1.0)
+            (domain_right[0] - domain_left[0]) / (100.0 if convert_to_mks else 1.0)
         ),
+        "requested_region_bounds_m": region_bounds_m,
     }
 
 

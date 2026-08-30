@@ -149,7 +149,9 @@ class BoundaryLayerAnalysis(BaseAnalysis):
     recipe: Literal["boundary_layer_reference"]
     stations_x_m: tuple[float, ...]
     maximum_height_m: PositiveFloat
-    wall_temperature_k: PositiveFloat | None = None
+    wall_temperature_k: PositiveFloat
+    dynamic_viscosity_pa_s: PositiveFloat
+    conductivity_w_m_k: PositiveFloat
     zero_pressure_gradient: Literal[True] = True
     laminar_reference: Literal[True] = True
 
@@ -170,6 +172,8 @@ class AerodynamicForcesAnalysis(BaseAnalysis):
     dynamic_viscosity_pa_s: PositiveFloat
     conductivity_w_m_k: PositiveFloat
     wall_temperature_k: PositiveFloat | None = None
+    normal_sample_distance_m: PositiveFloat = 0.001
+    normal_sample_points: PositiveInt = 8
     baseline: Literal["none", "static", "paired"] = "none"
 
 

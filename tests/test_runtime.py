@@ -6,7 +6,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import yaml
+
 from pelecpost.analysis.executors import EXECUTORS
+from pelecpost.config.loader import load_project
 from pelecpost.runtime import generate_report, run_project
 from tests.test_preflight import PreflightTests
 
@@ -132,6 +135,39 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(result.status, "completed")
             summary = json.loads((result.run_dir / "data/triads/triad_summary.json").read_text())
             self.assertIn("explicit target_frequencies_hz", summary["selection"]["method"])
+
+    def test_case_comparison_requires_and_uses_registered_artifacts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source_root = root / "source"
+            source_root.mkdir()
+            source_project = self.make_project(source_root, [{
+                "id": "spectrum", "recipe": "probe_spectrum", "variable": "temperature",
+                "welch_segment_samples": 256,
+            }])
+            baseline = run_project(source_project, "baseline")
+            comparison = run_project(source_project, "comparison")
+            compare_root = root / "compare-project"
+            compare_root.mkdir()
+            case = yaml.safe_load((source_project.root / "case.yaml").read_text())
+            analyses = {"schema_version": 1, "analyses": [{
+                "id": "compare", "recipe": "case_comparison",
+                "baseline_run": str(baseline.run_dir),
+                "comparison_run": str(comparison.run_dir),
+                "artifact_ids": ["spectrum.spectral.psd"],
+            }]}
+            machine = {
+                "schema_version": 1,
+                "inputs": {"comparison_archives": [str(baseline.run_dir), str(comparison.run_dir)]},
+                "outputs": {"root": str(compare_root / "runs")},
+            }
+            for name, value in (("case.yaml", case), ("analyses.yaml", analyses),
+                                ("machine.yaml", machine)):
+                (compare_root / name).write_text(yaml.safe_dump(value), encoding="utf-8")
+            result = run_project(load_project(compare_root))
+            self.assertEqual(result.status, "completed")
+            metrics = json.loads((result.run_dir / "data/compare/comparison_metrics.json").read_text())
+            self.assertTrue(metrics["metrics"])
 
 
 if __name__ == "__main__":

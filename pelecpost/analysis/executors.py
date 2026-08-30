@@ -29,6 +29,8 @@ def execute(context: WorkflowContext) -> None:
         from . import modal as _modal  # noqa: F401
         from . import transient as _transient  # noqa: F401
         from . import nonlinear as _nonlinear  # noqa: F401
+        from . import plotfiles as _plotfiles  # noqa: F401
+        from . import comparison as _comparison  # noqa: F401
     try:
         function = EXECUTORS[context.analysis.recipe]
     except KeyError as exc:
