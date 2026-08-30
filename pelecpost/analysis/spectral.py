@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path
 
-import h5py
 import numpy as np
 from scipy.signal import welch
 
@@ -21,6 +20,7 @@ import matplotlib.pyplot as plt
 
 import pp_functions_database as reviewed_spectral
 from pelecpost.errors import UnsupportedCapabilityError
+from pelecpost.io.signals import open_compact_signal_workspace
 from pelecpost.runtime.context import WorkflowContext
 
 from .executors import executor
@@ -49,18 +49,6 @@ def _field(variable: str, fields: tuple[str, ...]) -> str:
     raise KeyError(f"No storage field maps to {variable!r}")
 
 
-def _read_compact(path: Path, field: str, probe_ids: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    with h5py.File(path, "r") as archive:
-        time = np.asarray(archive["time"], dtype=float)
-        x_m = np.asarray(archive["probes/requested_x_cm"], dtype=float)[probe_ids] * 0.01
-        # h5py requires increasing unique fancy indices.
-        order = np.argsort(probe_ids)
-        sorted_ids = probe_ids[order]
-        sorted_values = np.asarray(archive[f"fields/{field}"][:, sorted_ids], dtype=float)
-        restore = np.argsort(order)
-        return time, x_m, sorted_values[:, restore]
-
-
 def load_compact_signal(
     context: WorkflowContext,
 ) -> tuple[str, str, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -82,9 +70,29 @@ def load_compact_signal(
     selected = np.asarray(configured if configured else range(inventory.probe_count), dtype=int)
     if selected.size == 0 or np.any(selected < 0) or np.any(selected >= inventory.probe_count):
         raise ValueError("probe_indices contain no valid probes")
-    time, x_m, values = _read_compact(source, storage_field, selected)
     factor, unit = SI[variable]
-    return variable, unit, time, x_m, values * factor, selected
+    if context.project.case_file.case.solver_units.value == "si":
+        factor = 1.0
+    scratch = context.project.machine_file.compute.scratch_directory
+    if scratch is not None and not scratch.is_absolute():
+        scratch = (context.project.root / scratch).resolve()
+    workspace = open_compact_signal_workspace(
+        source, storage_field, selected, si_factor=factor,
+        memory_limit_gb=float(context.project.machine_file.compute.memory_limit_gb),
+        scratch_directory=scratch,
+    )
+    context.add_cleanup(workspace.close)
+    assert context.resource_metadata is not None
+    context.resource_metadata["compact_signal"] = {
+        "storage": workspace.storage,
+        "source_matrix_bytes": workspace.source_matrix_bytes,
+        "resident_bound_bytes": workspace.resident_bound_bytes,
+        "read_block_rows": workspace.read_block_rows,
+    }
+    return (
+        variable, unit, workspace.time_s, workspace.x_m, workspace.values,
+        workspace.selected_probe_indices,
+    )
 
 
 @executor("probe_spectrum")
@@ -122,9 +130,11 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
         coordinate_metadata={"frequency": "Hz", "probe_x": "m"},
         interpretation="One-sided Welch power spectral density; peaks are descriptive stationary content.",
         provenance={
-            "si_boundary": "compact CGS to public SI", "window": analysis.window,
+            "si_boundary": f"compact {context.project.case_file.case.solver_units.value} to public SI",
+            "window": analysis.window,
             "detrend": analysis.detrend, "segment_samples": segment,
             "overlap_samples": overlap,
+            "signal_workspace": context.resource_metadata["compact_signal"],
         },
     )
     step = max(1, segment - overlap)

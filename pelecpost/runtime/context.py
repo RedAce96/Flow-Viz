@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
+from types import TracebackType
+from typing import Any, Callable
 
 from pelecpost.config.models import AnalysisConfig, ResolvedProject
 from pelecpost.preflight import PreflightPlan
@@ -18,6 +21,28 @@ class WorkflowContext:
     run_dir: Path
     analysis: AnalysisConfig
     artifacts: ArtifactRegistry
+    _resources: ExitStack | None = None
+    resource_metadata: dict[str, Any] | None = None
+
+    def __enter__(self) -> "WorkflowContext":
+        self._resources = ExitStack()
+        self.resource_metadata = {}
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        if self._resources is not None:
+            self._resources.__exit__(exc_type, exc_value, traceback)
+            self._resources = None
+
+    def add_cleanup(self, callback: Callable[[], None]) -> None:
+        if self._resources is None:
+            raise RuntimeError("WorkflowContext must be entered before acquiring resources")
+        self._resources.callback(callback)
 
     @property
     def data_dir(self) -> Path:

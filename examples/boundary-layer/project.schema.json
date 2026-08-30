@@ -1479,6 +1479,19 @@
             "title": "Memory Limit Gb",
             "type": "number"
           },
+          "scratch_directory": {
+            "anyOf": [
+              {
+                "format": "path",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scratch Directory"
+          },
           "workers": {
             "default": 1,
             "exclusiveMinimum": 0,
@@ -1605,6 +1618,7 @@
         "default": {
           "fft_batch_size": 32,
           "memory_limit_gb": 8.0,
+          "scratch_directory": null,
           "workers": 1
         }
       },

@@ -347,6 +347,7 @@ class ComputeConfig(StrictModel):
     workers: PositiveInt = 1
     memory_limit_gb: PositiveFloat = 8.0
     fft_batch_size: PositiveInt = 32
+    scratch_directory: Path | None = None
 
 
 class MachineFile(StrictModel):

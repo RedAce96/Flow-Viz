@@ -170,7 +170,8 @@ def run_project(project: ResolvedProject, run_name: str | None = None) -> RunRes
                 raise RuntimeError(f"public workflow node {node_id} has no analysis owner")
             analysis = analyses[node.analysis_id]
             try:
-                execute(WorkflowContext(project, plan, run_dir, analysis, registry))
+                with WorkflowContext(project, plan, run_dir, analysis, registry) as context:
+                    execute(context)
             except KeyboardInterrupt:
                 traceback.print_exc(file=log)
                 record(node_id, "interrupted", "execution interrupted by user or scheduler")
