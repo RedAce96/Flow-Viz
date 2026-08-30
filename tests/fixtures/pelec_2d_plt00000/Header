@@ -1,0 +1,24 @@
+HyperCLaw-V1.1
+6
+density
+x_velocity
+y_velocity
+pressure
+temperature
+volume_fraction
+2
+1.25e-6
+0
+0.0 0.0
+8.0 6.0
+2
+((0,0) (7,5) (0,0))
+0
+1.0 1.0
+0
+0
+0 1 1.25e-6
+0
+0.0 8.0
+0.0 6.0
+Level_0/Cell

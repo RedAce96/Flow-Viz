@@ -146,6 +146,9 @@ def _resolve_field_aliases(raw_names, alias_map=None):
     canonical_to_raws = {}
     for raw, canonical in aliases.items():
         canonical_to_raws.setdefault(canonical, []).append(raw)
+    for canonical, candidates in canonical_to_raws.items():
+        if canonical not in candidates:
+            candidates.insert(0, canonical)
 
     if raw_names is None:
         return canonical_to_raws
