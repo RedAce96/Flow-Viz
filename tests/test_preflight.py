@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 import importlib
@@ -10,6 +11,7 @@ import numpy as np
 import yaml
 
 from pelecpost.config.loader import load_project
+from pelecpost.io import inspect_project
 from pelecpost.preflight import Severity, create_plan
 from pelecpost.workflows import (
     INTERNAL_WORKFLOWS,
@@ -87,6 +89,98 @@ class PreflightTests(unittest.TestCase):
             INTERNAL_WORKFLOWS,
             {"input.plotfiles", "input.probes", "input.comparison_archives", "geometry.surface"},
         )
+
+    def test_inspection_lists_registered_comparison_products(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run = root / "existing-run"
+            run.mkdir()
+            (run / "artifacts.json").write_text(
+                '{"artifacts": [{"id": "spectrum.spectral.psd"}, '
+                '{"id": "spectrum.spectral.confidence"}]}\n',
+                encoding="utf-8",
+            )
+            self.project(root, [])
+            machine_path = root / "machine.yaml"
+            machine = yaml.safe_load(machine_path.read_text())
+            machine["inputs"]["comparison_archives"] = {"existing": str(run)}
+            machine_path.write_text(yaml.safe_dump(machine), encoding="utf-8")
+            inventory = inspect_project(load_project(root))
+            self.assertEqual(
+                inventory.comparison_products["existing"],
+                ("spectrum.spectral.psd", "spectrum.spectral.confidence"),
+            )
+            self.assertFalse(inventory.comparison_errors)
+
+    def test_case_comparison_missing_product_is_a_preflight_blocker(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for archive_id in ("baseline", "candidate"):
+                run = root / archive_id
+                run.mkdir()
+                (run / "artifacts.json").write_text(
+                    '{"artifacts": [{"id": "available.product"}]}\n', encoding="utf-8"
+                )
+            self.project(root, [{
+                "id": "compare", "recipe": "case_comparison",
+                "baseline_id": "baseline", "comparison_id": "candidate",
+                "artifact_ids": ["missing.product"],
+            }])
+            machine_path = root / "machine.yaml"
+            machine = yaml.safe_load(machine_path.read_text())
+            machine["inputs"]["comparison_archives"] = {
+                "baseline": str(root / "baseline"),
+                "candidate": str(root / "candidate"),
+            }
+            machine_path.write_text(yaml.safe_dump(machine), encoding="utf-8")
+            plan = create_plan(load_project(root))
+            self.assertIn(
+                "MISSING_COMPARISON_ARTIFACT", {item.code for item in plan.blockers}
+            )
+
+    def test_case_comparison_unknown_archive_is_a_preflight_blocker(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.project(root, [{
+                "id": "compare", "recipe": "case_comparison",
+                "baseline_id": "missing-baseline", "comparison_id": "missing-candidate",
+                "artifact_ids": ["shared.product"],
+            }])
+            plan = create_plan(load_project(root))
+            self.assertIn(
+                "UNKNOWN_COMPARISON_ARCHIVE", {item.code for item in plan.blockers}
+            )
+
+    def test_case_comparison_incompatible_units_are_a_preflight_blocker(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for archive_id, units in (("baseline", "Pa"), ("candidate", "K")):
+                run = root / archive_id
+                run.mkdir()
+                artifact = {
+                    "id": "shared.product", "schema_version": 1, "variable": "pressure",
+                    "units": units, "coordinate_metadata": {"x_m": [0.0]}, "kind": "npz",
+                    "provenance": {"preprocessing": {"window": "hann"}},
+                }
+                (run / "artifacts.json").write_text(
+                    json.dumps({"artifacts": [artifact]}), encoding="utf-8"
+                )
+            self.project(root, [{
+                "id": "compare", "recipe": "case_comparison",
+                "baseline_id": "baseline", "comparison_id": "candidate",
+                "artifact_ids": ["shared.product"],
+            }])
+            machine_path = root / "machine.yaml"
+            machine = yaml.safe_load(machine_path.read_text())
+            machine["inputs"]["comparison_archives"] = {
+                "baseline": str(root / "baseline"),
+                "candidate": str(root / "candidate"),
+            }
+            machine_path.write_text(yaml.safe_dump(machine), encoding="utf-8")
+            plan = create_plan(load_project(root))
+            self.assertIn(
+                "INCOMPATIBLE_COMPARISON_ARTIFACT", {item.code for item in plan.blockers}
+            )
 
     def test_every_public_workflow_has_a_lazy_executor_registration(self):
         from pelecpost.analysis.executors import EXECUTORS
@@ -235,6 +329,31 @@ class PreflightTests(unittest.TestCase):
             )
             self.assertIn("case.yaml declares 2-D", finding.message)
 
+    def test_flow_overview_rejects_unavailable_requested_field(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.project(root, [{
+                "id": "overview", "recipe": "flow_overview",
+                "fields": ["temperature"],
+            }])
+            plot = root / "plotfiles" / "plt00010"
+            plot.mkdir(parents=True)
+            (plot / "Header").write_text(
+                "\n".join([
+                    "HyperCLaw-V1.1", "1", "pressure", "2", "1.0e-6", "0",
+                    "0.0 -3.0", "10.0 3.0",
+                ]) + "\n",
+                encoding="utf-8",
+            )
+            machine_path = root / "machine.yaml"
+            machine = yaml.safe_load(machine_path.read_text())
+            machine["inputs"]["plotfiles"] = {
+                "source": str(root / "plotfiles"), "prefix": "plt",
+            }
+            machine_path.write_text(yaml.safe_dump(machine), encoding="utf-8")
+            plan = create_plan(load_project(root))
+            self.assertIn("MISSING_REQUESTED_FIELD", {item.code for item in plan.blockers})
+
     def test_directional_wave_reports_spatial_aliasing(self):
         with tempfile.TemporaryDirectory() as temporary:
             project = self.project(
@@ -246,6 +365,37 @@ class PreflightTests(unittest.TestCase):
             )
             plan = create_plan(project)
             self.assertIn("SPATIAL_ALIASING", {item.code for item in plan.blockers})
+
+    def test_directional_sampling_uses_selected_probe_aperture(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(
+                Path(temporary),
+                [{
+                    "id": "wave", "recipe": "directional_wave",
+                    "variable": "pressure", "frequency_max_hz": 100_000,
+                    "probe_indices": [0, 2, 4, 6, 7],
+                }],
+            )
+            plan = create_plan(project)
+            summary = plan.sampling["directional_wave"]["wave"]
+            self.assertEqual(summary["selected_probe_count"], 5)
+            self.assertAlmostEqual(summary["probe_aperture_m"], 0.07)
+            self.assertGreater(summary["probe_spacing_relative_std"], 0.0)
+
+    def test_transient_group_velocity_needs_three_selected_stations(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(
+                Path(temporary),
+                [{
+                    "id": "packet", "recipe": "transient_wavepacket",
+                    "variable": "pressure", "band_min_hz": 1_000,
+                    "band_max_hz": 100_000, "probe_indices": [0, 1],
+                }],
+            )
+            plan = create_plan(project)
+            self.assertIn(
+                "INSUFFICIENT_PACKET_STATIONS", {item.code for item in plan.blockers}
+            )
 
     def test_cycle_is_rejected(self):
         nodes = {

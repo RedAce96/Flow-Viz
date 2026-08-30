@@ -81,6 +81,15 @@ class FlatPlateGeometry(StrictModel):
     wall_y_m: float = 0.0
     fluid_side: Literal["above", "below"] = "above"
 
+    @model_validator(mode="after")
+    def increasing_chord(self) -> "FlatPlateGeometry":
+        if (
+            self.trailing_edge_x_m is not None
+            and self.trailing_edge_x_m <= self.leading_edge_x_m
+        ):
+            raise ValueError("trailing_edge_x_m must exceed leading_edge_x_m")
+        return self
+
 
 class WedgeGeometry(StrictModel):
     type: Literal["wedge"] = "wedge"
@@ -102,6 +111,10 @@ class PolylineGeometry(StrictModel):
         minimum = 3 if self.closed else 2
         if len(self.points_m) < minimum:
             raise ValueError(f"polyline geometry requires at least {minimum} points")
+        if self.closed and self.fluid_side not in {"outside", "inside"}:
+            raise ValueError("closed polylines require outside/inside fluid_side")
+        if not self.closed and self.fluid_side not in {"left", "right"}:
+            raise ValueError("open polylines require left/right fluid_side")
         return self
 
 
@@ -140,9 +153,23 @@ class BaseAnalysis(StrictModel):
     enabled: bool = True
 
 
+class ProbeAnalysis(BaseAnalysis):
+    probe_indices: tuple[int, ...] = ()
+
+    @model_validator(mode="after")
+    def valid_probe_indices(self) -> "ProbeAnalysis":
+        if any(index < 0 for index in self.probe_indices):
+            raise ValueError("probe_indices cannot contain negative values")
+        if len(self.probe_indices) != len(set(self.probe_indices)):
+            raise ValueError("probe_indices must be unique")
+        return self
+
+
 class FlowOverviewAnalysis(BaseAnalysis):
     recipe: Literal["flow_overview"]
-    fields: tuple[Variable, ...] = (Variable.TEMPERATURE, Variable.PRESSURE)
+    fields: tuple[Variable, ...] = Field(
+        default=(Variable.TEMPERATURE, Variable.PRESSURE), min_length=1
+    )
     snapshot_start: int | None = None
     snapshot_end: int | None = None
     snapshot_step: PositiveInt = 1
@@ -193,6 +220,14 @@ class ForceProbeLinkageConfig(StrictModel):
     minimum_segments: PositiveInt = 8
     probe_indices: tuple[int, ...] = ()
 
+    @model_validator(mode="after")
+    def valid_probe_indices(self) -> "ForceProbeLinkageConfig":
+        if any(index < 0 for index in self.probe_indices):
+            raise ValueError("probe_indices cannot contain negative values")
+        if len(self.probe_indices) != len(set(self.probe_indices)):
+            raise ValueError("probe_indices must be unique")
+        return self
+
 
 class AerodynamicForcesAnalysis(BaseAnalysis):
     recipe: Literal["aerodynamic_forces"]
@@ -218,7 +253,7 @@ class AerodynamicForcesAnalysis(BaseAnalysis):
         return self
 
 
-class ProbeSpectrumAnalysis(BaseAnalysis):
+class ProbeSpectrumAnalysis(ProbeAnalysis):
     recipe: Literal["probe_spectrum"]
     variable: Variable
     frequency_max_hz: PositiveFloat | None = None
@@ -226,10 +261,9 @@ class ProbeSpectrumAnalysis(BaseAnalysis):
     detrend: Literal["mean", "linear", "none"] = "mean"
     welch_segment_samples: PositiveInt | None = None
     overlap_fraction: float = Field(default=0.5, ge=0.0, lt=1.0)
-    probe_indices: tuple[int, ...] = ()
 
 
-class SinglePulseAnalysis(BaseAnalysis):
+class SinglePulseAnalysis(ProbeAnalysis):
     recipe: Literal["single_pulse_response"]
     variable: Variable
     energy_per_pulse_j_m: PositiveFloat
@@ -243,7 +277,7 @@ class SinglePulseAnalysis(BaseAnalysis):
     frequency_max_hz: PositiveFloat | None = None
 
 
-class DirectionalWaveAnalysis(BaseAnalysis):
+class DirectionalWaveAnalysis(ProbeAnalysis):
     recipe: Literal["directional_wave"]
     variable: Variable
     frequency_min_hz: float = Field(default=0.0, ge=0.0)
@@ -267,7 +301,7 @@ class DirectionalWaveAnalysis(BaseAnalysis):
         return self
 
 
-class TransientWavepacketAnalysis(BaseAnalysis):
+class TransientWavepacketAnalysis(ProbeAnalysis):
     recipe: Literal["transient_wavepacket"]
     variable: Variable
     band_min_hz: float = Field(ge=0.0)
@@ -283,7 +317,7 @@ class TransientWavepacketAnalysis(BaseAnalysis):
         return self
 
 
-class NonlinearCouplingAnalysis(BaseAnalysis):
+class NonlinearCouplingAnalysis(ProbeAnalysis):
     recipe: Literal["nonlinear_coupling"]
     variable: Variable
     segment_samples: PositiveInt = 8192
@@ -303,7 +337,7 @@ class NonlinearCouplingAnalysis(BaseAnalysis):
         return self
 
 
-class ModalScreeningAnalysis(BaseAnalysis):
+class ModalScreeningAnalysis(ProbeAnalysis):
     recipe: Literal["modal_screening"]
     variable: Variable
     mode_count: PositiveInt = 4
@@ -315,9 +349,17 @@ class ModalScreeningAnalysis(BaseAnalysis):
 
 class CaseComparisonAnalysis(BaseAnalysis):
     recipe: Literal["case_comparison"]
-    baseline_run: Path
-    comparison_run: Path
-    artifact_ids: tuple[str, ...]
+    baseline_id: str
+    comparison_id: str
+    artifact_ids: tuple[str, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def distinct_runs_and_products(self) -> "CaseComparisonAnalysis":
+        if self.baseline_id == self.comparison_id:
+            raise ValueError("baseline_id and comparison_id must be different")
+        if len(self.artifact_ids) != len(set(self.artifact_ids)):
+            raise ValueError("artifact_ids must be unique")
+        return self
 
 
 AnalysisConfig = Annotated[
@@ -367,7 +409,7 @@ class ProbeInput(StrictModel):
 class InputConfig(StrictModel):
     plotfiles: PlotfileInput | None = None
     probes: ProbeInput | None = None
-    comparison_archives: tuple[Path, ...] = ()
+    comparison_archives: dict[str, Path] = Field(default_factory=dict)
     baselines: dict[str, PlotfileInput] = Field(default_factory=dict)
 
 

@@ -68,6 +68,36 @@ class WorkflowContext:
         coordinate_metadata: dict | None = None,
         provenance: dict | None = None,
     ) -> Artifact:
+        from pelecpost.workflows import workflow_for
+
+        required_inputs = workflow_for(self.analysis.recipe).required_inputs_for(
+            self.analysis
+        )
+        sources: list[str] = []
+        if "plotfiles" in required_inputs and self.plan.inventory.plotfiles is not None:
+            sources.append(self.plan.inventory.plotfiles.source)
+        if "probes" in required_inputs and self.plan.inventory.probes is not None:
+            sources.append(self.plan.inventory.probes.source)
+        if "comparison_archives" in required_inputs:
+            sources.extend(self.plan.inventory.comparison_archives.values())
+        baseline_id = (
+            getattr(self.analysis, "baseline_id", None)
+            if self.analysis.recipe == "aerodynamic_forces" else None
+        )
+        if baseline_id:
+            baseline = self.project.machine_file.inputs.baselines[baseline_id]
+            baseline_source = (
+                baseline.source if baseline.source.is_absolute()
+                else (self.project.root / baseline.source).resolve()
+            )
+            sources.append(str(baseline_source))
+        provenance_payload = dict(provenance or {})
+        provenance_payload.setdefault(
+            "preprocessing",
+            self.analysis.model_dump(
+                mode="json", exclude={"id", "enabled"}, exclude_none=True
+            ),
+        )
         return self.artifacts.register(Artifact(
             id=f"{self.analysis.id}.{artifact_id}",
             schema_version=1,
@@ -77,12 +107,7 @@ class WorkflowContext:
             variable=variable,
             units=units,
             coordinate_metadata=coordinate_metadata or {},
-            source_inputs=tuple(
-                value for value in (
-                    self.plan.inventory.plotfiles.source if self.plan.inventory.plotfiles else None,
-                    self.plan.inventory.probes.source if self.plan.inventory.probes else None,
-                ) if value
-            ),
+            source_inputs=tuple(dict.fromkeys(sources)),
             interpretation=interpretation,
-            provenance=provenance or {},
+            provenance=provenance_payload,
         ))

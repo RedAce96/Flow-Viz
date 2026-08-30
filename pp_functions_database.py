@@ -4881,6 +4881,22 @@ def compute_probe_force_linkage(
         )
         return result
 
+    requested_segment = min(int(nperseg), len(force))
+    overlap_samples = int(round(float(noverlap) * requested_segment))
+    step = requested_segment - overlap_samples
+    segment_count = (
+        1 + (len(force) - requested_segment) // step if step > 0 else 0
+    )
+    result["requested_segment_samples"] = requested_segment
+    result["available_segment_count"] = int(segment_count)
+    if len(force) < 16 or segment_count < int(minimum_segments):
+        result["spectral_reason"] = (
+            f"common interval contains {len(force)} synchronized samples and "
+            f"{segment_count} Welch segment(s); at least 16 samples and "
+            f"{int(minimum_segments)} segments are required"
+        )
+        return result
+
     spectral_results = [
         compute_input_output_spectra(
             pressure[:, index], force,

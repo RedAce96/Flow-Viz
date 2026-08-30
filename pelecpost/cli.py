@@ -76,15 +76,55 @@ def inspect_command(project_dir: Path, json_output: bool = typer.Option(False, "
         "Plotfiles",
         "not configured" if plotfiles is None else
         f"{plotfiles.count} files; dimension={plotfiles.dimensionality}; "
-        f"levels=0..{plotfiles.maximum_amr_level}; fields={', '.join(plotfiles.fields)}",
+        f"levels=0..{plotfiles.maximum_amr_level}; time="
+        f"[{plotfiles.time_min_s}, {plotfiles.time_max_s}] s; "
+        f"names={plotfiles.names[0] if plotfiles.names else '-'}.."
+        f"{plotfiles.names[-1] if plotfiles.names else '-'}",
     )
+    if plotfiles is not None:
+        table.add_row("Plot fields", ", ".join(plotfiles.fields) or "none")
+        table.add_row(
+            "Canonical mapping",
+            ", ".join(
+                f"{canonical}={native}"
+                for canonical, native in plotfiles.canonical_fields.items()
+            ) or "none",
+        )
+        table.add_row(
+            "Plot domain",
+            f"{plotfiles.domain_bounds_m} m; solver units={plotfiles.solver_units}",
+        )
     table.add_row(
         "Probes",
         "not configured" if probes is None else
         f"{probes.format}; {probes.sample_count} samples x {probes.probe_count} probes; "
-        f"fields={', '.join(probes.fields)}",
+        f"fields={', '.join(probes.fields)}; time="
+        f"[{probes.time_min_s}, {probes.time_max_s}] s",
     )
+    if probes is not None:
+        table.add_row(
+            "Probe coordinates",
+            f"x=[{probes.x_min_m}, {probes.x_max_m}] m; "
+            f"y=[{probes.y_min_m}, {probes.y_max_m}] m",
+        )
+        table.add_row(
+            "Probe sampling",
+            f"median dt={probes.median_timestep_s} s; std={probes.timestep_std_s} s; "
+            f"restart overlaps={probes.restart_overlap_count}",
+        )
+        table.add_row(
+            "Probe quality",
+            f"missing={sum(probes.missing_value_count.values())}; "
+            f"mapping epochs={probes.mapping_epoch_count}; "
+            f"approved={probes.quality_approved}; provenance={probes.provenance_present}",
+        )
     table.add_row("Comparisons", f"{len(inventory.comparison_archives)} archive(s)")
+    for archive_id, products in inventory.comparison_products.items():
+        detail = ", ".join(products) or "no registered products"
+        if archive_id in inventory.comparison_errors:
+            detail = f"unreadable: {inventory.comparison_errors[archive_id]}"
+        archive = Path(inventory.comparison_archives[archive_id])
+        table.add_row(f"Comparison: {archive_id} ({archive.name})", detail)
     table.add_row(
         "Baselines",
         ", ".join(f"{name} ({len(files)} files)" for name, files in inventory.baselines.items())
@@ -107,10 +147,32 @@ def plan_command(project_dir: Path, json_output: bool = typer.Option(False, "--j
             owner = f" [{finding.analysis_id}]" if finding.analysis_id else ""
             console.print(f"[{color}]{finding.severity}[/] {finding.code}{owner}: {finding.message}")
         resources = plan.sampling["resource_estimate"]
+        probe_summary = plan.sampling
+        if "sampling_frequency_hz" in probe_summary:
+            console.print(
+                "Probe sampling: "
+                f"Fs=[cyan]{probe_summary['sampling_frequency_hz']:.6g} Hz[/], "
+                f"Nyquist=[cyan]{probe_summary['nyquist_frequency_hz']:.6g} Hz[/], "
+                f"native df=[cyan]{probe_summary['native_frequency_resolution_hz']:.6g} Hz[/]"
+            )
+        products = Table(title="Planned analyses and products")
+        products.add_column("Analysis")
+        products.add_column("Recipe")
+        products.add_column("Peak GB", justify="right")
+        products.add_column("Declared artifacts")
+        estimates = {item.analysis_id: item for item in plan.estimates}
+        for analysis_id, contract in plan.analysis_contracts.items():
+            estimate = estimates[analysis_id]
+            products.add_row(
+                analysis_id, contract["recipe"], f"{estimate.estimated_peak_gb:.3f}",
+                ", ".join(contract["expected_artifact_ids"]),
+            )
+        console.print(products)
         console.print(
             f"Estimated concurrent peak: {resources['estimated_concurrent_peak_gb']:.2f} GB / "
             f"{resources['memory_limit_gb']:.2f} GB configured"
         )
+        console.print(f"Output root: [cyan]{plan.output_root}[/]")
     if plan.blockers:
         raise PreflightBlockedError(f"preflight rejected the run with {len(plan.blockers)} blocker(s)")
 

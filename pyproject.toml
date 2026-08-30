@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Recipe-driven PeleC CFD post-processing"
 requires-python = ">=3.11"
 dependencies = [
+  "contourpy>=1.2",
   "h5py>=3.10",
   "matplotlib>=3.8",
   "numpy>=1.26",
@@ -52,6 +53,11 @@ python_files = ["test_*.py"]
 line-length = 100
 target-version = "py311"
 exclude = ["legacy", "pelecpost/legacy_driver.py"]
+
+[tool.ruff.lint.per-file-ignores]
+"pelecpost/analysis/comparison.py" = ["E402"]
+"pelecpost/analysis/spectral.py" = ["E402"]
+"pelecpost/probe_cli.py" = ["E402"]
 
 [tool.mypy]
 python_version = "3.11"

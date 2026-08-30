@@ -101,13 +101,29 @@ def _input_fingerprints(project: ResolvedProject) -> list[dict[str, Any]]:
         source = probes.compact_file if probes.compact_file.is_absolute() else project.root / probes.compact_file
         if source.is_file():
             result.append(_fingerprint(source))
+    elif probes and probes.binary_files:
+        from pp_probe_store import expand_paths
+
+        patterns = []
+        for pattern in probes.binary_files:
+            configured = Path(pattern)
+            if any(character in pattern for character in "*?["):
+                parent = configured.parent
+                if not parent.is_absolute():
+                    parent = (project.root / parent).resolve()
+                patterns.append(str(parent / configured.name))
+            else:
+                if not configured.is_absolute():
+                    configured = (project.root / configured).resolve()
+                patterns.append(str(configured))
+        result.extend(_fingerprint(Path(path)) for path in expand_paths(patterns))
     for baseline in project.machine_file.inputs.baselines.values():
         source = baseline.source if baseline.source.is_absolute() else project.root / baseline.source
         for plotfile in sorted(source.glob(f"{baseline.prefix}*")):
             header = plotfile / "Header"
             if header.is_file():
                 result.append(_fingerprint(header))
-    for configured in project.machine_file.inputs.comparison_archives:
+    for configured in project.machine_file.inputs.comparison_archives.values():
         run = configured if configured.is_absolute() else project.root / configured
         for name in ("manifest.json", "artifacts.json"):
             path = run / name
@@ -203,7 +219,26 @@ def run_project(project: ResolvedProject, run_name: str | None = None) -> RunRes
             analysis = analyses[node.analysis_id]
             try:
                 with WorkflowContext(project, plan, run_dir, analysis, registry) as context:
-                    workflow_for(analysis.recipe).execute(context)
+                    workflow = workflow_for(analysis.recipe)
+                    workflow.execute(context)
+                    produced = tuple(
+                        artifact.id.removeprefix(f"{analysis.id}.")
+                        for artifact in registry.artifacts
+                        if artifact.recipe_instance == analysis.id
+                    )
+                    missing_products = [
+                        expected
+                        for expected in workflow.artifact_declarations_for(analysis)
+                        if not any(
+                            item == expected or item.startswith(expected + ".")
+                            for item in produced
+                        )
+                    ]
+                    if missing_products:
+                        raise RuntimeError(
+                            "workflow returned without declared artifact(s): "
+                            + ", ".join(missing_products)
+                        )
             except KeyboardInterrupt:
                 traceback.print_exc(file=log)
                 record(node_id, "interrupted", "execution interrupted by user or scheduler")
@@ -227,6 +262,28 @@ def run_project(project: ResolvedProject, run_name: str | None = None) -> RunRes
     )
     if manifest["status"] != "interrupted":
         manifest["status"] = "failed" if failed else "completed"
+    from pelecpost.analysis.evidence import write_evidence_report
+
+    evidence_path = write_evidence_report(run_dir, registry)
+    registry.register(Artifact(
+        id="run.measurement-evidence", schema_version=1, recipe_instance="__run__",
+        kind="json", path=str(evidence_path.relative_to(run_dir)), variable=None,
+        units=None, coordinate_metadata={},
+        source_inputs=tuple(dict.fromkeys(
+            source for artifact in registry.artifacts for source in artifact.source_inputs
+        )),
+        interpretation=(
+            "Conservative measurement-based classification with explicit exclusion of "
+            "LST/PSE and causal inference."
+        ),
+        provenance={
+            "derived_from": [artifact.id for artifact in registry.artifacts],
+            "preprocessing": {
+                "classifier": "pelecpost.measurement-evidence",
+                "schema_version": 1,
+            },
+        },
+    ))
     manifest["completed_utc"] = dt.datetime.now(dt.timezone.utc).isoformat()
     atomic_json(run_dir / "manifest.json", manifest)
     register_control("run.log", "logs/run.log", "Full workflow log including tracebacks.")

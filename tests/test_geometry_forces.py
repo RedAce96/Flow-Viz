@@ -82,6 +82,14 @@ class GeometryForceTests(unittest.TestCase):
         expected = np.array([2.0 * pressure * 2.0 * np.sin(np.deg2rad(15.0)), 0.0])
         np.testing.assert_allclose(total, expected, atol=1.0e-12)
 
+    def test_wedge_inside_fluid_reverses_both_panel_normals(self):
+        outside = wedge_surfaces((0.0, 0.0), 2.0, 15.0, "outside")
+        inside = wedge_surfaces((0.0, 0.0), 2.0, 15.0, "inside")
+        for outside_panel, inside_panel in zip(outside, inside):
+            np.testing.assert_allclose(
+                inside_panel.fluid_normal, -outside_panel.fluid_normal, atol=1.0e-15
+            )
+
     def test_flat_plate_is_equivalent_to_reviewed_certified_integrator(self):
         surface = flat_plate_surface(0.0, 1.0, points=101)
         x = surface.coordinates_m[:, 0]
@@ -154,6 +162,18 @@ class GeometryForceTests(unittest.TestCase):
         self.assertEqual(curve.diagnostics["smoothing_window"], 3)
         self.assertGreaterEqual(curve.diagnostics["maximum_smoothing_displacement_m"], 0.0)
         self.assertEqual(curve.coordinates_m.shape, curve.unsmoothed_coordinates_m.shape)
+
+    def test_coarse_volume_fraction_geometry_reports_resolution_warning(self):
+        x = np.linspace(-2.0, 2.0, 21)
+        y = np.linspace(-2.0, 2.0, 21)
+        xx, yy = np.meshgrid(x, y, indexing="ij")
+        fluid = (xx**2 + yy**2 >= 0.8**2).astype(float)
+        curve = volume_fraction_surfaces(
+            x, y, fluid, minimum_component_points=8,
+        )[0]
+        self.assertTrue(curve.diagnostics["resolution_warning"])
+        self.assertGreater(curve.diagnostics["maximum_turn_angle_deg"], 20.0)
+        self.assertLess(curve.confidence, 0.9)
 
     def test_region_freestream_uses_robust_explicit_region(self):
         x = np.linspace(0.0, 1.0, 5)

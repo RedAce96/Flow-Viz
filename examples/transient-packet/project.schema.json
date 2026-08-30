@@ -215,17 +215,16 @@
             "items": {
               "type": "string"
             },
+            "minItems": 1,
             "title": "Artifact Ids",
             "type": "array"
           },
-          "baseline_run": {
-            "format": "path",
-            "title": "Baseline Run",
+          "baseline_id": {
+            "title": "Baseline Id",
             "type": "string"
           },
-          "comparison_run": {
-            "format": "path",
-            "title": "Comparison Run",
+          "comparison_id": {
+            "title": "Comparison Id",
             "type": "string"
           },
           "enabled": {
@@ -247,8 +246,8 @@
         "required": [
           "id",
           "recipe",
-          "baseline_run",
-          "comparison_run",
+          "baseline_id",
+          "comparison_id",
           "artifact_ids"
         ],
         "title": "CaseComparisonAnalysis",
@@ -347,6 +346,14 @@
             "title": "Minimum Coherence",
             "type": "number"
           },
+          "probe_indices": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Probe Indices",
+            "type": "array"
+          },
           "recipe": {
             "const": "directional_wave",
             "title": "Recipe",
@@ -403,6 +410,7 @@
             "items": {
               "$ref": "#/$defs/Variable"
             },
+            "minItems": 1,
             "title": "Fields",
             "type": "array"
           },
@@ -605,6 +613,14 @@
             "title": "Mode Count",
             "type": "integer"
           },
+          "probe_indices": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Probe Indices",
+            "type": "array"
+          },
           "probe_stride": {
             "default": 1,
             "exclusiveMinimum": 0,
@@ -697,6 +713,14 @@
             "minimum": 0.0,
             "title": "Overlap Fraction",
             "type": "number"
+          },
+          "probe_indices": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Probe Indices",
+            "type": "array"
           },
           "recipe": {
             "const": "nonlinear_coupling",
@@ -891,6 +915,14 @@
             "title": "Minimum Relative Source Amplitude",
             "type": "number"
           },
+          "probe_indices": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Probe Indices",
+            "type": "array"
+          },
           "pulse_fwhm_s": {
             "exclusiveMinimum": 0.0,
             "title": "Pulse Fwhm S",
@@ -1029,6 +1061,14 @@
             "minimum": 0.0,
             "title": "Overlap Fraction",
             "type": "number"
+          },
+          "probe_indices": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Probe Indices",
+            "type": "array"
           },
           "recipe": {
             "const": "transient_wavepacket",
@@ -1639,13 +1679,12 @@
             "type": "object"
           },
           "comparison_archives": {
-            "default": [],
-            "items": {
+            "additionalProperties": {
               "format": "path",
               "type": "string"
             },
             "title": "Comparison Archives",
-            "type": "array"
+            "type": "object"
           },
           "plotfiles": {
             "anyOf": [
@@ -1752,7 +1791,7 @@
         "$ref": "#/$defs/InputConfig",
         "default": {
           "baselines": {},
-          "comparison_archives": [],
+          "comparison_archives": {},
           "plotfiles": null,
           "probes": null
         }

@@ -81,7 +81,9 @@ RECIPES: dict[str, RecipeDefinition] = {
             fields=("density", "x_velocity", "temperature"),
             geometries=("flat_plate",),
             assumptions=("Laminar flow.", "Zero streamwise pressure gradient."),
-            outputs=("boundary_layer.profiles", "boundary_layer.thickness"),
+            outputs=(
+                "boundary_layer.profiles", "boundary_layer.thickness", "boundary_layer.gip",
+            ),
             limitations=("The similarity curve is a reference, not an LST or PSE result.",),
         ),
         _recipe(
@@ -91,7 +93,7 @@ RECIPES: dict[str, RecipeDefinition] = {
             inputs=("plotfiles",),
             fields=("pressure", "temperature", "x_velocity", "y_velocity"),
             assumptions=("A unique fluid-facing surface normal can be established.",),
-            outputs=("surface.curve", "surface.samples", "surface.quality"),
+            outputs=("surface.curve", "surface.samples", "surface.quality", "surface.figure"),
             limitations=("Resolution and normal-fit quality constrain wall quantities.",),
             dependencies=("geometry.surface",),
         ),
@@ -116,7 +118,10 @@ RECIPES: dict[str, RecipeDefinition] = {
             inputs=("probes",),
             fields=(),
             assumptions=("The selected record is approximately stationary.",),
-            outputs=("spectral.psd", "spectral.coherence", "spectral.confidence"),
+            outputs=(
+                "spectral.psd", "spectral.coherence", "spectral.confidence",
+                "spectral.figure",
+            ),
             limitations=("Finite records and windowing limit frequency discrimination.",),
         ),
         _recipe(
@@ -138,7 +143,7 @@ RECIPES: dict[str, RecipeDefinition] = {
             assumptions=("Probe coordinates form a suitable approximately uniform aperture.",),
             outputs=(
                 "wave.spatial_spectrum", "wave.wavenumber", "wave.komega",
-                "wave.komega_sensitivity",
+                "wave.komega_sensitivity", "wave.komega.figure",
             ),
             limitations=("Measurements alone do not constitute LST/PSE or causal evidence.",),
         ),

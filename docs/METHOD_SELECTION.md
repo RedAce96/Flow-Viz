@@ -12,5 +12,6 @@ Use `pelec-post recipes list` to list questions and `pelec-post recipes show NAM
 - Use `transient_wavepacket` for localized arrivals rather than stationary PSD interpretation.
 - Use `nonlinear_coupling` only with surrogate/FDR gates; bicoherence is association.
 - Use `modal_screening` as descriptive measurement decomposition, not LST/PSE.
+- Use `case_comparison` only for registered artifacts with matching schemas, units, coordinates, and preprocessing provenance; incompatible products are rejected rather than silently aligned.
 
 Planning is part of analysis, not an optional dry run. Nyquist, record resolution, segment count, spatial aliasing, baseline size, memory, geometry coverage, and capability findings remain in the report.

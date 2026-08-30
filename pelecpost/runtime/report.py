@@ -95,6 +95,19 @@ def generate_report(run_dir: str | Path) -> Path:
     provenance = html.escape(json.dumps(manifest.get("provenance", {}), indent=2, sort_keys=True))
     inventory = html.escape(json.dumps(plan.get("inventory", {}), indent=2, sort_keys=True))
     resources = html.escape(json.dumps(plan.get("sampling", {}), indent=2, sort_keys=True))
+    evidence_artifact = next(
+        (
+            artifact for artifact in registry.artifacts
+            if artifact.id == "run.measurement-evidence"
+        ),
+        None,
+    )
+    evidence_summary = (
+        html.escape(json.dumps(
+            _read_json(root / evidence_artifact.path), indent=2, sort_keys=True
+        ))
+        if evidence_artifact is not None else "No measurement classification registered."
+    )
     document = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>PeleC post-processing report: {html.escape(manifest.get('case_id', 'unknown'))}</title>
@@ -118,6 +131,9 @@ captured before computation and uses metadata-only readers.</p><pre>{inventory}<
 <tbody>{status_rows}</tbody></table>
 <h2>Figure gallery</h2>{''.join(gallery) or '<p>No figures registered.</p>'}
 <h2>Numerical products</h2><ul>{''.join(products) or '<li>No artifacts registered.</li>'}</ul>
+<h2>Measurement-based classification</h2>
+<p>This conservative classification excludes LST/PSE attribution and causal inference.</p>
+<pre>{evidence_summary}</pre>
 <h2>Evidence matrix</h2><table><thead><tr><th>Product</th><th>Analysis contract</th><th>Permitted interpretation</th><th>Quality gates</th></tr></thead>
 <tbody>{''.join(evidence_rows) or '<tr><td colspan="4">No artifacts registered.</td></tr>'}</tbody></table>
 <h2>Interpretation limits</h2><ul>{''.join(limitation_items) or '<li>No recipe limitations registered.</li>'}</ul>

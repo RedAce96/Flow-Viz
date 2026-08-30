@@ -36,7 +36,7 @@ Boundary-layer integral quantities and compressible similarity profiles.
 - Required plotfile fields: density, x_velocity, temperature
 - Dependencies: none
 - Conflicts: none
-- Artifact IDs: boundary_layer.profiles, boundary_layer.thickness
+- Artifact IDs: boundary_layer.profiles, boundary_layer.thickness, boundary_layer.gip
 
 Assumptions:
 
@@ -59,7 +59,7 @@ Surface coordinates, normals, wall samples, and fit-quality diagnostics.
 - Required plotfile fields: pressure, temperature, x_velocity, y_velocity
 - Dependencies: geometry.surface
 - Conflicts: none
-- Artifact IDs: surface.curve, surface.samples, surface.quality
+- Artifact IDs: surface.curve, surface.samples, surface.quality, surface.figure
 
 Assumptions:
 
@@ -103,7 +103,7 @@ One-sided FFT/Welch spectra, coherence, and confidence summaries.
 - Required plotfile fields: none
 - Dependencies: none
 - Conflicts: none
-- Artifact IDs: spectral.psd, spectral.coherence, spectral.confidence
+- Artifact IDs: spectral.psd, spectral.coherence, spectral.confidence, spectral.figure
 
 Assumptions:
 
@@ -147,7 +147,7 @@ Spatial FFT, coherence-gated complex wavenumber, amplification, and k-omega.
 - Required plotfile fields: none
 - Dependencies: none
 - Conflicts: none
-- Artifact IDs: wave.spatial_spectrum, wave.wavenumber, wave.komega, wave.komega_sensitivity
+- Artifact IDs: wave.spatial_spectrum, wave.wavenumber, wave.komega, wave.komega_sensitivity, wave.komega.figure
 
 Assumptions:
 

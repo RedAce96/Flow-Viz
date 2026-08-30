@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import cast
 
 import numpy as np
+import matplotlib.pyplot as plt
 from scipy.interpolate import RegularGridInterpolator
 
 import pp_functions_database as fields_api
@@ -99,7 +100,7 @@ def _surfaces(context: WorkflowContext, dataset: dict):
     if geometry.type == "wedge":
         return wedge_surfaces(
             (geometry.leading_edge_x_m, geometry.leading_edge_y_m),
-            geometry.length_m, geometry.half_angle_deg,
+            geometry.length_m, geometry.half_angle_deg, geometry.fluid_side,
         )
     if geometry.type == "polyline":
         return (polyline_surface(
@@ -139,6 +140,61 @@ def _sample_wall(dataset: dict, surface, maximum_distance_m: float, points: int)
     velocity = np.stack((sample("x_velocity"), sample("y_velocity")), axis=2)
     return distance, pressure, velocity, temperature, fit_wall_quantities(
         surface, distance, pressure, velocity, temperature
+    )
+
+
+def _coarsen_flat_plate_wall(wall: dict) -> dict:
+    """Merge adjacent wall faces for an integration-grid sensitivity estimate."""
+    left = np.asarray(wall["x_left_m"], dtype=float)
+    right = np.asarray(wall["x_right_m"], dtype=float)
+    if len(left) < 4:
+        raise ValueError("flat-plate grid sensitivity requires at least four wall faces")
+    groups = [np.arange(start, min(start + 2, len(left))) for start in range(0, len(left), 2)]
+    result = dict(wall)
+    result["x_left_m"] = np.asarray([left[group[0]] for group in groups])
+    result["x_right_m"] = np.asarray([right[group[-1]] for group in groups])
+    for key in ("p_wall_pa", "p_wall_linear_pa", "tau_wall_pa", "wall_y_m"):
+        if key not in wall:
+            continue
+        values = np.asarray(wall[key], dtype=float)
+        if values.ndim == 0:
+            continue
+        result[key] = np.asarray([
+            np.average(values[group], weights=right[group] - left[group])
+            for group in groups
+        ])
+    if "valid" in wall:
+        valid = np.asarray(wall["valid"], dtype=bool)
+        result["valid"] = np.asarray([np.all(valid[group]) for group in groups])
+    return result
+
+
+def _coarsened_surface_load(
+    surface: SurfaceCurve2D,
+    fit,
+    analysis: AerodynamicForcesAnalysis,
+    pressure_reference_pa: float,
+):
+    """Reintegrate every second surface point when topology permits."""
+    minimum = 6 if surface.closed else 5
+    if len(surface.coordinates_m) < minimum:
+        return None
+    indices = np.arange(0, len(surface.coordinates_m), 2)
+    if not surface.closed and indices[-1] != len(surface.coordinates_m) - 1:
+        indices = np.append(indices, len(surface.coordinates_m) - 1)
+    coarse = SurfaceCurve2D.from_points(
+        surface.coordinates_m[indices], closed=surface.closed,
+        fluid_side=surface.fluid_side, component_id=surface.component_id,
+        side_id=surface.side_id, source=f"{surface.source}_coarsened",
+        confidence=surface.confidence,
+    )
+    return integrate_surface_loads(
+        coarse, fit.pressure_pa[indices], fit.tangential_velocity_gradient_s[indices],
+        fit.temperature_gradient_k_m[indices],
+        dynamic_viscosity_pa_s=analysis.dynamic_viscosity_pa_s,
+        conductivity_w_m_k=analysis.conductivity_w_m_k,
+        moment_origin_m=analysis.moment_origin_m,
+        pressure_reference_pa=pressure_reference_pa,
     )
 
 
@@ -206,6 +262,7 @@ def run_boundary_layer_reference(context: WorkflowContext) -> None:
         label = Path(plotfile).name
         arrays: dict[str, np.ndarray] = {"station_count": np.array(len(profiles))}
         thickness_rows: list[dict] = []
+        gip_rows: list[dict] = []
         for index, profile in enumerate(profiles):
             for key, value in profile.items():
                 candidate = np.asarray(value)
@@ -220,6 +277,25 @@ def run_boundary_layer_reference(context: WorkflowContext) -> None:
                 candidate = np.asarray(value)
                 if candidate.dtype != object:
                     arrays[f"station_{index:03d}_gpi_{key}"] = candidate
+            gip_rows.append({
+                "x_station_m": float(profile["x_station_m"]),
+                "profile_valid": bool(gpi.get("profile_valid", False)),
+                "gip_present": bool(gpi.get("gip_present", False)),
+                "crossing_count": int(gpi.get("crossing_count", 0)),
+                "gip_locations_m": np.asarray(
+                    gpi.get("gip_locations", ()), dtype=float
+                ).tolist(),
+                "gip_locations_over_delta99": np.asarray(
+                    gpi.get("gip_locations_over_delta99", ()), dtype=float
+                ).tolist(),
+                "rejected_crossing_locations_m": np.asarray(
+                    gpi.get("rejected_crossing_locations", ()), dtype=float
+                ).tolist(),
+                "rejected_crossing_reasons": np.asarray(
+                    gpi.get("rejected_crossing_reasons", ()), dtype=str
+                ).tolist(),
+                "rejection_reason": str(gpi.get("rejection_reason", "not reported")),
+            })
             thickness_rows.append({
                 "x_station_m": profile["x_station_m"],
                 "delta_99_m": profile["delta_99_m"],
@@ -253,6 +329,28 @@ def run_boundary_layer_reference(context: WorkflowContext) -> None:
             variable="boundary_layer", units="SI", coordinate_metadata={"wall_distance": "m"},
             interpretation="Native-AMR flat-plate profiles and integral thicknesses under laminar ZPG assumptions.",
             provenance={"plotfile": plotfile, "assumptions": ["laminar", "zero pressure gradient"]},
+        )
+        gip_path = context.data_dir / f"{label}_gip_screening.json"
+        gip_path.write_text(
+            json.dumps({
+                "schema_version": 1,
+                "stations": gip_rows,
+                "interpretation": (
+                    "A credible generalized inflection point is a necessary screening "
+                    "condition only; it is not an LST/PSE mode or instability proof."
+                ),
+            }, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        context.register(
+            artifact_id=f"boundary_layer.gip.{label}", path=gip_path, kind="json",
+            variable="generalized_inflection_point", units="SI",
+            coordinate_metadata={"x_station": "m", "wall_distance": "m"},
+            interpretation=(
+                "Derivative-quality-gated generalized-inflection-point screening; a passing "
+                "screen is necessary evidence only and does not establish instability."
+            ),
+            provenance={"plotfile": plotfile},
         )
         thickness_path = context.data_dir / f"{label}_boundary_layer_thickness.csv"
         with thickness_path.open("w", newline="", encoding="utf-8") as stream:
@@ -331,6 +429,42 @@ def run_surface_diagnostics(context: WorkflowContext) -> None:
                 kind="json", variable="wall_state", units=None, coordinate_metadata={},
                 interpretation="Geometry resolution, coverage, and wall-fit residual diagnostics.",
             )
+            figure_path = context.figure_dir / f"{stem}_geometry_normals.png"
+            figure, axis = plt.subplots(figsize=(9, 4.5))
+            axis.plot(
+                surface.coordinates_m[:, 0], surface.coordinates_m[:, 1],
+                color="black", linewidth=1.5, label="surface",
+            )
+            stride = max(1, len(surface.coordinates_m) // 40)
+            normal_scale = max(
+                analysis.normal_sample_distance_m,
+                0.02 * float(np.ptp(surface.coordinates_m[:, 0])),
+            )
+            points = surface.coordinates_m[::stride]
+            normals = surface.fluid_normal[::stride]
+            axis.quiver(
+                points[:, 0], points[:, 1], normals[:, 0], normals[:, 1],
+                angles="xy", scale_units="xy", scale=1.0 / normal_scale,
+                color="C1", width=0.003, label="fluid-facing normals",
+            )
+            axis.set_xlabel("x [m]")
+            axis.set_ylabel("y [m]")
+            axis.set_aspect("equal", adjustable="datalim")
+            axis.grid(True, alpha=0.25)
+            axis.legend()
+            axis.set_title(f"{label}: component {component} surface reconstruction")
+            figure.tight_layout()
+            figure.savefig(figure_path, dpi=180)
+            plt.close(figure)
+            context.register(
+                artifact_id=f"surface.figure.{label}.{component}", path=figure_path,
+                kind="figure", variable="geometry", units="m",
+                coordinate_metadata={"x": "m", "y": "m"},
+                interpretation=(
+                    "Surface reconstruction and decimated fluid-facing normals; numerical "
+                    "coordinates and quality gates are registered separately."
+                ),
+            )
 @executor("aerodynamic_forces")
 def run_aerodynamic_forces(context: WorkflowContext) -> None:
     analysis = cast(AerodynamicForcesAnalysis, context.analysis)
@@ -388,6 +522,7 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
             wall_for_load = wall
             alternate_for_load = alternate_wall
             integration_reference = reference
+            raw_load = fields_api.integrate_flat_plate_wall_forces(wall, reference)
             if baseline_plotfile is not None:
                 baseline_wall = fields_api.extract_native_flat_plate_wall(
                     baseline_plotfile, x_range_m=(geometry.leading_edge_x_m, end),
@@ -410,6 +545,9 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
             alternate = fields_api.integrate_flat_plate_wall_forces(
                 alternate_for_load, integration_reference
             )
+            coarsened = fields_api.integrate_flat_plate_wall_forces(
+                _coarsen_flat_plate_wall(wall_for_load), integration_reference
+            )
             arrays = {}
             for prefix, payload in (("wall_", wall), ("load_", load)):
                 for key, value in payload.items():
@@ -431,6 +569,17 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
                     alternate["N_total_N_m"] - force[1],
                 ],
                 "moment_delta_n": alternate["M_total_N"] - moment,
+                "integration_grid_coarsening_factor": 2,
+                "grid_coarsened_force_delta_n_m": [
+                    coarsened["D_total_N_m"] - force[0],
+                    coarsened["N_total_N_m"] - force[1],
+                ],
+                "grid_coarsened_moment_delta_n": coarsened["M_total_N"] - moment,
+                "baseline_force_contribution_n_m": [
+                    force[0] - raw_load["D_total_N_m"],
+                    force[1] - raw_load["N_total_N_m"],
+                ],
+                "baseline_moment_contribution_n": moment - raw_load["M_total_N"],
             }
             if analysis.control_volume is not None:
                 control = analysis.control_volume
@@ -491,12 +640,16 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
             components = []
             alternate_components = []
             unsmoothed_components = []
+            raw_components = []
+            coarsened_components = []
+            coarsened_unavailable: list[str] = []
             arrays = {}
             for component, surface in enumerate(_surfaces(context, dataset)):
                 _, _, _, _, fit = _sample_wall(
                     dataset, surface, analysis.normal_sample_distance_m,
                     analysis.normal_sample_points,
                 )
+                raw_fit = fit
                 if baseline_dataset is not None:
                     _, _, _, _, baseline_fit = _sample_wall(
                         baseline_dataset, surface, analysis.normal_sample_distance_m,
@@ -526,6 +679,19 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
                     pressure_reference_pa=(
                         0.0 if baseline_dataset is not None else freestream.pressure_pa
                     ),
+                )
+                raw_component = integrate_surface_loads(
+                    surface, raw_fit.pressure_pa,
+                    raw_fit.tangential_velocity_gradient_s,
+                    raw_fit.temperature_gradient_k_m,
+                    dynamic_viscosity_pa_s=analysis.dynamic_viscosity_pa_s,
+                    conductivity_w_m_k=analysis.conductivity_w_m_k,
+                    moment_origin_m=analysis.moment_origin_m,
+                    pressure_reference_pa=freestream.pressure_pa,
+                )
+                coarse_component = _coarsened_surface_load(
+                    surface, fit, analysis,
+                    0.0 if baseline_dataset is not None else freestream.pressure_pa,
                 )
                 reduced_points = max(4, analysis.normal_sample_points // 2)
                 _, _, _, _, reduced_fit = _sample_wall(
@@ -565,7 +731,14 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
                     ),
                 )
                 components.append(load_component)
+                raw_components.append(raw_component)
                 alternate_components.append(alternate_component)
+                if coarse_component is None:
+                    coarsened_unavailable.append(
+                        f"component {component} has too few points for factor-two coarsening"
+                    )
+                else:
+                    coarsened_components.append(coarse_component)
                 if geometry.type == "volume_fraction":
                     if surface.unsmoothed_coordinates_m is None:
                         raise ValueError("volume-fraction surface omitted unsmoothed coordinates")
@@ -632,6 +805,8 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
             alternate_force = np.sum([item.force_total_n_m for item in alternate_components], axis=0)
             moment = float(sum(item.moment_total_n for item in components))
             alternate_moment = float(sum(item.moment_total_n for item in alternate_components))
+            raw_force = np.sum([item.force_total_n_m for item in raw_components], axis=0)
+            raw_moment = float(sum(item.moment_total_n for item in raw_components))
             unsmoothed_force = (
                 np.sum([item.force_total_n_m for item in unsmoothed_components], axis=0)
                 if unsmoothed_components else None
@@ -653,7 +828,25 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
                 "normal_fit_point_counts": [analysis.normal_sample_points, reduced_points],
                 "force_delta_n_m": (alternate_force - force).tolist(),
                 "moment_delta_n": alternate_moment - moment,
+                "baseline_force_contribution_n_m": (force - raw_force).tolist(),
+                "baseline_moment_contribution_n": moment - raw_moment,
             }
+            if not coarsened_unavailable:
+                coarsened_force = np.sum(
+                    [item.force_total_n_m for item in coarsened_components], axis=0
+                )
+                coarsened_moment = float(
+                    sum(item.moment_total_n for item in coarsened_components)
+                )
+                sensitivity_item.update({
+                    "integration_grid_coarsening_factor": 2,
+                    "grid_coarsened_force_delta_n_m": (
+                        coarsened_force - force
+                    ).tolist(),
+                    "grid_coarsened_moment_delta_n": coarsened_moment - moment,
+                })
+            else:
+                sensitivity_item["grid_sensitivity_unavailable"] = coarsened_unavailable
             if unsmoothed_force is not None and unsmoothed_moment is not None:
                 sensitivity_item.update({
                     "geometry_smoothing_window": getattr(geometry, "smoothing_window"),
@@ -687,8 +880,8 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
         artifact_id="forces.sensitivity", path=sensitivity_path, kind="json", variable="surface_load",
         units=None, coordinate_metadata={},
         interpretation=(
-            "Pressure-fit order, normal-fit point-count, and configured EB geometry-smoothing "
-            "sensitivity for each snapshot."
+            "Pressure/normal-fit, factor-two integration-grid, baseline contribution, and "
+            "configured EB geometry-smoothing sensitivity for each snapshot."
         ),
     )
     if control_volume_rows:

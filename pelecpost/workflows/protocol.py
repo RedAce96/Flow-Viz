@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from pelecpost.config.models import AnalysisConfig, ResolvedProject
@@ -25,29 +25,36 @@ class WorkflowProtocol(Protocol):
     """Public contract implemented by every executable recipe workflow."""
 
     @property
-    def metadata(self) -> "RecipeDefinition": ...
+    def metadata(self) -> "RecipeDefinition":
+        ...
 
     @property
-    def artifact_declarations(self) -> tuple[str, ...]: ...
+    def artifact_declarations(self) -> tuple[str, ...]:
+        ...
 
-    def artifact_declarations_for(self, analysis: "AnalysisConfig") -> tuple[str, ...]: ...
+    def artifact_declarations_for(self, analysis: "AnalysisConfig") -> tuple[str, ...]:
+        ...
 
-    def required_inputs_for(self, analysis: "AnalysisConfig") -> tuple[str, ...]: ...
+    def required_inputs_for(self, analysis: "AnalysisConfig") -> tuple[str, ...]:
+        ...
 
     def validate(
         self,
         project: "ResolvedProject",
         analysis: "AnalysisConfig",
         inventory: "InputInventory",
-    ) -> tuple[WorkflowValidation, ...]: ...
+    ) -> tuple[WorkflowValidation, ...]:
+        ...
 
     def estimate_resources(
         self,
         analysis: "AnalysisConfig",
         inventory: "InputInventory",
-    ) -> dict[str, float]: ...
+    ) -> dict[str, float]:
+        ...
 
-    def execute(self, context: "WorkflowContext") -> None: ...
+    def execute(self, context: "WorkflowContext") -> None:
+        ...
 
 
 def _input_available(name: str, inventory: "InputInventory") -> bool:
@@ -134,6 +141,24 @@ class RegisteredWorkflow:
                     findings.append(WorkflowValidation(
                         "BLOCKER", "MISSING_PLOTFILE_FIELD",
                         f"Required canonical field {field!r} was not mapped from the plotfile.",
+                    ))
+        if self.metadata.name == "flow_overview" and inventory.plotfiles is not None:
+            available_fields = set(inventory.plotfiles.canonical_fields)
+            derived_requirements = {
+                "mach_number": {"density", "pressure", "x_velocity", "y_velocity"},
+                "schlieren": {"density"},
+                "vorticity": {"x_velocity", "y_velocity"},
+                "vorticity_magnitude": {"x_velocity", "y_velocity"},
+            }
+            for requested in getattr(analysis, "fields", ()):
+                field = requested.value
+                required = derived_requirements.get(field, {field})
+                missing = required - available_fields
+                if missing:
+                    findings.append(WorkflowValidation(
+                        "BLOCKER", "MISSING_REQUESTED_FIELD",
+                        f"Requested flow field {field!r} requires mapped canonical field(s): "
+                        f"{', '.join(sorted(missing))}.",
                     ))
         return tuple(findings)
 

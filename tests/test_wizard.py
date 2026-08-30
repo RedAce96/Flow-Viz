@@ -7,7 +7,7 @@ from unittest.mock import patch
 import typer
 
 from pelecpost.config.models import AnalysesFile
-from pelecpost.wizard import _analysis
+from pelecpost.wizard import _analysis, _variable
 from pelecpost.workflows import RECIPES
 
 
@@ -32,6 +32,8 @@ class WizardTests(unittest.TestCase):
             "Baseline mode (none/static/paired)": "none",
             "Baseline run directory": "/tmp/baseline-run",
             "Comparison run directory": "/tmp/comparison-run",
+            "Baseline comparison archive": 1,
+            "Comparison archive": 1,
             "Artifact ID": "spectrum.spectral.psd",
             "Comma-separated target frequencies [Hz]": "10000,20000",
         }
@@ -41,9 +43,14 @@ class WizardTests(unittest.TestCase):
 
     def test_every_recipe_builder_produces_typed_yaml_content(self):
         inventory = SimpleNamespace(
+            plotfiles=SimpleNamespace(
+                canonical_fields={"temperature": "T", "pressure": "p"}
+            ),
             probes=SimpleNamespace(
-                median_timestep_s=1.0e-6, time_min_s=0.0, time_max_s=1.0e-3
-            )
+                median_timestep_s=1.0e-6, time_min_s=0.0, time_max_s=1.0e-3,
+                fields=("p", "T"),
+            ),
+            comparison_archives={"baseline": "/tmp/baseline", "candidate": "/tmp/candidate"},
         )
         console = SimpleNamespace(print=lambda *args, **kwargs: None)
         with patch("pelecpost.wizard.typer.prompt", side_effect=self.prompt), \
@@ -63,6 +70,11 @@ class WizardTests(unittest.TestCase):
         with patch("pelecpost.wizard.typer.prompt", side_effect=typer.Abort()):
             with self.assertRaises(typer.Abort):
                 _analysis("boundary_layer_reference", inventory, console)
+
+    def test_variable_choices_are_limited_to_discovered_probe_fields(self):
+        probes = SimpleNamespace(fields=("p", "T"))
+        with patch("pelecpost.wizard.typer.prompt", return_value=2):
+            self.assertEqual(_variable(probes), "pressure")
 
 
 if __name__ == "__main__":

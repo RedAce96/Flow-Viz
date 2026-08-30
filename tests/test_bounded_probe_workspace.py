@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 import struct
+import json
 from pathlib import Path
 
 import h5py
@@ -140,6 +141,14 @@ class BoundedProbeWorkspaceTests(unittest.TestCase):
             machine_path.write_text(yaml.safe_dump(machine), encoding="utf-8")
             result = run_project(load_project(project.root))
             self.assertEqual(result.status, "completed")
+            manifest = json.loads((result.run_dir / "manifest.json").read_text())
+            self.assertIn(
+                str(binary.resolve()),
+                {
+                    item["path"]
+                    for item in manifest["provenance"]["input_fingerprints"]
+                },
+            )
 
 
 if __name__ == "__main__":

@@ -99,6 +99,17 @@ class ProjectConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(ProjectConfigurationError, "magic"):
                 load_project(root)
 
+    def test_probe_indices_are_nonnegative_and_unique_for_every_probe_recipe(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write_project(root, analyses=[{
+                "id": "bad", "recipe": "transient_wavepacket",
+                "variable": "pressure", "band_min_hz": 1.0,
+                "band_max_hz": 2.0, "probe_indices": [1, 1],
+            }])
+            with self.assertRaisesRegex(ProjectConfigurationError, "probe_indices must be unique"):
+                load_project(root)
+
     def test_volume_fraction_smoothing_window_is_odd(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -109,6 +120,26 @@ class ProjectConfigTests(unittest.TestCase):
             }
             (root / "case.yaml").write_text(yaml.safe_dump(case), encoding="utf-8")
             with self.assertRaisesRegex(ProjectConfigurationError, "smoothing_window must be odd"):
+                load_project(root)
+
+    def test_flat_plate_and_polyline_geometry_contracts_fail_early(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write_project(root)
+            case = dict(CASE)
+            case["geometry"] = {
+                "type": "flat_plate", "leading_edge_x_m": 1.0,
+                "trailing_edge_x_m": 0.5,
+            }
+            (root / "case.yaml").write_text(yaml.safe_dump(case), encoding="utf-8")
+            with self.assertRaisesRegex(ProjectConfigurationError, "trailing_edge"):
+                load_project(root)
+            case["geometry"] = {
+                "type": "polyline", "points_m": [[0.0, 0.0], [1.0, 0.0]],
+                "closed": False, "fluid_side": "outside",
+            }
+            (root / "case.yaml").write_text(yaml.safe_dump(case), encoding="utf-8")
+            with self.assertRaisesRegex(ProjectConfigurationError, "left/right"):
                 load_project(root)
 
     def test_missing_machine_has_actionable_message(self):

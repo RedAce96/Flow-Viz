@@ -130,6 +130,7 @@ class SurfaceCurve2D:
                 "length_m": float(np.sum(lengths)), "signed_area_m2": float(area),
                 "minimum_segment_m": float(np.min(lengths)),
                 "maximum_segment_m": float(np.max(lengths)),
+                "coverage_fraction": 1.0, "rejected_segment_count": 0,
             },
         )
 
@@ -173,6 +174,7 @@ def polyline_surface(
 
 def wedge_surfaces(
     leading_edge_m: tuple[float, float], length_m: float, half_angle_deg: float,
+    fluid_side: Literal["outside", "inside"] = "outside",
 ) -> tuple[SurfaceCurve2D, SurfaceCurve2D]:
     if length_m <= 0 or not 0 < half_angle_deg < 90:
         raise ValueError("wedge length and half-angle must be physical")
@@ -181,11 +183,13 @@ def wedge_surfaces(
     upper_end = leading + length_m * np.array([np.cos(angle), np.sin(angle)])
     lower_end = leading + length_m * np.array([np.cos(angle), -np.sin(angle)])
     upper = SurfaceCurve2D.from_points(
-        np.vstack((leading, upper_end)), closed=False, fluid_side="left",
+        np.vstack((leading, upper_end)), closed=False,
+        fluid_side="left" if fluid_side == "outside" else "right",
         component_id="wedge", side_id="upper", source="wedge", confidence=1.0,
     )
     lower = SurfaceCurve2D.from_points(
-        np.vstack((leading, lower_end)), closed=False, fluid_side="right",
+        np.vstack((leading, lower_end)), closed=False,
+        fluid_side="right" if fluid_side == "outside" else "left",
         component_id="wedge", side_id="lower", source="wedge", confidence=1.0,
     )
     return upper, lower
@@ -207,6 +211,8 @@ def volume_fraction_surfaces(
     x = np.asarray(x_m, dtype=float)
     y = np.asarray(y_m, dtype=float)
     values = np.asarray(fluid_fraction, dtype=float)
+    if x.ndim != 1 or y.ndim != 1 or np.any(np.diff(x) <= 0) or np.any(np.diff(y) <= 0):
+        raise ValueError("volume-fraction coordinates must be one-dimensional and increasing")
     if values.shape == (len(x), len(y)):
         # StandardDataset fields use indexing='ij': (x, y). contourpy and the
         # normal-direction sampler below use image order: (y, x).
@@ -226,9 +232,13 @@ def volume_fraction_surfaces(
         (y, x), values_yx, method="linear", bounds_error=False, fill_value=np.nan
     )
     grid_scale = min(float(np.min(np.diff(x))), float(np.min(np.diff(y))))
+    short_components = [len(line) for line in lines if len(line) < minimum_component_points]
+    if short_components:
+        raise ValueError(
+            "volume-fraction geometry contains component(s) below "
+            f"minimum_component_points={minimum_component_points}: {short_components}"
+        )
     for index, line in enumerate(lines):
-        if len(line) < minimum_component_points:
-            continue
         closed = bool(np.allclose(line[0], line[-1]))
         if not closed:
             raise ValueError("open volume-fraction contour has unresolved fluid normal")
@@ -260,12 +270,21 @@ def volume_fraction_surfaces(
             component_id=f"eb-{index}", source="volume_fraction", confidence=0.9,
         )
         ratio = float(np.max(curve.segment_length_m) / grid_scale)
+        neighboring_tangents = np.sum(
+            curve.segment_tangent * np.roll(curve.segment_tangent, 1, axis=0),
+            axis=1,
+        )
+        maximum_turn_deg = float(np.degrees(np.max(np.arccos(
+            np.clip(neighboring_tangents, -1.0, 1.0)
+        ))))
+        resolution_warning = ratio > 1.5 or maximum_turn_deg > 20.0
         diagnostics = {
             **curve.diagnostics,
             "fluid_side_plus_error": plus_error,
             "fluid_side_minus_error": minus_error,
             "maximum_segment_to_grid_ratio": ratio,
-            "resolution_warning": ratio > 2.0,
+            "maximum_turn_angle_deg": maximum_turn_deg,
+            "resolution_warning": resolution_warning,
             "smoothing_window": smoothing_window,
             "maximum_smoothing_displacement_m": float(
                 np.max(np.linalg.norm(smoothed - unsmoothed, axis=1))
@@ -273,7 +292,7 @@ def volume_fraction_surfaces(
         }
         curve = replace(
             curve,
-            confidence=0.6 if ratio > 2.0 else curve.confidence,
+            confidence=0.6 if resolution_warning else curve.confidence,
             diagnostics=diagnostics,
             unsmoothed_coordinates_m=unsmoothed,
         )

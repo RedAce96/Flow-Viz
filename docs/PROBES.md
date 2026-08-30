@@ -1,6 +1,14 @@
 # Probe acquisition, compaction, verification, and pruning
 
-PeleC probe-v2 files retain restart-safe steps, chunk mappings, requested coordinates, sampled coordinates, levels, validity, field names, and units. Compact HDF5 is the bounded production format.
+PeleC probe-v2 files retain restart-safe steps, chunk mappings, requested coordinates, sampled coordinates, levels, validity, field names, and units. Recipes can read probe-v2 globs or compact HDF5 directly through the same bounded SI workspace. Compact HDF5 remains preferable for repeated production analysis because it is self-contained, verified, and read-optimized.
+
+```yaml
+inputs:
+  probes:
+    binary_files: [/path/probes.segment*.pbin]
+# Or use exactly one compact source:
+#   compact_file: /path/probes.h5
+```
 
 ```bash
 pelec-post probes compact --input '/path/probes*.pbin' --output probes.h5

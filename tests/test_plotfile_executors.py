@@ -79,7 +79,7 @@ class PlotfileExecutorTests(unittest.TestCase):
     def test_preflight_reports_si_domain_and_per_analysis_snapshot_selection(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            project = self.project(root, {
+            self.project(root, {
                 "id": "overview", "recipe": "flow_overview", "fields": ["temperature"],
                 "snapshot_start": 20, "snapshot_end": 30, "snapshot_step": 10,
             })
@@ -109,6 +109,7 @@ class PlotfileExecutorTests(unittest.TestCase):
             self.assertIn("wall.surface.curve.plt00010.0", ids)
             self.assertIn("wall.surface.samples.plt00010.0", ids)
             self.assertIn("wall.surface.quality.plt00010.0", ids)
+            self.assertIn("wall.surface.figure.plt00010.0", ids)
 
     def test_boundary_layer_registers_explicit_thickness_table(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -152,8 +153,16 @@ class PlotfileExecutorTests(unittest.TestCase):
                 "layer.boundary_layer.thickness.plt00010",
                 {item["id"] for item in artifacts["artifacts"]},
             )
+            self.assertIn(
+                "layer.boundary_layer.gip.plt00010",
+                {item["id"] for item in artifacts["artifacts"]},
+            )
             table = (result.run_dir / "data/layer/plt00010_boundary_layer_thickness.csv")
             self.assertIn("delta_99_m", table.read_text(encoding="utf-8"))
+            screening = json.loads(
+                (result.run_dir / "data/layer/plt00010_gip_screening.json").read_text()
+            )
+            self.assertIn("not an LST/PSE", screening["interpretation"])
 
     def test_flat_plate_force_control_volume_is_registered_and_compared(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -193,6 +202,10 @@ class PlotfileExecutorTests(unittest.TestCase):
             )
             self.assertIn(
                 "surface_minus_control_volume_force_n_m",
+                sensitivity["fit_sensitivity"][0],
+            )
+            self.assertIn(
+                "grid_coarsened_force_delta_n_m",
                 sensitivity["fit_sensitivity"][0],
             )
 
@@ -300,6 +313,14 @@ class PlotfileExecutorTests(unittest.TestCase):
             self.assertEqual(component["provenance"]["designation"], "validated_2d_eb_v1")
             sensitivity = json.loads((result.run_dir / "data/loads/force_sensitivity.json").read_text())
             self.assertIn("force_delta_n_m", sensitivity["fit_sensitivity"][0])
+            self.assertIn(
+                "baseline_force_contribution_n_m",
+                sensitivity["fit_sensitivity"][0],
+            )
+            self.assertIn(
+                "grid_sensitivity_unavailable",
+                sensitivity["fit_sensitivity"][0],
+            )
 
     def test_volume_fraction_forces_quantify_unsmoothed_geometry_sensitivity(self):
         with tempfile.TemporaryDirectory() as temporary:

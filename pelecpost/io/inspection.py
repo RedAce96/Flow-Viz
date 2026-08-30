@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import json
 from pathlib import Path
 from typing import Any
 
@@ -71,7 +72,10 @@ class ProbeInventory:
 class InputInventory:
     plotfiles: PlotfileInventory | None
     probes: ProbeInventory | None
-    comparison_archives: tuple[str, ...]
+    comparison_archives: dict[str, str]
+    comparison_products: dict[str, tuple[str, ...]]
+    comparison_metadata: dict[str, dict[str, dict[str, Any]]]
+    comparison_errors: dict[str, str]
     baselines: dict[str, tuple[str, ...]]
 
     def as_dict(self) -> dict[str, Any]:
@@ -196,7 +200,12 @@ def _inspect_hdf5(path: Path) -> ProbeInventory:
         for name in fields:
             dataset = archive[f"fields/{name}"]
             count = 0
-            row_block = dataset.chunks[0] if dataset.chunks else min(4096, dataset.shape[0])
+            bytes_per_row = max(1, dataset.shape[1] * dataset.dtype.itemsize)
+            bounded_rows = max(1, (16 * 1024**2) // bytes_per_row)
+            row_block = min(
+                dataset.chunks[0] if dataset.chunks else 4096,
+                bounded_rows,
+            )
             for first in range(0, dataset.shape[0], row_block):
                 values = np.asarray(dataset[first:first + row_block, :])
                 count += int(np.count_nonzero(~np.isfinite(values)))
@@ -246,11 +255,14 @@ def _inspect_binary(project: ResolvedProject, patterns: tuple[str, ...]) -> Prob
         missing = {}
         for field in collection.field_names:
             count = 0
-            for first in range(0, collection.n_probes, 32):
-                values = collection.read_field(
-                    field, probes=slice(first, min(first + 32, collection.n_probes))
-                )
-                count += int(np.count_nonzero(~np.isfinite(values)))
+            for sample_start in range(0, len(time), 4096):
+                sample_stop = min(sample_start + 4096, len(time))
+                for first in range(0, collection.n_probes, 32):
+                    values = collection.read_field(
+                        field, start=sample_start, stop=sample_stop,
+                        probes=slice(first, min(first + 32, collection.n_probes)),
+                    )
+                    count += int(np.count_nonzero(~np.isfinite(values)))
             missing[field] = count
         return ProbeInventory(
             source=", ".join(collection.paths), format="probe_v2",
@@ -311,12 +323,37 @@ def inspect_project(project: ResolvedProject) -> InputInventory:
             path.name for path in sorted(source.glob(f"{config.prefix}*"))
             if (path / "Header").is_file()
         ) if source.is_dir() else ()
+    comparison_archives = {
+        name: str(_resolve(project, path))
+        for name, path in project.machine_file.inputs.comparison_archives.items()
+    }
+    comparison_products: dict[str, tuple[str, ...]] = {}
+    comparison_metadata: dict[str, dict[str, dict[str, Any]]] = {}
+    comparison_errors: dict[str, str] = {}
+    for archive_id, archive in comparison_archives.items():
+        try:
+            payload = json.loads(
+                (Path(archive) / "artifacts.json").read_text(encoding="utf-8")
+            )
+            products = payload["artifacts"]
+            if not isinstance(products, list):
+                raise TypeError("artifacts must be a list")
+            metadata = {
+                str(item["id"]): item
+                for item in products if isinstance(item, dict) and "id" in item
+            }
+            comparison_products[archive_id] = tuple(metadata)
+            comparison_metadata[archive_id] = metadata
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            comparison_products[archive_id] = ()
+            comparison_metadata[archive_id] = {}
+            comparison_errors[archive_id] = str(exc)
     return InputInventory(
         plotfiles=_inspect_plotfiles(project),
         probes=_inspect_probes(project),
-        comparison_archives=tuple(
-            str(_resolve(project, path))
-            for path in project.machine_file.inputs.comparison_archives
-        ),
+        comparison_archives=comparison_archives,
+        comparison_products=comparison_products,
+        comparison_metadata=comparison_metadata,
+        comparison_errors=comparison_errors,
         baselines=baselines,
     )

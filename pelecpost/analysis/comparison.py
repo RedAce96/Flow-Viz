@@ -20,7 +20,8 @@ from pelecpost.runtime.context import WorkflowContext
 from .executors import executor
 
 
-def _run_path(context: WorkflowContext, configured: Path) -> Path:
+def _run_path(context: WorkflowContext, archive_id: str) -> Path:
+    configured = context.project.machine_file.inputs.comparison_archives[archive_id]
     return configured if configured.is_absolute() else (context.project.root / configured).resolve()
 
 
@@ -37,6 +38,8 @@ def _compatible(first: dict, second: dict) -> None:
             )
     first_preprocessing = first.get("provenance", {}).get("preprocessing")
     second_preprocessing = second.get("provenance", {}).get("preprocessing")
+    if first_preprocessing is None or second_preprocessing is None:
+        raise ValueError("compared artifacts must declare preprocessing provenance")
     if first_preprocessing != second_preprocessing:
         raise ValueError("artifact preprocessing provenance differs")
 
@@ -182,8 +185,8 @@ def _artifact_metrics(first: Path, second: Path) -> list[dict]:
 @executor("case_comparison")
 def run_case_comparison(context: WorkflowContext) -> None:
     analysis = cast(CaseComparisonAnalysis, context.analysis)
-    baseline = _run_path(context, analysis.baseline_run)
-    comparison = _run_path(context, analysis.comparison_run)
+    baseline = _run_path(context, analysis.baseline_id)
+    comparison = _run_path(context, analysis.comparison_id)
     baseline_artifacts = _artifacts(baseline)
     comparison_artifacts = _artifacts(comparison)
     all_metrics = []

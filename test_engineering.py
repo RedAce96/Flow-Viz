@@ -1865,6 +1865,23 @@ class CertifiedForceAnalysisTests(unittest.TestCase):
         self.assertEqual(result["spectral_status"], "insufficient_data")
         self.assertAlmostEqual(result["sample_rate_resampled_hz"], 100.0)
 
+    def test_probe_force_linkage_keeps_lag_when_welch_segments_are_insufficient(self):
+        time = np.arange(32, dtype=float) * 1.0e-3
+        probes = np.column_stack((
+            np.sin(2.0 * np.pi * 10.0 * time),
+            np.cos(2.0 * np.pi * 10.0 * time),
+        ))
+        force = np.sin(2.0 * np.pi * 10.0 * (time - 0.002))
+        result = functions.compute_probe_force_linkage(
+            time, force, time, probes, [0.1, 0.2],
+            forcing_frequency_hz=1_000.0, minimum_forcing_periods=1.0,
+            nperseg=32, minimum_segments=4,
+        )
+        self.assertEqual(result["spectral_status"], "insufficient_data")
+        self.assertEqual(result["available_segment_count"], 1)
+        self.assertEqual(len(result["peak_lag_s"]), 2)
+        self.assertIn("Welch segment", result["spectral_reason"])
+
 
 class ConfigurationTests(unittest.TestCase):
     def test_case_specific_workflows_are_disabled_in_code_defaults(self):

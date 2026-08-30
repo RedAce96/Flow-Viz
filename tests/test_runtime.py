@@ -40,6 +40,8 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(len(paths), len(set(paths)))
             self.assertIn("temperature-spectrum.spectral.psd", ids)
             self.assertIn("temperature-spectrum.spectral.coherence", ids)
+            self.assertIn("temperature-spectrum.spectral.figure", ids)
+            self.assertIn("run.measurement-evidence", ids)
             self.assertTrue((first.run_dir / "report/index.html").is_file())
             created = {
                 str(path.relative_to(first.run_dir))
@@ -48,6 +50,7 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(created, set(paths))
             report_path = first.run_dir / "report/index.html"
             report = report_path.read_text(encoding="utf-8")
+            self.assertIn("Measurement-based classification", report)
             links = set(re.findall(r"(?:href|src)='([^']+)'", report))
             for link in links:
                 if link.startswith("#"):
@@ -62,6 +65,18 @@ class RuntimeTests(unittest.TestCase):
             )
             self.assertEqual(project_fingerprint["checksum_algorithm"], "sha256")
             self.assertEqual(len(project_fingerprint["checksum"]), 64)
+            psd = next(
+                item for item in artifacts["artifacts"]
+                if item["id"] == "temperature-spectrum.spectral.psd"
+            )
+            self.assertEqual(psd["source_inputs"], [str(root / "probes.h5")])
+            self.assertEqual(
+                psd["provenance"]["preprocessing"]["welch_segment_samples"], 256
+            )
+            evidence = json.loads(
+                (first.run_dir / "data/measurement_evidence.json").read_text()
+            )
+            self.assertEqual(evidence["excluded_scope"]["LST_PSE"], "not performed or inferred")
 
     def test_independent_failure_preserves_products_and_report(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -86,6 +101,20 @@ class RuntimeTests(unittest.TestCase):
             report = (result.run_dir / "report/index.html").read_text(encoding="utf-8")
             self.assertIn("synthetic independent failure", report)
             self.assertIn("spectrum.spectral.psd", report)
+
+    def test_executor_cannot_silently_skip_declared_products(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.make_project(Path(temporary), [{
+                "id": "spectrum", "recipe": "probe_spectrum", "variable": "pressure",
+            }])
+            importlib.import_module("pelecpost.analysis.spectral")
+            with patch.dict(EXECUTORS, {"probe_spectrum": lambda _context: None}):
+                result = run_project(project)
+            self.assertEqual(result.status, "failed")
+            manifest = json.loads((result.run_dir / "manifest.json").read_text())
+            message = manifest["workflows"]["analysis.spectrum"]["message"]
+            self.assertIn("returned without declared artifact", message)
+            self.assertIn("spectral.psd", message)
 
     def test_report_regeneration_needs_no_simulation_source(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -132,6 +161,7 @@ class RuntimeTests(unittest.TestCase):
             self.assertIn("wave.wave.komega", ids)
             self.assertIn("wave.wave.spatial_spectrum", ids)
             self.assertIn("wave.wave.komega_sensitivity", ids)
+            self.assertIn("wave.wave.komega.figure", ids)
             sensitivity = json.loads(
                 (result.run_dir / "data/wave/komega_sensitivity.json").read_text()
             )
@@ -185,20 +215,26 @@ class RuntimeTests(unittest.TestCase):
             case = yaml.safe_load((source_project.root / "case.yaml").read_text())
             analyses = {"schema_version": 1, "analyses": [{
                 "id": "compare", "recipe": "case_comparison",
-                "baseline_run": str(baseline.run_dir),
-                "comparison_run": str(comparison.run_dir),
+                "baseline_id": "baseline",
+                "comparison_id": "comparison",
                 "artifact_ids": ["spectrum.spectral.psd", "spectrum.spectral.confidence"],
             }]}
             machine = {
                 "schema_version": 1,
-                "inputs": {"comparison_archives": [str(baseline.run_dir), str(comparison.run_dir)]},
+                "inputs": {"comparison_archives": {
+                    "baseline": str(baseline.run_dir),
+                    "comparison": str(comparison.run_dir),
+                }},
                 "outputs": {"root": str(compare_root / "runs")},
             }
             for name, value in (("case.yaml", case), ("analyses.yaml", analyses),
                                 ("machine.yaml", machine)):
                 (compare_root / name).write_text(yaml.safe_dump(value), encoding="utf-8")
             result = run_project(load_project(compare_root))
-            self.assertEqual(result.status, "completed")
+            self.assertEqual(
+                result.status, "completed",
+                (result.run_dir / "logs/run.log").read_text(encoding="utf-8"),
+            )
             metrics = json.loads((result.run_dir / "data/compare/comparison_metrics.json").read_text())
             self.assertTrue(metrics["metrics"])
             self.assertTrue(any(

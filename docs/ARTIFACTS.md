@@ -5,3 +5,10 @@ Every execution creates a UTC timestamped directory and never reuses it. `manife
 Artifact IDs are independent of directory spelling. Each record includes schema version, recipe instance, variable, units, coordinate metadata, source inputs, provenance, and interpretation. Arrays are compressed NPZ/HDF5 without pickle, scalar records are JSON, tables are CSV with unit metadata, and figures are PNG or vector formats.
 
 Comparison must reject incompatible schema, variable, unit, coordinate, and preprocessing provenance. Reports regenerate from the run directory without simulation inputs.
+
+Every run also registers `run.measurement-evidence`. It is derived only from
+the artifact ledger, records explicit decision thresholds, and conservatively
+classifies measured propagation, packet kinematics, FDR-controlled nonlinear
+association, modal robustness, and available loads. Empty domains remain empty;
+the classifier never fills missing evidence by inference and explicitly
+excludes LST/PSE attribution and causality.

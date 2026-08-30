@@ -13,6 +13,13 @@ from pelecpost.workflows import RECIPES
 
 
 VARIABLES = ("temperature", "pressure", "density", "x_velocity", "y_velocity")
+PROBE_ALIASES = {
+    "temperature": ("temperature", "T", "temp"),
+    "pressure": ("pressure", "p"),
+    "density": ("density", "rho"),
+    "x_velocity": ("x_velocity", "u", "xvel"),
+    "y_velocity": ("y_velocity", "v", "yvel"),
+}
 
 
 def _choice(prompt: str, choices: tuple[str, ...], default: int = 1) -> str:
@@ -22,10 +29,17 @@ def _choice(prompt: str, choices: tuple[str, ...], default: int = 1) -> str:
     return choices[value - 1]
 
 
-def _variable() -> str:
-    for index, name in enumerate(VARIABLES, 1):
+def _variable(probes: Any = None) -> str:
+    available_fields = set(getattr(probes, "fields", ()))
+    choices = tuple(
+        name for name in VARIABLES
+        if not available_fields or any(alias in available_fields for alias in PROBE_ALIASES[name])
+    )
+    if not choices:
+        raise typer.BadParameter("No supported physical variable was mapped from the probe fields.")
+    for index, name in enumerate(choices, 1):
         typer.echo(f"  {index}. {name}")
-    return _choice("Variable", VARIABLES)
+    return _choice("Variable", choices)
 
 
 def _analysis(recipe: str, inventory: Any, console: Console) -> dict[str, Any]:
@@ -40,7 +54,11 @@ def _analysis(recipe: str, inventory: Any, console: Console) -> dict[str, Any]:
             if duration > 0 else f"Derived probe Nyquist: [cyan]{nyquist:.6g} Hz[/]"
         )
     if recipe == "flow_overview":
-        result["fields"] = ["temperature", "pressure"]
+        discovered = set(
+            getattr(getattr(inventory, "plotfiles", None), "canonical_fields", {})
+        )
+        preferred = [name for name in ("temperature", "pressure") if name in discovered]
+        result["fields"] = preferred or sorted(discovered)[:2]
     elif recipe == "boundary_layer_reference":
         result["stations_x_m"] = [typer.prompt("Streamwise station [m]", type=float)]
         result["maximum_height_m"] = typer.prompt("Maximum profile height [m]", type=float)
@@ -60,11 +78,11 @@ def _analysis(recipe: str, inventory: Any, console: Console) -> dict[str, Any]:
         if baseline != "none":
             result["baseline_id"] = typer.prompt("Baseline ID from machine.yaml")
     elif recipe == "probe_spectrum":
-        result["variable"] = _variable()
+        result["variable"] = _variable(probes)
         result["frequency_max_hz"] = typer.prompt("Maximum frequency [Hz]", type=float)
     elif recipe == "single_pulse_response":
         result.update({
-            "variable": _variable(),
+            "variable": _variable(probes),
             "energy_per_pulse_j_m": typer.prompt("Pulse energy per unit span [J/m]", type=float),
             "pulse_fwhm_s": typer.prompt("Pulse FWHM [s]", type=float),
             "pulse_period_s": typer.prompt("Pulse period [s]", type=float),
@@ -72,19 +90,19 @@ def _analysis(recipe: str, inventory: Any, console: Console) -> dict[str, Any]:
         })
     elif recipe == "directional_wave":
         result.update({
-            "variable": _variable(),
+            "variable": _variable(probes),
             "frequency_min_hz": typer.prompt("Minimum frequency [Hz]", type=float),
             "frequency_max_hz": typer.prompt("Maximum frequency [Hz]", type=float),
         })
     elif recipe == "transient_wavepacket":
         result.update({
-            "variable": _variable(),
+            "variable": _variable(probes),
             "band_min_hz": typer.prompt("Band minimum [Hz]", type=float),
             "band_max_hz": typer.prompt("Band maximum [Hz]", type=float),
         })
     elif recipe == "nonlinear_coupling":
         result.update({
-            "variable": _variable(),
+            "variable": _variable(probes),
             "frequency_max_hz": typer.prompt("Maximum frequency [Hz]", type=float),
             "automatic_frequency_selection": typer.confirm(
                 "Automatically select candidate frequencies from stationary PSD peaks?",
@@ -95,11 +113,21 @@ def _analysis(recipe: str, inventory: Any, console: Console) -> dict[str, Any]:
             targets = typer.prompt("Comma-separated target frequencies [Hz]")
             result["target_frequencies_hz"] = [float(value) for value in targets.split(",")]
     elif recipe == "modal_screening":
-        result["variable"] = _variable()
+        result["variable"] = _variable(probes)
     elif recipe == "case_comparison":
+        archive_ids = tuple(getattr(inventory, "comparison_archives", {}))
+        if len(archive_ids) < 2:
+            raise typer.BadParameter("Case comparison requires two named archives in machine.yaml.")
+        console.print("Configured comparison archives:")
+        for index, archive_id in enumerate(archive_ids, 1):
+            console.print(f"  {index}. {archive_id}")
+        baseline_id = _choice("Baseline comparison archive", archive_ids)
+        remaining = tuple(item for item in archive_ids if item != baseline_id)
+        for index, archive_id in enumerate(remaining, 1):
+            console.print(f"  {index}. {archive_id}")
         result.update({
-            "baseline_run": typer.prompt("Baseline run directory"),
-            "comparison_run": typer.prompt("Comparison run directory"),
+            "baseline_id": baseline_id,
+            "comparison_id": _choice("Comparison archive", remaining),
             "artifact_ids": [typer.prompt("Artifact ID")],
         })
     return result
@@ -118,6 +146,24 @@ def configure_project(project_dir: str, console: Console) -> None:
         if project.case_file.case.dimensionality in definition.supported_dimensions
         and project.case_file.geometry.type in definition.supported_geometries
         and all(available_inputs[item] for item in definition.required_inputs)
+        and (name != "case_comparison" or len(inventory.comparison_archives) >= 2)
+        and (
+            name != "flow_overview"
+            or (
+                inventory.plotfiles is not None
+                and bool(inventory.plotfiles.canonical_fields)
+            )
+        )
+        and (
+            not definition.required_fields
+            or (
+                inventory.plotfiles is not None
+                and all(
+                    field in inventory.plotfiles.canonical_fields
+                    for field in definition.required_fields
+                )
+            )
+        )
     )
     if not compatible:
         raise typer.BadParameter(
