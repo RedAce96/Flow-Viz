@@ -28,6 +28,9 @@ def write_compact(path: Path, *, samples: int = 1024, spacing_cm: float = 1.0) -
         for field, unit in (("p", "dyne/cm^2"), ("T", "K")):
             dataset = fields.create_dataset(field, shape=(samples, 8), dtype=float)
             dataset.attrs["unit"] = unit
+            time = np.arange(samples) * 1.0e-6
+            phase = np.arange(8)[None, :] * 0.2
+            dataset[:] = np.sin(2.0 * np.pi * 25_000.0 * time[:, None] - phase)
         mapping = archive.create_group("mapping")
         mapping.create_dataset("epoch_start", data=[0])
         source = archive.create_group("source")

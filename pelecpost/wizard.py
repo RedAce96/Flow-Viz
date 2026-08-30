@@ -79,7 +79,14 @@ def _analysis(recipe: str, inventory: Any, console: Console) -> dict[str, Any]:
         result.update({
             "variable": _variable(),
             "frequency_max_hz": typer.prompt("Maximum frequency [Hz]", type=float),
+            "automatic_frequency_selection": typer.confirm(
+                "Automatically select candidate frequencies from stationary PSD peaks?",
+                default=False,
+            ),
         })
+        if not result["automatic_frequency_selection"]:
+            targets = typer.prompt("Comma-separated target frequencies [Hz]")
+            result["target_frequencies_hz"] = [float(value) for value in targets.split(",")]
     elif recipe == "modal_screening":
         result["variable"] = _variable()
     elif recipe == "case_comparison":

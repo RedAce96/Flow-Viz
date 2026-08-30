@@ -246,6 +246,16 @@ class NonlinearCouplingAnalysis(BaseAnalysis):
     surrogate_count: int = Field(default=499, ge=19)
     fdr_alpha: float = Field(default=0.05, gt=0.0, lt=1.0)
     frequency_max_hz: PositiveFloat
+    target_frequencies_hz: tuple[PositiveFloat, ...] = ()
+    automatic_frequency_selection: bool = False
+
+    @model_validator(mode="after")
+    def frequency_selection(self) -> "NonlinearCouplingAnalysis":
+        if not self.target_frequencies_hz and not self.automatic_frequency_selection:
+            raise ValueError(
+                "provide target_frequencies_hz or explicitly enable automatic_frequency_selection"
+            )
+        return self
 
 
 class ModalScreeningAnalysis(BaseAnalysis):
@@ -341,4 +351,3 @@ class ResolvedProject(StrictModel):
     @property
     def enabled_analyses(self) -> tuple[AnalysisConfig, ...]:
         return tuple(item for item in self.analyses_file.analyses if item.enabled)
-

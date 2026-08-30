@@ -4,7 +4,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from pelecpost.analysis.executors import EXECUTORS
 from pelecpost.runtime import generate_report, run_project
 from tests.test_preflight import PreflightTests
 
@@ -39,16 +41,23 @@ class RuntimeTests(unittest.TestCase):
             root = Path(temporary)
             project = self.make_project(root, [
                 {"id": "spectrum", "recipe": "probe_spectrum", "variable": "pressure"},
-                {"id": "modes", "recipe": "modal_screening", "variable": "pressure"},
+                {
+                    "id": "packet", "recipe": "transient_wavepacket", "variable": "pressure",
+                    "band_min_hz": 1_000, "band_max_hz": 100_000,
+                },
             ])
-            result = run_project(project)
+            def fail_packet(_context):
+                raise RuntimeError("synthetic independent failure")
+
+            with patch.dict(EXECUTORS, {"transient_wavepacket": fail_packet}):
+                result = run_project(project)
             self.assertEqual(result.status, "failed")
             manifest = json.loads((result.run_dir / "manifest.json").read_text())
             self.assertEqual(manifest["workflows"]["analysis.spectrum"]["status"], "completed")
-            self.assertEqual(manifest["workflows"]["analysis.modes"]["status"], "unavailable")
+            self.assertEqual(manifest["workflows"]["analysis.packet"]["status"], "failed")
             self.assertTrue((result.run_dir / "data/spectrum/stationary_spectrum.npz").is_file())
             report = (result.run_dir / "report/index.html").read_text(encoding="utf-8")
-            self.assertIn("unavailable", report)
+            self.assertIn("synthetic independent failure", report)
             self.assertIn("spectrum.spectral.psd", report)
 
     def test_report_regeneration_needs_no_simulation_source(self):
@@ -62,6 +71,67 @@ class RuntimeTests(unittest.TestCase):
             report = generate_report(result.run_dir)
             self.assertTrue(report.is_file())
             self.assertIn("PeleC post-processing report", report.read_text(encoding="utf-8"))
+
+    def test_single_pulse_executor_uses_distinct_finite_record_contract(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = self.make_project(root, [{
+                "id": "pulse", "recipe": "single_pulse_response", "variable": "temperature",
+                "energy_per_pulse_j_m": 1.0, "pulse_fwhm_s": 1.0e-5,
+                "pulse_period_s": 2.0e-4, "start_time_s": 1.0e-4,
+                "baseline_end_time_s": 5.0e-5,
+            }])
+            result = run_project(project)
+            self.assertEqual(result.status, "completed")
+            artifacts = json.loads((result.run_dir / "artifacts.json").read_text())
+            ids = {item["id"] for item in artifacts["artifacts"]}
+            self.assertIn("pulse.pulse.transfer", ids)
+            self.assertIn("pulse.pulse.validity", ids)
+
+    def test_directional_executor_registers_wavenumber_and_komega(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = self.make_project(root, [{
+                "id": "wave", "recipe": "directional_wave", "variable": "pressure",
+                "frequency_min_hz": 1_000, "frequency_max_hz": 400_000,
+                "minimum_coherence": 0.0,
+            }])
+            result = run_project(project)
+            self.assertEqual(result.status, "completed")
+            artifacts = json.loads((result.run_dir / "artifacts.json").read_text())
+            ids = {item["id"] for item in artifacts["artifacts"]}
+            self.assertIn("wave.wave.wavenumber", ids)
+            self.assertIn("wave.wave.komega", ids)
+
+    def test_modal_executor_registers_products_by_artifact_id(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = self.make_project(root, [{
+                "id": "modes", "recipe": "modal_screening", "variable": "pressure",
+                "mode_count": 3, "spod_segment_samples": 256,
+                "dmd_ranks": [2, 3],
+            }])
+            result = run_project(project)
+            self.assertEqual(result.status, "completed")
+            artifacts = json.loads((result.run_dir / "artifacts.json").read_text())
+            ids = {item["id"] for item in artifacts["artifacts"]}
+            self.assertEqual(
+                ids,
+                {"modes.modal.pod", "modes.modal.spod", "modes.modal.dmd", "modes.modal.sensitivity"},
+            )
+
+    def test_nonlinear_executor_records_explicit_frequency_selection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = self.make_project(root, [{
+                "id": "triads", "recipe": "nonlinear_coupling", "variable": "pressure",
+                "segment_samples": 128, "surrogate_count": 19,
+                "frequency_max_hz": 100_000, "target_frequencies_hz": [25_000],
+            }])
+            result = run_project(project)
+            self.assertEqual(result.status, "completed")
+            summary = json.loads((result.run_dir / "data/triads/triad_summary.json").read_text())
+            self.assertIn("explicit target_frequencies_hz", summary["selection"]["method"])
 
 
 if __name__ == "__main__":

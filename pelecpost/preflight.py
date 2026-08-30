@@ -239,6 +239,12 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                     analysis.id,
                 ))
         if analysis.recipe == "directional_wave":
+            if inventory.probes is not None and inventory.probes.probe_count < 5:
+                findings.append(Finding(
+                    Severity.BLOCKER, "INSUFFICIENT_SPATIAL_PROBES",
+                    "Directional complex-wavenumber fitting requires at least five probes.",
+                    analysis.id,
+                ))
             relative_std = sampling.get("probe_spacing_relative_std")
             if relative_std is None:
                 findings.append(Finding(
