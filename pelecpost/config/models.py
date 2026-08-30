@@ -175,6 +175,15 @@ class AerodynamicForcesAnalysis(BaseAnalysis):
     normal_sample_distance_m: PositiveFloat = 0.001
     normal_sample_points: PositiveInt = 8
     baseline: Literal["none", "static", "paired"] = "none"
+    baseline_id: str | None = None
+
+    @model_validator(mode="after")
+    def baseline_contract(self) -> "AerodynamicForcesAnalysis":
+        if self.baseline == "none" and self.baseline_id is not None:
+            raise ValueError("baseline_id is only valid for static or paired baselines")
+        if self.baseline != "none" and not self.baseline_id:
+            raise ValueError("static and paired baselines require baseline_id")
+        return self
 
 
 class ProbeSpectrumAnalysis(BaseAnalysis):
@@ -327,6 +336,7 @@ class InputConfig(StrictModel):
     plotfiles: PlotfileInput | None = None
     probes: ProbeInput | None = None
     comparison_archives: tuple[Path, ...] = ()
+    baselines: dict[str, PlotfileInput] = Field(default_factory=dict)
 
 
 class OutputConfig(StrictModel):

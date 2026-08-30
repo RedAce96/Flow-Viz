@@ -116,6 +116,47 @@ class PlotfileExecutorTests(unittest.TestCase):
             sensitivity = json.loads((result.run_dir / "data/loads/force_sensitivity.json").read_text())
             self.assertIn("force_delta_n_m", sensitivity["fit_sensitivity"][0])
 
+    def test_static_baseline_is_explicit_and_produces_registered_increment(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.project(root, {
+                "id": "loads", "recipe": "aerodynamic_forces",
+                "reference_chord_m": 0.05, "dynamic_viscosity_pa_s": 1.0e-5,
+                "conductivity_w_m_k": 0.02,
+            })
+            case_path = root / "case.yaml"
+            case = yaml.safe_load(case_path.read_text())
+            case["geometry"] = {
+                "type": "wedge", "leading_edge_x_m": 0.01,
+                "leading_edge_y_m": 0.0, "length_m": 0.05,
+                "half_angle_deg": 10.0, "fluid_side": "outside",
+            }
+            case_path.write_text(yaml.safe_dump(case), encoding="utf-8")
+            analyses_path = root / "analyses.yaml"
+            analyses = yaml.safe_load(analyses_path.read_text())
+            analyses["analyses"][0].update({"baseline": "static", "baseline_id": "quiet"})
+            analyses_path.write_text(yaml.safe_dump(analyses), encoding="utf-8")
+            baseline_plot = root / "baseline" / "pltQuiet"
+            baseline_plot.mkdir(parents=True)
+            current_header = root / "inputs" / "plt00010" / "Header"
+            (baseline_plot / "Header").write_text(current_header.read_text(), encoding="utf-8")
+            machine_path = root / "machine.yaml"
+            machine = yaml.safe_load(machine_path.read_text())
+            machine["inputs"]["baselines"] = {
+                "quiet": {"source": str(root / "baseline"), "prefix": "plt"}
+            }
+            machine_path.write_text(yaml.safe_dump(machine), encoding="utf-8")
+            dataset = self.dataset()
+            with patch("pp_functions_database.load_pelec_plotfile", return_value=dataset):
+                result = run_project(load_project(root))
+            self.assertEqual(result.status, "completed")
+            with np.load(result.run_dir / "data/loads/plt00010_validated_2d_eb_forces.npz") as data:
+                np.testing.assert_allclose(data["force_total_n_m"], 0.0, atol=1.0e-10)
+            artifacts = json.loads((result.run_dir / "artifacts.json").read_text())
+            item = next(entry for entry in artifacts["artifacts"]
+                        if entry["id"] == "loads.forces.components.plt00010")
+            self.assertEqual(item["provenance"]["designation"], "validated_2d_eb_v1_increment")
+
 
 if __name__ == "__main__":
     unittest.main()

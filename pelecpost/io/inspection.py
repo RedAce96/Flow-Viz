@@ -69,6 +69,7 @@ class InputInventory:
     plotfiles: PlotfileInventory | None
     probes: ProbeInventory | None
     comparison_archives: tuple[str, ...]
+    baselines: dict[str, tuple[str, ...]]
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -255,6 +256,13 @@ def _inspect_probes(project: ResolvedProject) -> ProbeInventory | None:
 
 
 def inspect_project(project: ResolvedProject) -> InputInventory:
+    baselines = {}
+    for name, config in project.machine_file.inputs.baselines.items():
+        source = _resolve(project, config.source)
+        baselines[name] = tuple(
+            path.name for path in sorted(source.glob(f"{config.prefix}*"))
+            if (path / "Header").is_file()
+        ) if source.is_dir() else ()
     return InputInventory(
         plotfiles=_inspect_plotfiles(project),
         probes=_inspect_probes(project),
@@ -262,4 +270,5 @@ def inspect_project(project: ResolvedProject) -> InputInventory:
             str(_resolve(project, path))
             for path in project.machine_file.inputs.comparison_archives
         ),
+        baselines=baselines,
     )

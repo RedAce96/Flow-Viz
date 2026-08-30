@@ -79,6 +79,11 @@ def inspect_command(project_dir: Path, json_output: bool = typer.Option(False, "
         f"fields={', '.join(probes.fields)}",
     )
     table.add_row("Comparisons", f"{len(inventory.comparison_archives)} archive(s)")
+    table.add_row(
+        "Baselines",
+        ", ".join(f"{name} ({len(files)} files)" for name, files in inventory.baselines.items())
+        or "not configured",
+    )
     console.print(table)
 
 

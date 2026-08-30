@@ -306,10 +306,33 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
         "p_inf": freestream.pressure_pa, "chord": analysis.reference_chord_m,
         "moment_origin": analysis.moment_origin_m,
     }
+    baseline_paths: list[str] = []
+    if analysis.baseline != "none":
+        baseline_config = context.project.machine_file.inputs.baselines[analysis.baseline_id]
+        baseline_source = (
+            baseline_config.source if baseline_config.source.is_absolute()
+            else context.project.root / baseline_config.source
+        )
+        baseline_paths = fields_api.discover_plotfile_paths(
+            baseline_source, plot_prefix=baseline_config.prefix
+        )
+
+    def baseline_for(current_path: str) -> str | None:
+        if analysis.baseline == "none":
+            return None
+        if analysis.baseline == "static":
+            return baseline_paths[0]
+        matches = [path for path in baseline_paths if Path(path).name == Path(current_path).name]
+        if len(matches) != 1:
+            raise ValueError(
+                f"paired baseline requires exactly one plotfile named {Path(current_path).name}; found {len(matches)}"
+            )
+        return matches[0]
     history: list[dict] = []
     sensitivity: list[dict] = []
     for plotfile in _paths(context):
         label = Path(plotfile).name
+        baseline_plotfile = baseline_for(plotfile)
         if geometry.type == "flat_plate":
             end = geometry.trailing_edge_x_m or (
                 geometry.leading_edge_x_m + analysis.reference_chord_m
@@ -320,9 +343,32 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
                 u_inf_m_s=freestream.velocity_m_s,
                 viscosity_pa_s=analysis.dynamic_viscosity_pa_s,
             )
-            load = fields_api.integrate_flat_plate_wall_forces(wall, reference)
             alternate_wall = {**wall, "p_wall_pa": wall["p_wall_linear_pa"]}
-            alternate = fields_api.integrate_flat_plate_wall_forces(alternate_wall, reference)
+            wall_for_load = wall
+            alternate_for_load = alternate_wall
+            integration_reference = reference
+            if baseline_plotfile is not None:
+                baseline_wall = fields_api.extract_native_flat_plate_wall(
+                    baseline_plotfile, x_range_m=(geometry.leading_edge_x_m, end),
+                    wall_y_m=geometry.wall_y_m, p_inf_pa=freestream.pressure_pa,
+                    rho_inf_kg_m3=freestream.density_kg_m3,
+                    u_inf_m_s=freestream.velocity_m_s,
+                    viscosity_pa_s=analysis.dynamic_viscosity_pa_s,
+                )
+                baseline_alternate = {
+                    **baseline_wall, "p_wall_pa": baseline_wall["p_wall_linear_pa"]
+                }
+                wall_for_load = fields_api.difference_flat_plate_wall_surfaces(wall, baseline_wall)
+                alternate_for_load = fields_api.difference_flat_plate_wall_surfaces(
+                    alternate_wall, baseline_alternate
+                )
+                integration_reference = {**reference, "p_inf": 0.0}
+            load = fields_api.integrate_flat_plate_wall_forces(
+                wall_for_load, integration_reference
+            )
+            alternate = fields_api.integrate_flat_plate_wall_forces(
+                alternate_for_load, integration_reference
+            )
             arrays = {}
             for prefix, payload in (("wall_", wall), ("load_", load)):
                 for key, value in payload.items():
@@ -335,6 +381,8 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
             moment = load["M_total_N"]
             time_s = load["time"]
             designation = "stationary_one_sided_flat_plate"
+            if baseline_plotfile is not None:
+                designation += "_increment"
             sensitivity.append({
                 "plotfile": label, "pressure_fit_orders": [2, 1],
                 "force_delta_n_m": [
@@ -351,6 +399,10 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
             if geometry.type == "volume_fraction":
                 requested.add(geometry.field)
             dataset = _load(context, plotfile, requested)
+            baseline_dataset = (
+                _load(context, baseline_plotfile, requested)
+                if baseline_plotfile is not None else None
+            )
             components = []
             alternate_components = []
             arrays = {}
@@ -359,18 +411,62 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
                     dataset, surface, analysis.normal_sample_distance_m,
                     analysis.normal_sample_points,
                 )
+                if baseline_dataset is not None:
+                    _, _, _, _, baseline_fit = _sample_wall(
+                        baseline_dataset, surface, analysis.normal_sample_distance_m,
+                        analysis.normal_sample_points,
+                    )
+                    fit = type(fit)(
+                        pressure_pa=fit.pressure_pa - baseline_fit.pressure_pa,
+                        tangential_velocity_gradient_s=(
+                            fit.tangential_velocity_gradient_s
+                            - baseline_fit.tangential_velocity_gradient_s
+                        ),
+                        temperature_gradient_k_m=(
+                            fit.temperature_gradient_k_m
+                            - baseline_fit.temperature_gradient_k_m
+                        ),
+                        pressure_residual_pa=fit.pressure_residual_pa,
+                        velocity_residual_m_s=fit.velocity_residual_m_s,
+                        temperature_residual_k=fit.temperature_residual_k,
+                        point_count=np.minimum(fit.point_count, baseline_fit.point_count),
+                    )
                 load_component = integrate_surface_loads(
                     surface, fit.pressure_pa, fit.tangential_velocity_gradient_s,
                     fit.temperature_gradient_k_m,
                     dynamic_viscosity_pa_s=analysis.dynamic_viscosity_pa_s,
                     conductivity_w_m_k=analysis.conductivity_w_m_k,
                     moment_origin_m=analysis.moment_origin_m,
-                    pressure_reference_pa=freestream.pressure_pa,
+                    pressure_reference_pa=(
+                        0.0 if baseline_dataset is not None else freestream.pressure_pa
+                    ),
                 )
                 reduced_points = max(4, analysis.normal_sample_points // 2)
                 _, _, _, _, reduced_fit = _sample_wall(
                     dataset, surface, analysis.normal_sample_distance_m, reduced_points,
                 )
+                if baseline_dataset is not None:
+                    _, _, _, _, baseline_reduced_fit = _sample_wall(
+                        baseline_dataset, surface, analysis.normal_sample_distance_m,
+                        reduced_points,
+                    )
+                    reduced_fit = type(reduced_fit)(
+                        pressure_pa=reduced_fit.pressure_pa - baseline_reduced_fit.pressure_pa,
+                        tangential_velocity_gradient_s=(
+                            reduced_fit.tangential_velocity_gradient_s
+                            - baseline_reduced_fit.tangential_velocity_gradient_s
+                        ),
+                        temperature_gradient_k_m=(
+                            reduced_fit.temperature_gradient_k_m
+                            - baseline_reduced_fit.temperature_gradient_k_m
+                        ),
+                        pressure_residual_pa=reduced_fit.pressure_residual_pa,
+                        velocity_residual_m_s=reduced_fit.velocity_residual_m_s,
+                        temperature_residual_k=reduced_fit.temperature_residual_k,
+                        point_count=np.minimum(
+                            reduced_fit.point_count, baseline_reduced_fit.point_count
+                        ),
+                    )
                 alternate_component = integrate_surface_loads(
                     surface, reduced_fit.pressure_pa,
                     reduced_fit.tangential_velocity_gradient_s,
@@ -378,7 +474,9 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
                     dynamic_viscosity_pa_s=analysis.dynamic_viscosity_pa_s,
                     conductivity_w_m_k=analysis.conductivity_w_m_k,
                     moment_origin_m=analysis.moment_origin_m,
-                    pressure_reference_pa=freestream.pressure_pa,
+                    pressure_reference_pa=(
+                        0.0 if baseline_dataset is not None else freestream.pressure_pa
+                    ),
                 )
                 components.append(load_component)
                 alternate_components.append(alternate_component)
@@ -396,6 +494,8 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
             np.savez_compressed(path, **arrays)
             time_s = dataset["time"]
             designation = "validated_2d_eb_v1"
+            if baseline_plotfile is not None:
+                designation += "_increment"
             sensitivity.append({
                 "plotfile": label,
                 "normal_fit_point_counts": [analysis.normal_sample_points, reduced_points],
@@ -410,7 +510,8 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
             variable="surface_load", units="N/m, N, and W/m^2",
             coordinate_metadata={"x": "m", "y": "m"}, interpretation=interpretation,
             provenance={"designation": designation, "plotfile": plotfile,
-                        "baseline": analysis.baseline},
+                        "baseline": analysis.baseline,
+                        "baseline_plotfile": baseline_plotfile},
         )
         history.append({"plotfile": label, "time_s": time_s, "force_x_n_m": force[0],
                         "force_y_n_m": force[1], "moment_n": moment,

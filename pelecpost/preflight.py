@@ -239,11 +239,27 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                     analysis.id,
                 ))
         if analysis.recipe == "aerodynamic_forces" and analysis.baseline != "none":
-            findings.append(Finding(
-                Severity.BLOCKER, "BASELINE_INPUT_REQUIRED",
-                f"Baseline mode {analysis.baseline!r} requires a versioned baseline input contract; "
-                "none is configured in machine.yaml.", analysis.id,
-            ))
+            available_baseline = inventory.baselines.get(analysis.baseline_id or "", ())
+            if not available_baseline:
+                findings.append(Finding(
+                    Severity.BLOCKER, "BASELINE_INPUT_REQUIRED",
+                    f"Baseline {analysis.baseline_id!r} has no discoverable plotfiles in machine.yaml.",
+                    analysis.id,
+                ))
+            elif analysis.baseline == "static" and len(available_baseline) != 1:
+                findings.append(Finding(
+                    Severity.BLOCKER, "STATIC_BASELINE_COUNT",
+                    f"Static baseline must contain exactly one plotfile; found {len(available_baseline)}.",
+                    analysis.id,
+                ))
+            elif analysis.baseline == "paired" and inventory.plotfiles is not None:
+                missing_pairs = sorted(set(inventory.plotfiles.names) - set(available_baseline))
+                if missing_pairs:
+                    findings.append(Finding(
+                        Severity.BLOCKER, "PAIRED_BASELINE_MISMATCH",
+                        f"Paired baseline is missing {len(missing_pairs)} current plotfile name(s): "
+                        f"{', '.join(missing_pairs[:5])}.", analysis.id,
+                    ))
         if analysis.recipe == "directional_wave":
             if inventory.probes is not None and inventory.probes.probe_count < 5:
                 findings.append(Finding(

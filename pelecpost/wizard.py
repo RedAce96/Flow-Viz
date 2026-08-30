@@ -55,6 +55,10 @@ def _analysis(recipe: str, inventory: Any, console: Console) -> dict[str, Any]:
             "dynamic_viscosity_pa_s": typer.prompt("Dynamic viscosity [Pa s]", type=float),
             "conductivity_w_m_k": typer.prompt("Thermal conductivity [W/(m K)]", type=float),
         })
+        baseline = typer.prompt("Baseline mode (none/static/paired)", default="none")
+        result["baseline"] = baseline
+        if baseline != "none":
+            result["baseline_id"] = typer.prompt("Baseline ID from machine.yaml")
     elif recipe == "probe_spectrum":
         result["variable"] = _variable()
         result["frequency_max_hz"] = typer.prompt("Maximum frequency [Hz]", type=float)
