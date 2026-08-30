@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from importlib import import_module
 
 from pelecpost.errors import UnsupportedCapabilityError
 from pelecpost.runtime.context import WorkflowContext
@@ -25,12 +26,8 @@ def execute(context: WorkflowContext) -> None:
     if context.analysis.recipe not in EXECUTORS:
         # Keep heavy numerical/plotting imports out of configuration-only CLI
         # commands and register domain executors only when they are requested.
-        from . import spectral as _spectral  # noqa: F401
-        from . import modal as _modal  # noqa: F401
-        from . import transient as _transient  # noqa: F401
-        from . import nonlinear as _nonlinear  # noqa: F401
-        from . import plotfiles as _plotfiles  # noqa: F401
-        from . import comparison as _comparison  # noqa: F401
+        for module in ("spectral", "modal", "transient", "nonlinear", "plotfiles", "comparison"):
+            import_module(f"pelecpost.analysis.{module}")
     try:
         function = EXECUTORS[context.analysis.recipe]
     except KeyError as exc:

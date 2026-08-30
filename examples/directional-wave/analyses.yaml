@@ -1,0 +1,3 @@
+schema_version: 1
+analyses:
+  - {id: wave, recipe: directional_wave, variable: pressure, frequency_min_hz: 1.0e5, frequency_max_hz: 2.0e8, expected_speed_min_m_s: 300.0, expected_speed_max_m_s: 2500.0}

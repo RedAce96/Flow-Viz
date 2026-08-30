@@ -1,0 +1,4 @@
+schema_version: 1
+inputs: {probes: {compact_file: /replace/with/probes.h5}}
+outputs: {root: runs}
+compute: {workers: 2, memory_limit_gb: 32}

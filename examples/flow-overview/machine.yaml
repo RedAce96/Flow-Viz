@@ -1,0 +1,4 @@
+schema_version: 1
+inputs: {plotfiles: {source: /replace/with/plotfiles, prefix: plt}}
+outputs: {root: runs}
+compute: {workers: 1, memory_limit_gb: 16}

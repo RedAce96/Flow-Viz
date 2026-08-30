@@ -1,0 +1,3 @@
+schema_version: 1
+analyses:
+  - {id: overview, recipe: flow_overview, fields: [pressure, temperature, mach_number], streamlines: true}

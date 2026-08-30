@@ -171,7 +171,7 @@ def recipes_show_command(recipe: str) -> None:
 
 
 def _run_probe_utility(arguments: list[str]) -> None:
-    from compact_probes import main as compact_main
+    from pelecpost.probe_cli import main as compact_main
 
     status = compact_main(arguments)
     if status:
@@ -210,7 +210,7 @@ def main() -> None:
         app()
     except PelecPostError as exc:
         console.print(f"[red]Configuration error:[/] {exc}", highlight=False)
-        raise typer.Exit(CONFIGURATION_EXIT_CODE) from exc
+        raise SystemExit(CONFIGURATION_EXIT_CODE) from None
 
 
 if __name__ == "__main__":

@@ -1,0 +1,4 @@
+schema_version: 1
+analyses:
+  - {id: triads, recipe: nonlinear_coupling, variable: pressure, frequency_max_hz: 2.0e8, target_frequencies_hz: [1.0e7, 2.0e7]}
+  - {id: modes, recipe: modal_screening, variable: pressure, mode_count: 4}

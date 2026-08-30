@@ -31,4 +31,4 @@ The clean-break interface does not accept legacy JSON or old workflow flags. The
 
 Unknown keys and cross-file responsibility violations are rejected. Public dimensional values use SI and unit-bearing key names. PeleC CGS values are converted at the I/O boundary.
 
-See [method selection](docs/METHOD_SELECTION.md), [artifact contracts](docs/ARTIFACTS.md), [2-D EB validation](docs/EB_VALIDATION.md), [SLURM troubleshooting](docs/TROUBLESHOOTING.md), and the [future 3-D design](docs/ARCHITECTURE_3D.md).
+See [configuration](docs/CONFIGURATION.md), [recipe reference](docs/RECIPES.md), [method selection](docs/METHOD_SELECTION.md), [scientific assumptions](docs/SCIENTIFIC_ASSUMPTIONS.md), [probe acquisition](docs/PROBES.md), [artifact contracts](docs/ARTIFACTS.md), [2-D EB validation](docs/EB_VALIDATION.md), [SLURM troubleshooting](docs/TROUBLESHOOTING.md), and the [future 3-D design](docs/ARCHITECTURE_3D.md).

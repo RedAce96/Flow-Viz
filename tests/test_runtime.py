@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import importlib
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -38,6 +40,16 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(len(paths), len(set(paths)))
             self.assertIn("temperature-spectrum.spectral.psd", ids)
             self.assertTrue((first.run_dir / "report/index.html").is_file())
+            created = {
+                str(path.relative_to(first.run_dir))
+                for path in first.run_dir.rglob("*") if path.is_file()
+            } - {"artifacts.json"}
+            self.assertEqual(created, set(paths))
+            report_path = first.run_dir / "report/index.html"
+            report = report_path.read_text(encoding="utf-8")
+            links = set(re.findall(r"(?:href|src)='([^']+)'", report))
+            for link in links:
+                self.assertTrue((report_path.parent / link).resolve().is_file(), link)
 
     def test_independent_failure_preserves_products_and_report(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -118,8 +130,9 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(result.status, "completed")
             artifacts = json.loads((result.run_dir / "artifacts.json").read_text())
             ids = {item["id"] for item in artifacts["artifacts"]}
+            modal_ids = {item for item in ids if item.startswith("modes.")}
             self.assertEqual(
-                ids,
+                modal_ids,
                 {"modes.modal.pod", "modes.modal.spod", "modes.modal.dmd", "modes.modal.sensitivity"},
             )
 
@@ -168,6 +181,26 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(result.status, "completed")
             metrics = json.loads((result.run_dir / "data/compare/comparison_metrics.json").read_text())
             self.assertTrue(metrics["metrics"])
+
+    def test_interruption_is_atomic_and_reportable(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = self.make_project(root, [{
+                "id": "spectrum", "recipe": "probe_spectrum", "variable": "temperature",
+            }])
+
+            def interrupt(_context):
+                raise KeyboardInterrupt()
+
+            # Force registration first, then replace the selected executor.
+            importlib.import_module("pelecpost.analysis.spectral")
+            with patch.dict(EXECUTORS, {"probe_spectrum": interrupt}):
+                result = run_project(project)
+            self.assertEqual(result.status, "interrupted")
+            manifest = json.loads((result.run_dir / "manifest.json").read_text())
+            self.assertEqual(manifest["status"], "interrupted")
+            self.assertEqual(manifest["workflows"]["analysis.spectrum"]["status"], "interrupted")
+            self.assertTrue((result.run_dir / "report/index.html").is_file())
 
 
 if __name__ == "__main__":

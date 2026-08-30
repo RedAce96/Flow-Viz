@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from enum import StrEnum
-from math import ceil, pi
+from math import pi
 from typing import Any
 
 import numpy as np
@@ -33,6 +33,7 @@ class AnalysisEstimate:
     analysis_id: str
     recipe: str
     estimated_peak_gb: float
+    memory_components_gb: dict[str, float]
     expected_artifact_ids: tuple[str, ...]
 
 
@@ -131,7 +132,7 @@ def _sampling_summary(project: ResolvedProject, inventory: InputInventory) -> di
     return result
 
 
-def _estimate_memory_gb(analysis: Any, inventory: InputInventory) -> float:
+def _estimate_memory(analysis: Any, inventory: InputInventory) -> dict[str, float]:
     probes = inventory.probes
     if analysis.recipe in {
         "probe_spectrum", "single_pulse_response", "directional_wave",
@@ -146,12 +147,21 @@ def _estimate_memory_gb(analysis: Any, inventory: InputInventory) -> float:
             "nonlinear_coupling": 8.0,
             "modal_screening": 7.0,
         }[analysis.recipe]
-        return matrix * multiplier / 1024**3
+        components = {"probe_signal": matrix / 1024**3}
+        if analysis.recipe in {"probe_spectrum", "single_pulse_response", "nonlinear_coupling"}:
+            components["fft_workspace"] = matrix * (multiplier - 1.0) / 1024**3
+        elif analysis.recipe == "directional_wave":
+            components["wavenumber_and_komega"] = matrix * (multiplier - 1.0) / 1024**3
+        elif analysis.recipe == "transient_wavepacket":
+            components["stft_and_envelope"] = matrix * (multiplier - 1.0) / 1024**3
+        else:
+            components["modal_workspace"] = matrix * (multiplier - 1.0) / 1024**3
+        return components
     if analysis.recipe == "case_comparison":
-        return 0.25
+        return {"comparison_arrays": 0.25}
     # Plotfile arrays are read one selected region/snapshot at a time. Without
     # cell extents in Header metadata, report a conservative bounded allowance.
-    return 2.0
+    return {"field_slab": 1.5, "plotting_workspace": 0.5}
 
 
 def create_plan(project: ResolvedProject, inventory: InputInventory | None = None) -> PreflightPlan:
@@ -310,6 +320,16 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
     if inventory.probes is not None:
         if inventory.probes.nonfinite_time_count:
             findings.append(Finding(Severity.BLOCKER, "NONFINITE_TIME", "Probe time contains nonfinite values."))
+        missing_total = sum(inventory.probes.missing_value_count.values())
+        if missing_total:
+            details = ", ".join(
+                f"{name}={count}" for name, count in inventory.probes.missing_value_count.items()
+                if count
+            )
+            findings.append(Finding(
+                Severity.BLOCKER, "MISSING_PROBE_VALUES",
+                f"Probe fields contain {missing_total} nonfinite value(s): {details}.",
+            ))
         if inventory.probes.restart_overlap_count:
             findings.append(Finding(
                 Severity.WARNING, "RESTART_OVERLAP",
@@ -322,15 +342,14 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                 "Probe sampling is nonuniform; FFT recipes require an explicit coordinate policy.",
             ))
 
-    estimates = tuple(
-        AnalysisEstimate(
-            analysis.id,
-            analysis.recipe,
-            _estimate_memory_gb(analysis, inventory),
+    estimate_items = []
+    for analysis in project.enabled_analyses:
+        components = _estimate_memory(analysis, inventory)
+        estimate_items.append(AnalysisEstimate(
+            analysis.id, analysis.recipe, sum(components.values()), components,
             recipe_for(analysis.recipe).outputs,
-        )
-        for analysis in project.enabled_analyses
-    )
+        ))
+    estimates = tuple(estimate_items)
     limit = float(project.machine_file.compute.memory_limit_gb)
     workers = int(project.machine_file.compute.workers)
     largest = max((item.estimated_peak_gb for item in estimates), default=0.0)
@@ -354,6 +373,15 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
     output = project.machine_file.outputs.root
     if not output.is_absolute():
         output = (project.root / output).resolve()
+    sampling["selections"] = {
+        "plotfiles": list(inventory.plotfiles.names) if inventory.plotfiles else [],
+        "probes": {
+            analysis.id: list(getattr(analysis, "probe_indices", ())) or "all"
+            for analysis in project.enabled_analyses
+            if "probes" in recipe_for(analysis.recipe).required_inputs
+        },
+        "expected_output_root": str(output),
+    }
     return PreflightPlan(
         case_id=case.id,
         inventory=inventory,

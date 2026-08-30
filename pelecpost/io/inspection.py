@@ -55,6 +55,7 @@ class ProbeInventory:
     median_timestep_s: float | None
     timestep_std_s: float | None
     nonfinite_time_count: int
+    missing_value_count: dict[str, int]
     restart_overlap_count: int
     mapping_epoch_count: int
     quality_approved: bool | None
@@ -166,6 +167,15 @@ def _inspect_hdf5(path: Path) -> ProbeInventory:
             name: str(archive[f"fields/{name}"].attrs.get("unit", "unknown"))
             for name in fields
         }
+        missing = {}
+        for name in fields:
+            dataset = archive[f"fields/{name}"]
+            count = 0
+            row_block = dataset.chunks[0] if dataset.chunks else min(4096, dataset.shape[0])
+            for first in range(0, dataset.shape[0], row_block):
+                values = np.asarray(dataset[first:first + row_block, :])
+                count += int(np.count_nonzero(~np.isfinite(values)))
+            missing[name] = count
         epochs = archive.get("mapping/epoch_start")
         provenance = "source/files_json" in archive
         quality = archive.attrs.get("quality_approved")
@@ -182,6 +192,7 @@ def _inspect_hdf5(path: Path) -> ProbeInventory:
             median_timestep_s=float(np.median(dt)) if dt.size else None,
             timestep_std_s=float(np.std(dt)) if dt.size else None,
             nonfinite_time_count=int(np.count_nonzero(~np.isfinite(time))),
+            missing_value_count=missing,
             restart_overlap_count=overlaps,
             mapping_epoch_count=int(epochs.shape[0]) if epochs is not None else 0,
             quality_approved=bool(quality) if quality is not None else None,
@@ -207,6 +218,15 @@ def _inspect_binary(project: ResolvedProject, patterns: tuple[str, ...]) -> Prob
         y_cm = np.asarray(collection.header["requested_y"], dtype=float)
         epochs = collection.mapping_epochs(0, len(time))
         overlap = collection.overlap_report
+        missing = {}
+        for field in collection.field_names:
+            count = 0
+            for first in range(0, collection.n_probes, 32):
+                values = collection.read_field(
+                    field, probes=slice(first, min(first + 32, collection.n_probes))
+                )
+                count += int(np.count_nonzero(~np.isfinite(values)))
+            missing[field] = count
         return ProbeInventory(
             source=", ".join(collection.paths), format="probe_v2",
             sample_count=int(time.size), probe_count=collection.n_probes,
@@ -218,7 +238,8 @@ def _inspect_binary(project: ResolvedProject, patterns: tuple[str, ...]) -> Prob
             median_timestep_s=float(np.median(dt)) if dt.size else None,
             timestep_std_s=float(np.std(dt)) if dt.size else None,
             nonfinite_time_count=int(np.count_nonzero(~np.isfinite(time))),
-            restart_overlap_count=int(overlap.get("duplicate_count", 0)),
+            missing_value_count=missing,
+            restart_overlap_count=int(overlap.get("duplicate_sample_count", 0)),
             mapping_epoch_count=len(epochs), quality_approved=None,
             provenance_present=True,
             requested_x_m=tuple(float(value * 0.01) for value in x_cm),
@@ -240,6 +261,7 @@ def _inspect_probes(project: ResolvedProject) -> ProbeInventory | None:
             fields=(), field_units={}, x_min_m=None, x_max_m=None,
             y_min_m=None, y_max_m=None, time_min_s=None, time_max_s=None,
             median_timestep_s=None, timestep_std_s=None, nonfinite_time_count=0,
+            missing_value_count={},
             restart_overlap_count=0, mapping_epoch_count=0, quality_approved=None,
             provenance_present=False, errors=("probe source is empty",),
         )
@@ -249,7 +271,8 @@ def _inspect_probes(project: ResolvedProject) -> ProbeInventory | None:
             sample_count=0, probe_count=0, fields=(), field_units={},
             x_min_m=None, x_max_m=None, y_min_m=None, y_max_m=None,
             time_min_s=None, time_max_s=None, median_timestep_s=None,
-            timestep_std_s=None, nonfinite_time_count=0, restart_overlap_count=0,
+            timestep_std_s=None, nonfinite_time_count=0, missing_value_count={},
+            restart_overlap_count=0,
             mapping_epoch_count=0, quality_approved=None, provenance_present=False,
             errors=(str(exc),),
         )

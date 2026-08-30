@@ -1,0 +1,5 @@
+schema_version: 1
+case: {id: directional-wave, solver: pelec, dimensionality: 2, solver_units: cgs}
+gas: {gamma: 1.4, gas_constant_j_kg_k: 287.05}
+freestream: {source: explicit, density_kg_m3: 0.02118, velocity_m_s: 1726.0, pressure_pa: 760.0, temperature_k: 125.0}
+geometry: {type: flat_plate, leading_edge_x_m: 0.0, wall_y_m: 0.0, fluid_side: above}

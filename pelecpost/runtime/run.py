@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime as dt
 import importlib.metadata
-import json
 import os
 import platform
 import re
@@ -22,7 +21,7 @@ from pelecpost.errors import PreflightBlockedError, UnsupportedCapabilityError
 from pelecpost.preflight import create_plan
 from pelecpost.workflows import build_workflow_graph
 
-from .artifacts import ArtifactRegistry, atomic_json
+from .artifacts import Artifact, ArtifactRegistry, atomic_json
 from .context import WorkflowContext
 from .report import generate_report
 
@@ -130,6 +129,23 @@ def run_project(project: ResolvedProject, run_name: str | None = None) -> RunRes
         "status": "running", "workflows": {}, "provenance": _provenance(project),
     }
     atomic_json(run_dir / "manifest.json", manifest)
+
+    def register_control(artifact_id: str, relative: str, interpretation: str) -> None:
+        registry.register(Artifact(
+            id=artifact_id, schema_version=1, recipe_instance="__run__",
+            kind="run-metadata", path=relative, variable=None, units=None,
+            coordinate_metadata={}, source_inputs=(), interpretation=interpretation,
+            provenance={},
+        ))
+
+    for artifact_id, relative, interpretation in (
+        ("run.resolved-case", "resolved-case.yaml", "Resolved portable case configuration."),
+        ("run.resolved-analyses", "resolved-analyses.yaml", "Resolved recipe configuration."),
+        ("run.resolved-machine", "resolved-machine.yaml", "Resolved machine-local configuration."),
+        ("run.plan", "plan.json", "Scientific and resource preflight record."),
+        ("run.manifest", "manifest.json", "Atomic workflow state and provenance manifest."),
+    ):
+        register_control(artifact_id, relative, interpretation)
     log_path = run_dir / "logs" / "run.log"
     dependencies_ok: dict[str, bool] = {}
     analyses = {item.id: item for item in project.enabled_analyses}
@@ -180,5 +196,9 @@ def run_project(project: ResolvedProject, run_name: str | None = None) -> RunRes
         manifest["status"] = "failed" if failed else "completed"
     manifest["completed_utc"] = dt.datetime.now(dt.timezone.utc).isoformat()
     atomic_json(run_dir / "manifest.json", manifest)
+    register_control("run.log", "logs/run.log", "Full workflow log including tracebacks.")
+    generate_report(run_dir)
+    register_control("run.report", "report/index.html", "Portable HTML run report.")
+    # Regenerate once so the report's product index includes its own registered entry.
     generate_report(run_dir)
     return RunResult(run_id, run_dir, manifest["status"], failed)

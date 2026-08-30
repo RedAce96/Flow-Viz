@@ -1,0 +1,1636 @@
+{
+  "analyses.yaml": {
+    "$defs": {
+      "AerodynamicForcesAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline": {
+            "default": "none",
+            "enum": [
+              "none",
+              "static",
+              "paired"
+            ],
+            "title": "Baseline",
+            "type": "string"
+          },
+          "baseline_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Baseline Id"
+          },
+          "conductivity_w_m_k": {
+            "exclusiveMinimum": 0.0,
+            "title": "Conductivity W M K",
+            "type": "number"
+          },
+          "dynamic_viscosity_pa_s": {
+            "exclusiveMinimum": 0.0,
+            "title": "Dynamic Viscosity Pa S",
+            "type": "number"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "moment_origin_m": {
+            "default": [
+              0.0,
+              0.0
+            ],
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Moment Origin M",
+            "type": "array"
+          },
+          "normal_sample_distance_m": {
+            "default": 0.001,
+            "exclusiveMinimum": 0.0,
+            "title": "Normal Sample Distance M",
+            "type": "number"
+          },
+          "normal_sample_points": {
+            "default": 8,
+            "exclusiveMinimum": 0,
+            "title": "Normal Sample Points",
+            "type": "integer"
+          },
+          "recipe": {
+            "const": "aerodynamic_forces",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "reference_chord_m": {
+            "exclusiveMinimum": 0.0,
+            "title": "Reference Chord M",
+            "type": "number"
+          },
+          "reference_span_m": {
+            "default": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Reference Span M",
+            "type": "number"
+          },
+          "wall_temperature_k": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Wall Temperature K"
+          }
+        },
+        "required": [
+          "id",
+          "recipe",
+          "reference_chord_m",
+          "dynamic_viscosity_pa_s",
+          "conductivity_w_m_k"
+        ],
+        "title": "AerodynamicForcesAnalysis",
+        "type": "object"
+      },
+      "BoundaryLayerAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "conductivity_w_m_k": {
+            "exclusiveMinimum": 0.0,
+            "title": "Conductivity W M K",
+            "type": "number"
+          },
+          "dynamic_viscosity_pa_s": {
+            "exclusiveMinimum": 0.0,
+            "title": "Dynamic Viscosity Pa S",
+            "type": "number"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "laminar_reference": {
+            "const": true,
+            "default": true,
+            "title": "Laminar Reference",
+            "type": "boolean"
+          },
+          "maximum_height_m": {
+            "exclusiveMinimum": 0.0,
+            "title": "Maximum Height M",
+            "type": "number"
+          },
+          "recipe": {
+            "const": "boundary_layer_reference",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "stations_x_m": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Stations X M",
+            "type": "array"
+          },
+          "wall_temperature_k": {
+            "exclusiveMinimum": 0.0,
+            "title": "Wall Temperature K",
+            "type": "number"
+          },
+          "zero_pressure_gradient": {
+            "const": true,
+            "default": true,
+            "title": "Zero Pressure Gradient",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "recipe",
+          "stations_x_m",
+          "maximum_height_m",
+          "wall_temperature_k",
+          "dynamic_viscosity_pa_s",
+          "conductivity_w_m_k"
+        ],
+        "title": "BoundaryLayerAnalysis",
+        "type": "object"
+      },
+      "CaseComparisonAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Artifact Ids",
+            "type": "array"
+          },
+          "baseline_run": {
+            "format": "path",
+            "title": "Baseline Run",
+            "type": "string"
+          },
+          "comparison_run": {
+            "format": "path",
+            "title": "Comparison Run",
+            "type": "string"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "recipe": {
+            "const": "case_comparison",
+            "title": "Recipe",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "recipe",
+          "baseline_run",
+          "comparison_run",
+          "artifact_ids"
+        ],
+        "title": "CaseComparisonAnalysis",
+        "type": "object"
+      },
+      "DirectionalWaveAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "expected_speed_max_m_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Speed Max M S"
+          },
+          "expected_speed_min_m_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Speed Min M S"
+          },
+          "frequency_max_hz": {
+            "exclusiveMinimum": 0.0,
+            "title": "Frequency Max Hz",
+            "type": "number"
+          },
+          "frequency_min_hz": {
+            "default": 0.0,
+            "minimum": 0.0,
+            "title": "Frequency Min Hz",
+            "type": "number"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "minimum_coherence": {
+            "default": 0.8,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Minimum Coherence",
+            "type": "number"
+          },
+          "recipe": {
+            "const": "directional_wave",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "spatial_window": {
+            "default": "hann",
+            "enum": [
+              "hann",
+              "hamming",
+              "blackman",
+              "rectangular"
+            ],
+            "title": "Spatial Window",
+            "type": "string"
+          },
+          "temporal_window": {
+            "default": "rectangular",
+            "enum": [
+              "hann",
+              "hamming",
+              "blackman",
+              "rectangular"
+            ],
+            "title": "Temporal Window",
+            "type": "string"
+          },
+          "variable": {
+            "$ref": "#/$defs/Variable"
+          }
+        },
+        "required": [
+          "id",
+          "recipe",
+          "variable",
+          "frequency_max_hz"
+        ],
+        "title": "DirectionalWaveAnalysis",
+        "type": "object"
+      },
+      "FlowOverviewAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "fields": {
+            "default": [
+              "temperature",
+              "pressure"
+            ],
+            "items": {
+              "$ref": "#/$defs/Variable"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "line_stations_x_m": {
+            "default": [],
+            "items": {
+              "type": "number"
+            },
+            "title": "Line Stations X M",
+            "type": "array"
+          },
+          "recipe": {
+            "const": "flow_overview",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "snapshot_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Snapshot End"
+          },
+          "snapshot_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Snapshot Start"
+          },
+          "snapshot_step": {
+            "default": 1,
+            "exclusiveMinimum": 0,
+            "title": "Snapshot Step",
+            "type": "integer"
+          },
+          "streamlines": {
+            "default": false,
+            "title": "Streamlines",
+            "type": "boolean"
+          },
+          "x_limits_m": {
+            "anyOf": [
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "X Limits M"
+          },
+          "y_limits_m": {
+            "anyOf": [
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Y Limits M"
+          }
+        },
+        "required": [
+          "id",
+          "recipe"
+        ],
+        "title": "FlowOverviewAnalysis",
+        "type": "object"
+      },
+      "ModalScreeningAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "dmd_ranks": {
+            "default": [
+              2,
+              4,
+              8
+            ],
+            "items": {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            "title": "Dmd Ranks",
+            "type": "array"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "mode_count": {
+            "default": 4,
+            "exclusiveMinimum": 0,
+            "title": "Mode Count",
+            "type": "integer"
+          },
+          "probe_stride": {
+            "default": 1,
+            "exclusiveMinimum": 0,
+            "title": "Probe Stride",
+            "type": "integer"
+          },
+          "recipe": {
+            "const": "modal_screening",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "sensitivity_windows": {
+            "default": [
+              [
+                0.0,
+                0.5
+              ],
+              [
+                0.5,
+                1.0
+              ]
+            ],
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "title": "Sensitivity Windows",
+            "type": "array"
+          },
+          "spod_segment_samples": {
+            "default": 2048,
+            "exclusiveMinimum": 0,
+            "title": "Spod Segment Samples",
+            "type": "integer"
+          },
+          "variable": {
+            "$ref": "#/$defs/Variable"
+          }
+        },
+        "required": [
+          "id",
+          "recipe",
+          "variable"
+        ],
+        "title": "ModalScreeningAnalysis",
+        "type": "object"
+      },
+      "NonlinearCouplingAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_frequency_selection": {
+            "default": false,
+            "title": "Automatic Frequency Selection",
+            "type": "boolean"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "fdr_alpha": {
+            "default": 0.05,
+            "exclusiveMaximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Fdr Alpha",
+            "type": "number"
+          },
+          "frequency_max_hz": {
+            "exclusiveMinimum": 0.0,
+            "title": "Frequency Max Hz",
+            "type": "number"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "overlap_fraction": {
+            "default": 0.5,
+            "exclusiveMaximum": 1.0,
+            "minimum": 0.0,
+            "title": "Overlap Fraction",
+            "type": "number"
+          },
+          "recipe": {
+            "const": "nonlinear_coupling",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "segment_samples": {
+            "default": 8192,
+            "exclusiveMinimum": 0,
+            "title": "Segment Samples",
+            "type": "integer"
+          },
+          "surrogate_count": {
+            "default": 499,
+            "minimum": 19,
+            "title": "Surrogate Count",
+            "type": "integer"
+          },
+          "target_frequencies_hz": {
+            "default": [],
+            "items": {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            "title": "Target Frequencies Hz",
+            "type": "array"
+          },
+          "variable": {
+            "$ref": "#/$defs/Variable"
+          }
+        },
+        "required": [
+          "id",
+          "recipe",
+          "variable",
+          "frequency_max_hz"
+        ],
+        "title": "NonlinearCouplingAnalysis",
+        "type": "object"
+      },
+      "ProbeSpectrumAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "detrend": {
+            "default": "mean",
+            "enum": [
+              "mean",
+              "linear",
+              "none"
+            ],
+            "title": "Detrend",
+            "type": "string"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "frequency_max_hz": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Frequency Max Hz"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "overlap_fraction": {
+            "default": 0.5,
+            "exclusiveMaximum": 1.0,
+            "minimum": 0.0,
+            "title": "Overlap Fraction",
+            "type": "number"
+          },
+          "probe_indices": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Probe Indices",
+            "type": "array"
+          },
+          "recipe": {
+            "const": "probe_spectrum",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "variable": {
+            "$ref": "#/$defs/Variable"
+          },
+          "welch_segment_samples": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Welch Segment Samples"
+          },
+          "window": {
+            "default": "hann",
+            "enum": [
+              "hann",
+              "hamming",
+              "blackman",
+              "rectangular"
+            ],
+            "title": "Window",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "recipe",
+          "variable"
+        ],
+        "title": "ProbeSpectrumAnalysis",
+        "type": "object"
+      },
+      "SinglePulseAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline_end_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Baseline End Time S"
+          },
+          "cutoff_sigma": {
+            "default": 4.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Cutoff Sigma",
+            "type": "number"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "energy_per_pulse_j_m": {
+            "exclusiveMinimum": 0.0,
+            "title": "Energy Per Pulse J M",
+            "type": "number"
+          },
+          "frequency_max_hz": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Frequency Max Hz"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "minimum_baseline_samples": {
+            "default": 8,
+            "exclusiveMinimum": 0,
+            "title": "Minimum Baseline Samples",
+            "type": "integer"
+          },
+          "minimum_relative_source_amplitude": {
+            "default": 0.001,
+            "exclusiveMaximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Minimum Relative Source Amplitude",
+            "type": "number"
+          },
+          "pulse_fwhm_s": {
+            "exclusiveMinimum": 0.0,
+            "title": "Pulse Fwhm S",
+            "type": "number"
+          },
+          "pulse_period_s": {
+            "exclusiveMinimum": 0.0,
+            "title": "Pulse Period S",
+            "type": "number"
+          },
+          "recipe": {
+            "const": "single_pulse_response",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "start_time_s": {
+            "default": 0.0,
+            "title": "Start Time S",
+            "type": "number"
+          },
+          "variable": {
+            "$ref": "#/$defs/Variable"
+          }
+        },
+        "required": [
+          "id",
+          "recipe",
+          "variable",
+          "energy_per_pulse_j_m",
+          "pulse_fwhm_s",
+          "pulse_period_s"
+        ],
+        "title": "SinglePulseAnalysis",
+        "type": "object"
+      },
+      "SurfaceDiagnosticsAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "normal_sample_distance_m": {
+            "default": 0.001,
+            "exclusiveMinimum": 0.0,
+            "title": "Normal Sample Distance M",
+            "type": "number"
+          },
+          "normal_sample_points": {
+            "default": 8,
+            "exclusiveMinimum": 0,
+            "title": "Normal Sample Points",
+            "type": "integer"
+          },
+          "recipe": {
+            "const": "surface_diagnostics",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "snapshot_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Snapshot End"
+          },
+          "snapshot_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Snapshot Start"
+          }
+        },
+        "required": [
+          "id",
+          "recipe"
+        ],
+        "title": "SurfaceDiagnosticsAnalysis",
+        "type": "object"
+      },
+      "TransientWavepacketAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "band_max_hz": {
+            "exclusiveMinimum": 0.0,
+            "title": "Band Max Hz",
+            "type": "number"
+          },
+          "band_min_hz": {
+            "minimum": 0.0,
+            "title": "Band Min Hz",
+            "type": "number"
+          },
+          "baseline_end_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Baseline End Time S"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "overlap_fraction": {
+            "default": 0.75,
+            "exclusiveMaximum": 1.0,
+            "minimum": 0.0,
+            "title": "Overlap Fraction",
+            "type": "number"
+          },
+          "recipe": {
+            "const": "transient_wavepacket",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "stft_segment_samples": {
+            "default": 2048,
+            "exclusiveMinimum": 0,
+            "title": "Stft Segment Samples",
+            "type": "integer"
+          },
+          "variable": {
+            "$ref": "#/$defs/Variable"
+          }
+        },
+        "required": [
+          "id",
+          "recipe",
+          "variable",
+          "band_min_hz",
+          "band_max_hz"
+        ],
+        "title": "TransientWavepacketAnalysis",
+        "type": "object"
+      },
+      "Variable": {
+        "enum": [
+          "density",
+          "x_velocity",
+          "y_velocity",
+          "pressure",
+          "temperature",
+          "vorticity",
+          "vorticity_magnitude",
+          "mach_number",
+          "schlieren"
+        ],
+        "title": "Variable",
+        "type": "string"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "analyses": {
+        "default": [],
+        "items": {
+          "discriminator": {
+            "mapping": {
+              "aerodynamic_forces": "#/$defs/AerodynamicForcesAnalysis",
+              "boundary_layer_reference": "#/$defs/BoundaryLayerAnalysis",
+              "case_comparison": "#/$defs/CaseComparisonAnalysis",
+              "directional_wave": "#/$defs/DirectionalWaveAnalysis",
+              "flow_overview": "#/$defs/FlowOverviewAnalysis",
+              "modal_screening": "#/$defs/ModalScreeningAnalysis",
+              "nonlinear_coupling": "#/$defs/NonlinearCouplingAnalysis",
+              "probe_spectrum": "#/$defs/ProbeSpectrumAnalysis",
+              "single_pulse_response": "#/$defs/SinglePulseAnalysis",
+              "surface_diagnostics": "#/$defs/SurfaceDiagnosticsAnalysis",
+              "transient_wavepacket": "#/$defs/TransientWavepacketAnalysis"
+            },
+            "propertyName": "recipe"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/FlowOverviewAnalysis"
+            },
+            {
+              "$ref": "#/$defs/BoundaryLayerAnalysis"
+            },
+            {
+              "$ref": "#/$defs/SurfaceDiagnosticsAnalysis"
+            },
+            {
+              "$ref": "#/$defs/AerodynamicForcesAnalysis"
+            },
+            {
+              "$ref": "#/$defs/ProbeSpectrumAnalysis"
+            },
+            {
+              "$ref": "#/$defs/SinglePulseAnalysis"
+            },
+            {
+              "$ref": "#/$defs/DirectionalWaveAnalysis"
+            },
+            {
+              "$ref": "#/$defs/TransientWavepacketAnalysis"
+            },
+            {
+              "$ref": "#/$defs/NonlinearCouplingAnalysis"
+            },
+            {
+              "$ref": "#/$defs/ModalScreeningAnalysis"
+            },
+            {
+              "$ref": "#/$defs/CaseComparisonAnalysis"
+            }
+          ]
+        },
+        "title": "Analyses",
+        "type": "array"
+      },
+      "schema_version": {
+        "const": 1,
+        "default": 1,
+        "title": "Schema Version",
+        "type": "integer"
+      }
+    },
+    "title": "AnalysesFile",
+    "type": "object"
+  },
+  "case.yaml": {
+    "$defs": {
+      "CaseIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "dimensionality": {
+            "default": 2,
+            "enum": [
+              2,
+              3
+            ],
+            "title": "Dimensionality",
+            "type": "integer"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "solver": {
+            "const": "pelec",
+            "default": "pelec",
+            "title": "Solver",
+            "type": "string"
+          },
+          "solver_units": {
+            "$ref": "#/$defs/SolverUnits",
+            "default": "cgs"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "CaseIdentity",
+        "type": "object"
+      },
+      "ExplicitFreestream": {
+        "additionalProperties": false,
+        "properties": {
+          "density_kg_m3": {
+            "exclusiveMinimum": 0.0,
+            "title": "Density Kg M3",
+            "type": "number"
+          },
+          "pressure_pa": {
+            "exclusiveMinimum": 0.0,
+            "title": "Pressure Pa",
+            "type": "number"
+          },
+          "source": {
+            "const": "explicit",
+            "default": "explicit",
+            "title": "Source",
+            "type": "string"
+          },
+          "temperature_k": {
+            "exclusiveMinimum": 0.0,
+            "title": "Temperature K",
+            "type": "number"
+          },
+          "velocity_m_s": {
+            "exclusiveMinimum": 0.0,
+            "title": "Velocity M S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "density_kg_m3",
+          "velocity_m_s",
+          "pressure_pa",
+          "temperature_k"
+        ],
+        "title": "ExplicitFreestream",
+        "type": "object"
+      },
+      "FlatPlateGeometry": {
+        "additionalProperties": false,
+        "properties": {
+          "fluid_side": {
+            "default": "above",
+            "enum": [
+              "above",
+              "below"
+            ],
+            "title": "Fluid Side",
+            "type": "string"
+          },
+          "leading_edge_x_m": {
+            "default": 0.0,
+            "title": "Leading Edge X M",
+            "type": "number"
+          },
+          "trailing_edge_x_m": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Trailing Edge X M"
+          },
+          "type": {
+            "const": "flat_plate",
+            "default": "flat_plate",
+            "title": "Type",
+            "type": "string"
+          },
+          "wall_y_m": {
+            "default": 0.0,
+            "title": "Wall Y M",
+            "type": "number"
+          }
+        },
+        "title": "FlatPlateGeometry",
+        "type": "object"
+      },
+      "GasConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "gamma": {
+            "default": 1.4,
+            "exclusiveMinimum": 1.0,
+            "title": "Gamma",
+            "type": "number"
+          },
+          "gas_constant_j_kg_k": {
+            "default": 287.05,
+            "exclusiveMinimum": 0.0,
+            "title": "Gas Constant J Kg K",
+            "type": "number"
+          }
+        },
+        "title": "GasConfig",
+        "type": "object"
+      },
+      "PolylineGeometry": {
+        "additionalProperties": false,
+        "properties": {
+          "closed": {
+            "default": false,
+            "title": "Closed",
+            "type": "boolean"
+          },
+          "fluid_side": {
+            "enum": [
+              "left",
+              "right",
+              "outside",
+              "inside"
+            ],
+            "title": "Fluid Side",
+            "type": "string"
+          },
+          "points_m": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "title": "Points M",
+            "type": "array"
+          },
+          "type": {
+            "const": "polyline",
+            "default": "polyline",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "points_m",
+          "fluid_side"
+        ],
+        "title": "PolylineGeometry",
+        "type": "object"
+      },
+      "RegionBounds": {
+        "additionalProperties": false,
+        "properties": {
+          "x_m": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "X M",
+            "type": "array"
+          },
+          "y_m": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Y M",
+            "type": "array"
+          }
+        },
+        "required": [
+          "x_m",
+          "y_m"
+        ],
+        "title": "RegionBounds",
+        "type": "object"
+      },
+      "RegionFreestream": {
+        "additionalProperties": false,
+        "properties": {
+          "bounds": {
+            "$ref": "#/$defs/RegionBounds"
+          },
+          "source": {
+            "const": "region",
+            "default": "region",
+            "title": "Source",
+            "type": "string"
+          },
+          "statistic": {
+            "default": "median",
+            "enum": [
+              "median",
+              "mean"
+            ],
+            "title": "Statistic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bounds"
+        ],
+        "title": "RegionFreestream",
+        "type": "object"
+      },
+      "SolverUnits": {
+        "enum": [
+          "cgs",
+          "si"
+        ],
+        "title": "SolverUnits",
+        "type": "string"
+      },
+      "VolumeFractionGeometry": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "default": "volume_fraction",
+            "title": "Field",
+            "type": "string"
+          },
+          "fluid_value": {
+            "default": 1,
+            "enum": [
+              0,
+              1
+            ],
+            "title": "Fluid Value",
+            "type": "integer"
+          },
+          "iso_value": {
+            "default": 0.5,
+            "exclusiveMaximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Iso Value",
+            "type": "number"
+          },
+          "minimum_component_points": {
+            "default": 8,
+            "exclusiveMinimum": 0,
+            "title": "Minimum Component Points",
+            "type": "integer"
+          },
+          "type": {
+            "const": "volume_fraction",
+            "default": "volume_fraction",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "title": "VolumeFractionGeometry",
+        "type": "object"
+      },
+      "WedgeGeometry": {
+        "additionalProperties": false,
+        "properties": {
+          "fluid_side": {
+            "default": "outside",
+            "enum": [
+              "outside",
+              "inside"
+            ],
+            "title": "Fluid Side",
+            "type": "string"
+          },
+          "half_angle_deg": {
+            "exclusiveMaximum": 90.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Half Angle Deg",
+            "type": "number"
+          },
+          "leading_edge_x_m": {
+            "title": "Leading Edge X M",
+            "type": "number"
+          },
+          "leading_edge_y_m": {
+            "title": "Leading Edge Y M",
+            "type": "number"
+          },
+          "length_m": {
+            "exclusiveMinimum": 0.0,
+            "title": "Length M",
+            "type": "number"
+          },
+          "type": {
+            "const": "wedge",
+            "default": "wedge",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "leading_edge_x_m",
+          "leading_edge_y_m",
+          "length_m",
+          "half_angle_deg"
+        ],
+        "title": "WedgeGeometry",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "case": {
+        "$ref": "#/$defs/CaseIdentity"
+      },
+      "field_aliases": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "title": "Field Aliases",
+        "type": "object"
+      },
+      "freestream": {
+        "discriminator": {
+          "mapping": {
+            "explicit": "#/$defs/ExplicitFreestream",
+            "region": "#/$defs/RegionFreestream"
+          },
+          "propertyName": "source"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/ExplicitFreestream"
+          },
+          {
+            "$ref": "#/$defs/RegionFreestream"
+          }
+        ],
+        "title": "Freestream"
+      },
+      "gas": {
+        "$ref": "#/$defs/GasConfig",
+        "default": {
+          "gamma": 1.4,
+          "gas_constant_j_kg_k": 287.05
+        }
+      },
+      "geometry": {
+        "discriminator": {
+          "mapping": {
+            "flat_plate": "#/$defs/FlatPlateGeometry",
+            "polyline": "#/$defs/PolylineGeometry",
+            "volume_fraction": "#/$defs/VolumeFractionGeometry",
+            "wedge": "#/$defs/WedgeGeometry"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/FlatPlateGeometry"
+          },
+          {
+            "$ref": "#/$defs/WedgeGeometry"
+          },
+          {
+            "$ref": "#/$defs/PolylineGeometry"
+          },
+          {
+            "$ref": "#/$defs/VolumeFractionGeometry"
+          }
+        ],
+        "title": "Geometry"
+      },
+      "schema_version": {
+        "const": 1,
+        "default": 1,
+        "title": "Schema Version",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "case",
+      "freestream",
+      "geometry"
+    ],
+    "title": "CaseFile",
+    "type": "object"
+  },
+  "machine.yaml": {
+    "$defs": {
+      "ComputeConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "fft_batch_size": {
+            "default": 32,
+            "exclusiveMinimum": 0,
+            "title": "Fft Batch Size",
+            "type": "integer"
+          },
+          "memory_limit_gb": {
+            "default": 8.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Memory Limit Gb",
+            "type": "number"
+          },
+          "workers": {
+            "default": 1,
+            "exclusiveMinimum": 0,
+            "title": "Workers",
+            "type": "integer"
+          }
+        },
+        "title": "ComputeConfig",
+        "type": "object"
+      },
+      "InputConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "baselines": {
+            "additionalProperties": {
+              "$ref": "#/$defs/PlotfileInput"
+            },
+            "title": "Baselines",
+            "type": "object"
+          },
+          "comparison_archives": {
+            "default": [],
+            "items": {
+              "format": "path",
+              "type": "string"
+            },
+            "title": "Comparison Archives",
+            "type": "array"
+          },
+          "plotfiles": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlotfileInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "probes": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProbeInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "title": "InputConfig",
+        "type": "object"
+      },
+      "OutputConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "root": {
+            "format": "path",
+            "title": "Root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "root"
+        ],
+        "title": "OutputConfig",
+        "type": "object"
+      },
+      "PlotfileInput": {
+        "additionalProperties": false,
+        "properties": {
+          "prefix": {
+            "default": "plt",
+            "title": "Prefix",
+            "type": "string"
+          },
+          "source": {
+            "format": "path",
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "PlotfileInput",
+        "type": "object"
+      },
+      "ProbeInput": {
+        "additionalProperties": false,
+        "properties": {
+          "binary_files": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Binary Files",
+            "type": "array"
+          },
+          "compact_file": {
+            "anyOf": [
+              {
+                "format": "path",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Compact File"
+          }
+        },
+        "title": "ProbeInput",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "compute": {
+        "$ref": "#/$defs/ComputeConfig",
+        "default": {
+          "fft_batch_size": 32,
+          "memory_limit_gb": 8.0,
+          "workers": 1
+        }
+      },
+      "inputs": {
+        "$ref": "#/$defs/InputConfig",
+        "default": {
+          "baselines": {},
+          "comparison_archives": [],
+          "plotfiles": null,
+          "probes": null
+        }
+      },
+      "outputs": {
+        "$ref": "#/$defs/OutputConfig"
+      },
+      "schema_version": {
+        "const": 1,
+        "default": 1,
+        "title": "Schema Version",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "outputs"
+    ],
+    "title": "MachineFile",
+    "type": "object"
+  }
+}

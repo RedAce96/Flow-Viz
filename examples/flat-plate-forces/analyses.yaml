@@ -1,0 +1,3 @@
+schema_version: 1
+analyses:
+  - {id: forces, recipe: aerodynamic_forces, reference_chord_m: 0.4, reference_span_m: 1.0, dynamic_viscosity_pa_s: 8.65e-6, conductivity_w_m_k: 0.012415}

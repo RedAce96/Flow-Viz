@@ -1,4 +1,5 @@
-"""
+"""Archived standalone FFT implementation.
+
 FFT-Point-Probes.py
 ===================
 Perform 1D FFT analysis on PeleC point-probe time series.

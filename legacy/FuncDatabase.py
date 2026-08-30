@@ -233,8 +233,7 @@ def _regular_grid_interpolator(x_line, y_line, values_2d, method='linear', fill_
 
 
 def load_pelec_plotfile(plotfile_path, field_names=None, convert_to_mks=True):
-    """
-    Load a single PeleC/AMReX plotfile into structured 2-D numpy arrays.
+    """Load a single PeleC/AMReX plotfile into structured 2-D numpy arrays.
 
     Parameters
     ----------

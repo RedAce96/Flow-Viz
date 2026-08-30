@@ -35,6 +35,13 @@ pelec-post = "pelecpost.cli:main"
 
 [tool.setuptools]
 packages = {find = {include = ["pelecpost*"]}}
+py-modules = [
+  "compact_probes",
+  "pp_functions_database",
+  "pp_modal_database",
+  "pp_plotting_database",
+  "pp_probe_store",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "."]
@@ -43,6 +50,7 @@ python_files = ["test_*.py"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+exclude = ["legacy", "pelecpost/legacy_driver.py"]
 
 [tool.mypy]
 python_version = "3.11"
