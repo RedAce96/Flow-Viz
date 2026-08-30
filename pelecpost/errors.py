@@ -17,6 +17,9 @@ class UnsupportedCapabilityError(PelecPostError):
     """The input is valid but the requested dimensional capability is absent."""
 
 
+class RuntimeWorkflowError(PelecPostError):
+    """One or more independent workflows failed during a run."""
+
+
 CONFIGURATION_EXIT_CODE = 2
 RUNTIME_FAILURE_EXIT_CODE = 1
-

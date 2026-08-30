@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Optional
 
 import typer
 from rich.console import Console
@@ -14,6 +15,7 @@ from pelecpost.errors import CONFIGURATION_EXIT_CODE, PelecPostError, PreflightB
 from pelecpost.io import inspect_project
 from pelecpost.preflight import Severity, create_plan
 from pelecpost.project import initialize_project
+from pelecpost.runtime import generate_report, run_project
 from pelecpost.wizard import configure_project
 from pelecpost.workflows import RECIPES, build_workflow_graph, recipe_for
 
@@ -106,6 +108,30 @@ def plan_command(project_dir: Path, json_output: bool = typer.Option(False, "--j
 def configure_command(project_dir: Path) -> None:
     """Choose a physical question and write validated recipe YAML."""
     configure_project(str(project_dir), console)
+
+
+@app.command("run")
+def run_command(
+    project_dir: Path,
+    run_name: Optional[str] = typer.Option(None, "--name", help="Optional run-name suffix."),
+) -> None:
+    """Preflight and execute enabled recipes in a new isolated run."""
+    result = run_project(load_project(project_dir), run_name)
+    console.print(f"Run {result.status}: [cyan]{result.run_dir}[/]")
+    if result.failed_workflows:
+        console.print(f"[red]Failed workflows:[/] {', '.join(result.failed_workflows)}")
+        raise typer.Exit(1)
+
+
+@app.command("report")
+def report_command(project_dir: Path, run_id: str) -> None:
+    """Regenerate a run report without reading source simulation data."""
+    project = load_project(project_dir)
+    output = project.machine_file.outputs.root
+    if not output.is_absolute():
+        output = (project.root / output).resolve()
+    path = generate_report(output / run_id)
+    console.print(f"[green]Report regenerated:[/] {path}")
 
 
 @recipes_app.command("list")
