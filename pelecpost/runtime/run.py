@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import importlib.metadata
 import os
 import platform
@@ -14,12 +15,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pelecpost.analysis.executors import execute
 from pelecpost.config.loader import dump_yaml
 from pelecpost.config.models import ResolvedProject
 from pelecpost.errors import PreflightBlockedError, UnsupportedCapabilityError
 from pelecpost.preflight import create_plan
-from pelecpost.workflows import build_workflow_graph
+from pelecpost.workflows import build_workflow_graph, workflow_for
 
 from .artifacts import Artifact, ArtifactRegistry, atomic_json
 from .context import WorkflowContext
@@ -62,13 +62,33 @@ def _packages() -> dict[str, str]:
     return result
 
 
-def _fingerprint(path: Path) -> dict[str, Any]:
+CHECKSUM_LIMIT_BYTES = 64 * 1024**2
+
+
+def _fingerprint(path: Path, *, checksum_limit_bytes: int = CHECKSUM_LIMIT_BYTES) -> dict[str, Any]:
     info = path.stat()
-    return {"path": str(path.resolve()), "size_bytes": info.st_size, "mtime_ns": info.st_mtime_ns}
+    result: dict[str, Any] = {
+        "path": str(path.resolve()), "size_bytes": info.st_size, "mtime_ns": info.st_mtime_ns,
+    }
+    if info.st_size <= checksum_limit_bytes:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024**2), b""):
+                digest.update(block)
+        result.update({"checksum_algorithm": "sha256", "checksum": digest.hexdigest()})
+    else:
+        result["checksum_policy"] = (
+            f"omitted because file exceeds {checksum_limit_bytes} byte practical limit"
+        )
+    return result
 
 
 def _input_fingerprints(project: ResolvedProject) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
+    for name in ("case.yaml", "analyses.yaml", "machine.yaml"):
+        path = project.root / name
+        if path.is_file():
+            result.append(_fingerprint(path))
     plotfiles = project.machine_file.inputs.plotfiles
     if plotfiles:
         source = plotfiles.source if plotfiles.source.is_absolute() else project.root / plotfiles.source
@@ -81,6 +101,18 @@ def _input_fingerprints(project: ResolvedProject) -> list[dict[str, Any]]:
         source = probes.compact_file if probes.compact_file.is_absolute() else project.root / probes.compact_file
         if source.is_file():
             result.append(_fingerprint(source))
+    for baseline in project.machine_file.inputs.baselines.values():
+        source = baseline.source if baseline.source.is_absolute() else project.root / baseline.source
+        for plotfile in sorted(source.glob(f"{baseline.prefix}*")):
+            header = plotfile / "Header"
+            if header.is_file():
+                result.append(_fingerprint(header))
+    for configured in project.machine_file.inputs.comparison_archives:
+        run = configured if configured.is_absolute() else project.root / configured
+        for name in ("manifest.json", "artifacts.json"):
+            path = run / name
+            if path.is_file():
+                result.append(_fingerprint(path))
     return result
 
 
@@ -171,7 +203,7 @@ def run_project(project: ResolvedProject, run_name: str | None = None) -> RunRes
             analysis = analyses[node.analysis_id]
             try:
                 with WorkflowContext(project, plan, run_dir, analysis, registry) as context:
-                    execute(context)
+                    workflow_for(analysis.recipe).execute(context)
             except KeyboardInterrupt:
                 traceback.print_exc(file=log)
                 record(node_id, "interrupted", "execution interrupted by user or scheduler")

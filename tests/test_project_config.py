@@ -99,6 +99,18 @@ class ProjectConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(ProjectConfigurationError, "magic"):
                 load_project(root)
 
+    def test_volume_fraction_smoothing_window_is_odd(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write_project(root)
+            case = dict(CASE)
+            case["geometry"] = {
+                "type": "volume_fraction", "field": "vfrac", "smoothing_window": 4,
+            }
+            (root / "case.yaml").write_text(yaml.safe_dump(case), encoding="utf-8")
+            with self.assertRaisesRegex(ProjectConfigurationError, "smoothing_window must be odd"):
+                load_project(root)
+
     def test_missing_machine_has_actionable_message(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

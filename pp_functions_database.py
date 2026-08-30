@@ -5863,7 +5863,10 @@ def compute_spatial_fft(
         raise ValueError("spatial FFT inputs must be finite")
     order = np.argsort(x)
     x = x[order]
-    values = values[:, order]
+    if not np.array_equal(order, np.arange(order.size)):
+        # Preserve a disk-backed or contiguous matrix when probes are already
+        # in physical order; fancy indexing would otherwise duplicate it.
+        values = values[:, order]
     spacing = np.diff(x)
     dx = float(np.median(spacing))
     if dx <= 0.0 or not np.allclose(spacing, dx, rtol=1.0e-5, atol=1.0e-12):

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .protocol import RegisteredWorkflow, assert_workflow_contract
+
 
 @dataclass(frozen=True)
 class RecipeDefinition:
@@ -19,6 +21,8 @@ class RecipeDefinition:
     limitations: tuple[str, ...]
     workflow: str
     dependencies: tuple[str, ...] = ()
+    conflicts: tuple[str, ...] = ()
+    executor_module: str = "pelecpost.analysis.executors"
 
 
 GEOMETRIES = ("flat_plate", "wedge", "polyline", "volume_fraction")
@@ -37,6 +41,7 @@ def _recipe(
     geometries: tuple[str, ...] = GEOMETRIES,
     workflow: str | None = None,
     dependencies: tuple[str, ...] = (),
+    conflicts: tuple[str, ...] = (),
 ) -> RecipeDefinition:
     return RecipeDefinition(
         name=name,
@@ -51,6 +56,7 @@ def _recipe(
         limitations=limitations,
         workflow=workflow or name,
         dependencies=dependencies,
+        conflicts=conflicts,
     )
 
 
@@ -127,7 +133,10 @@ RECIPES: dict[str, RecipeDefinition] = {
             inputs=("probes",),
             fields=(),
             assumptions=("Probe coordinates form a suitable approximately uniform aperture.",),
-            outputs=("wave.spatial_spectrum", "wave.wavenumber", "wave.komega"),
+            outputs=(
+                "wave.spatial_spectrum", "wave.wavenumber", "wave.komega",
+                "wave.komega_sensitivity",
+            ),
             limitations=("Measurements alone do not constitute LST/PSE or causal evidence.",),
         ),
         _recipe(
@@ -174,9 +183,29 @@ RECIPES: dict[str, RecipeDefinition] = {
 }
 
 
+INTERNAL_WORKFLOWS = frozenset({
+    "input.plotfiles",
+    "input.probes",
+    "input.comparison_archives",
+    "geometry.surface",
+})
+
+WORKFLOWS = {name: RegisteredWorkflow(definition) for name, definition in RECIPES.items()}
+for _workflow in WORKFLOWS.values():
+    assert_workflow_contract(_workflow)
+
+
 def recipe_for(name: str) -> RecipeDefinition:
     try:
         return RECIPES[name]
     except KeyError as exc:
         available = ", ".join(sorted(RECIPES))
         raise KeyError(f"Unknown recipe {name!r}; available recipes: {available}") from exc
+
+
+def workflow_for(name: str) -> RegisteredWorkflow:
+    try:
+        return WORKFLOWS[name]
+    except KeyError as exc:
+        available = ", ".join(sorted(WORKFLOWS))
+        raise KeyError(f"Unknown workflow {name!r}; available workflows: {available}") from exc

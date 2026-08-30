@@ -35,6 +35,7 @@ class PlotfileInventory:
     fields: tuple[str, ...]
     canonical_fields: dict[str, str]
     solver_units: str
+    domain_bounds_m: tuple[tuple[float, float], ...] | None = None
     errors: tuple[str, ...] = ()
 
 
@@ -80,7 +81,9 @@ def _resolve(project: ResolvedProject, path: Path) -> Path:
     return path if path.is_absolute() else (project.root / path).resolve()
 
 
-def _read_plotfile_header(path: Path) -> tuple[tuple[str, ...], int, float, int]:
+def _read_plotfile_header(
+    path: Path,
+) -> tuple[tuple[str, ...], int, float, int, tuple[tuple[float, float], ...] | None]:
     lines = (path / "Header").read_text(encoding="utf-8", errors="replace").splitlines()
     count = int(lines[1].strip())
     fields = tuple(line.strip() for line in lines[2 : 2 + count])
@@ -88,7 +91,13 @@ def _read_plotfile_header(path: Path) -> tuple[tuple[str, ...], int, float, int]
     dimension = int(lines[cursor].strip())
     physical_time = float(lines[cursor + 1].strip())
     maximum_level = int(lines[cursor + 2].strip())
-    return fields, dimension, physical_time, maximum_level
+    bounds = None
+    if len(lines) > cursor + 4:
+        lower = tuple(float(value) for value in lines[cursor + 3].split())
+        upper = tuple(float(value) for value in lines[cursor + 4].split())
+        if len(lower) >= dimension and len(upper) >= dimension:
+            bounds = tuple((lower[index], upper[index]) for index in range(dimension))
+    return fields, dimension, physical_time, maximum_level, bounds
 
 
 def _canonical_fields(fields: tuple[str, ...], configured: dict[str, str]) -> dict[str, str]:
@@ -118,10 +127,11 @@ def _inspect_plotfiles(project: ResolvedProject) -> PlotfileInventory | None:
     dimensions: list[int] = []
     times: list[float] = []
     levels: list[int] = []
+    bounds_items: list[tuple[tuple[float, float], ...]] = []
     errors: list[str] = []
     for path in candidates:
         try:
-            item_fields, dimension, physical_time, level = _read_plotfile_header(path)
+            item_fields, dimension, physical_time, level, bounds = _read_plotfile_header(path)
             if not fields:
                 fields = item_fields
             elif fields != item_fields:
@@ -129,11 +139,20 @@ def _inspect_plotfiles(project: ResolvedProject) -> PlotfileInventory | None:
             dimensions.append(dimension)
             times.append(physical_time)
             levels.append(level)
+            if bounds is not None:
+                bounds_items.append(bounds)
         except (OSError, ValueError, IndexError) as exc:
             errors.append(f"{path.name}: {exc}")
     unique_dimensions = set(dimensions)
     if len(unique_dimensions) > 1:
         errors.append("plotfiles report inconsistent dimensionality")
+    if bounds_items and any(item != bounds_items[0] for item in bounds_items[1:]):
+        errors.append("plotfiles report inconsistent physical domain bounds")
+    scale = 0.01 if project.case_file.case.solver_units == "cgs" else 1.0
+    domain_bounds = (
+        tuple((low * scale, high * scale) for low, high in bounds_items[0])
+        if bounds_items else None
+    )
     return PlotfileInventory(
         source=str(source),
         prefix=config.prefix,
@@ -146,6 +165,7 @@ def _inspect_plotfiles(project: ResolvedProject) -> PlotfileInventory | None:
         fields=fields,
         canonical_fields=_canonical_fields(fields, project.case_file.field_aliases),
         solver_units=project.case_file.case.solver_units,
+        domain_bounds_m=domain_bounds,
         errors=tuple(errors),
     )
 

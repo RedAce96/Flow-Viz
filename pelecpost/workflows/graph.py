@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pelecpost.config.models import ResolvedProject
 from pelecpost.errors import ProjectConfigurationError
 
-from .registry import recipe_for
+from .registry import INTERNAL_WORKFLOWS, recipe_for
 
 
 @dataclass(frozen=True)
@@ -57,17 +57,31 @@ def _topological_order(nodes: dict[str, WorkflowNode]) -> tuple[str, ...]:
 def build_workflow_graph(project: ResolvedProject) -> WorkflowGraph:
     nodes: dict[str, WorkflowNode] = {}
     geometry_requires_plotfiles = project.case_file.geometry.type == "volume_fraction"
+    enabled_recipes = {analysis.recipe for analysis in project.enabled_analyses}
     for analysis in project.enabled_analyses:
         definition = recipe_for(analysis.recipe)
+        active_conflicts = enabled_recipes.intersection(definition.conflicts)
+        if active_conflicts:
+            raise ProjectConfigurationError(
+                f"Recipe {analysis.recipe!r} conflicts with: {', '.join(sorted(active_conflicts))}"
+            )
         dependency_ids: list[str] = []
         for input_name in definition.required_inputs:
             node_id = f"input.{input_name}"
+            if node_id not in INTERNAL_WORKFLOWS:
+                raise ProjectConfigurationError(
+                    f"Recipe {analysis.recipe!r} references undeclared internal workflow {node_id!r}"
+                )
             nodes.setdefault(
                 node_id,
                 WorkflowNode(node_id, node_id, None, True, ()),
             )
             dependency_ids.append(node_id)
         for dependency in definition.dependencies:
+            if dependency not in INTERNAL_WORKFLOWS:
+                raise ProjectConfigurationError(
+                    f"Recipe {analysis.recipe!r} references undeclared internal workflow {dependency!r}"
+                )
             nested = ("input.plotfiles",) if (
                 dependency == "geometry.surface" and geometry_requires_plotfiles
             ) else ()

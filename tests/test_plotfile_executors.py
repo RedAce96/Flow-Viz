@@ -10,6 +10,7 @@ import numpy as np
 import yaml
 
 from pelecpost.config.loader import load_project
+from pelecpost.preflight import create_plan
 from pelecpost.runtime import run_project
 
 
@@ -18,7 +19,10 @@ class PlotfileExecutorTests(unittest.TestCase):
         plot = root / "inputs" / "plt00010"
         plot.mkdir(parents=True)
         fields = ["density", "x_velocity", "y_velocity", "pressure", "temperature"]
-        header = ["HyperCLaw-V1.1", str(len(fields)), *fields, "2", "1.0e-6", "0"]
+        header = [
+            "HyperCLaw-V1.1", str(len(fields)), *fields, "2", "1.0e-6", "0",
+            "0.0 -3.0", "10.0 3.0",
+        ]
         (plot / "Header").write_text("\n".join(header) + "\n", encoding="utf-8")
         case = {
             "schema_version": 1,
@@ -71,6 +75,25 @@ class PlotfileExecutorTests(unittest.TestCase):
             self.assertIn("overview.field.contours.plt00010.temperature",
                           {item["id"] for item in artifacts["artifacts"]})
 
+    def test_preflight_reports_si_domain_and_per_analysis_snapshot_selection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = self.project(root, {
+                "id": "overview", "recipe": "flow_overview", "fields": ["temperature"],
+                "snapshot_start": 20, "snapshot_end": 30, "snapshot_step": 10,
+            })
+            header = root / "inputs" / "plt00010" / "Header"
+            for suffix in (20, 30, 40):
+                candidate = root / "inputs" / f"plt{suffix:05d}"
+                candidate.mkdir()
+                (candidate / "Header").write_text(header.read_text(), encoding="utf-8")
+            plan = create_plan(load_project(root))
+            self.assertEqual(plan.inventory.plotfiles.domain_bounds_m, ((0.0, 0.1), (-0.03, 0.03)))
+            self.assertEqual(
+                plan.sampling["selections"]["plotfiles"]["overview"],
+                ["plt00020", "plt00030"],
+            )
+
     def test_surface_diagnostics_registers_curve_samples_and_quality(self):
         with tempfile.TemporaryDirectory() as temporary:
             project = self.project(Path(temporary), {
@@ -115,6 +138,47 @@ class PlotfileExecutorTests(unittest.TestCase):
             self.assertEqual(component["provenance"]["designation"], "validated_2d_eb_v1")
             sensitivity = json.loads((result.run_dir / "data/loads/force_sensitivity.json").read_text())
             self.assertIn("force_delta_n_m", sensitivity["fit_sensitivity"][0])
+
+    def test_volume_fraction_forces_quantify_unsmoothed_geometry_sensitivity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.project(root, {
+                "id": "loads", "recipe": "aerodynamic_forces",
+                "reference_chord_m": 0.05, "reference_span_m": 1.0,
+                "dynamic_viscosity_pa_s": 1.0e-5,
+                "conductivity_w_m_k": 0.02,
+                "normal_sample_distance_m": 0.004, "normal_sample_points": 8,
+            })
+            case_path = root / "case.yaml"
+            case = yaml.safe_load(case_path.read_text())
+            case["geometry"] = {
+                "type": "volume_fraction", "field": "volume_fraction",
+                "minimum_component_points": 12, "smoothing_window": 3,
+            }
+            case_path.write_text(yaml.safe_dump(case), encoding="utf-8")
+            header_path = root / "inputs" / "plt00010" / "Header"
+            header = header_path.read_text().splitlines()
+            field_count = int(header[1])
+            header[1] = str(field_count + 1)
+            header.insert(2 + field_count, "volume_fraction")
+            header_path.write_text("\n".join(header) + "\n", encoding="utf-8")
+            dataset = self.dataset()
+            xx, yy = np.meshgrid(dataset["x"], dataset["y"], indexing="ij")
+            dataset["fields"]["volume_fraction"] = (
+                (xx - 0.05) ** 2 + yy**2 >= 0.01**2
+            ).astype(float)
+            with patch("pp_functions_database.load_pelec_plotfile", return_value=dataset):
+                result = run_project(load_project(root))
+            self.assertEqual(result.status, "completed")
+            sensitivity = json.loads(
+                (result.run_dir / "data/loads/force_sensitivity.json").read_text()
+            )["fit_sensitivity"][0]
+            self.assertEqual(sensitivity["geometry_smoothing_window"], 3)
+            self.assertEqual(len(sensitivity["unsmoothed_force_delta_n_m"]), 2)
+            with np.load(
+                result.run_dir / "data/loads/plt00010_validated_2d_eb_forces.npz"
+            ) as arrays:
+                self.assertIn("component_000_unsmoothed_coordinates_m", arrays.files)
 
     def test_static_baseline_is_explicit_and_produces_registered_increment(self):
         with tempfile.TemporaryDirectory() as temporary:

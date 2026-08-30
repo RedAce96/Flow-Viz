@@ -143,6 +143,18 @@ class GeometryForceTests(unittest.TestCase):
         self.assertGreater(float(np.median(radial_alignment)), 0.9)
         self.assertIsNotNone(curve.unsmoothed_coordinates_m)
 
+    def test_volume_fraction_accepts_standard_dataset_xy_layout_and_records_smoothing(self):
+        x = np.linspace(-2.0, 2.0, 161)
+        y = np.linspace(-1.5, 1.5, 121)
+        xx, yy = np.meshgrid(x, y, indexing="ij")
+        fluid_xy = (xx**2 + yy**2 >= 0.8**2).astype(float)
+        curve = volume_fraction_surfaces(
+            x, y, fluid_xy, minimum_component_points=20, smoothing_window=3,
+        )[0]
+        self.assertEqual(curve.diagnostics["smoothing_window"], 3)
+        self.assertGreaterEqual(curve.diagnostics["maximum_smoothing_displacement_m"], 0.0)
+        self.assertEqual(curve.coordinates_m.shape, curve.unsmoothed_coordinates_m.shape)
+
     def test_region_freestream_uses_robust_explicit_region(self):
         x = np.linspace(0.0, 1.0, 5)
         y = np.linspace(0.0, 1.0, 5)

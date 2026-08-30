@@ -5,13 +5,14 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from math import pi
+import re
 from typing import Any
 
 import numpy as np
 
 from pelecpost.config.models import ResolvedProject
 from pelecpost.io import InputInventory, inspect_project
-from pelecpost.workflows import build_workflow_graph, recipe_for
+from pelecpost.workflows import build_workflow_graph, recipe_for, workflow_for
 
 
 class Severity(StrEnum):
@@ -45,6 +46,7 @@ class PreflightPlan:
     findings: tuple[Finding, ...]
     estimates: tuple[AnalysisEstimate, ...]
     sampling: dict[str, Any]
+    analysis_contracts: dict[str, dict[str, Any]]
     output_root: str
 
     @property
@@ -132,36 +134,49 @@ def _sampling_summary(project: ResolvedProject, inventory: InputInventory) -> di
     return result
 
 
-def _estimate_memory(analysis: Any, inventory: InputInventory) -> dict[str, float]:
-    probes = inventory.probes
-    if analysis.recipe in {
-        "probe_spectrum", "single_pulse_response", "directional_wave",
-        "transient_wavepacket", "nonlinear_coupling", "modal_screening",
-    } and probes is not None:
-        matrix = probes.sample_count * probes.probe_count * 8
-        multiplier = {
-            "probe_spectrum": 3.0,
-            "single_pulse_response": 4.0,
-            "directional_wave": 6.0,
-            "transient_wavepacket": 5.0,
-            "nonlinear_coupling": 8.0,
-            "modal_screening": 7.0,
-        }[analysis.recipe]
-        components = {"probe_signal": matrix / 1024**3}
-        if analysis.recipe in {"probe_spectrum", "single_pulse_response", "nonlinear_coupling"}:
-            components["fft_workspace"] = matrix * (multiplier - 1.0) / 1024**3
-        elif analysis.recipe == "directional_wave":
-            components["wavenumber_and_komega"] = matrix * (multiplier - 1.0) / 1024**3
-        elif analysis.recipe == "transient_wavepacket":
-            components["stft_and_envelope"] = matrix * (multiplier - 1.0) / 1024**3
-        else:
-            components["modal_workspace"] = matrix * (multiplier - 1.0) / 1024**3
-        return components
-    if analysis.recipe == "case_comparison":
-        return {"comparison_arrays": 0.25}
-    # Plotfile arrays are read one selected region/snapshot at a time. Without
-    # cell extents in Header metadata, report a conservative bounded allowance.
-    return {"field_slab": 1.5, "plotting_workspace": 0.5}
+def _selected_plotfile_names(analysis: Any, names: tuple[str, ...]) -> list[str]:
+    start = getattr(analysis, "snapshot_start", None)
+    end = getattr(analysis, "snapshot_end", None)
+    step = int(getattr(analysis, "snapshot_step", 1))
+    if start is None and end is None and step == 1:
+        return list(names)
+    suffixes = []
+    for name in names:
+        match = re.search(r"(\d+)$", name)
+        suffixes.append(int(match.group(1)) if match else None)
+    if names and all(value is not None for value in suffixes):
+        numeric = [int(value) for value in suffixes if value is not None]
+        selected_start = start if start is not None else min(numeric)
+        selected_end = end if end is not None else max(numeric)
+        return [
+            name for name, value in zip(names, numeric)
+            if selected_start <= value <= selected_end and (value - selected_start) % step == 0
+        ]
+    first = start if start is not None else 0
+    last = end if end is not None else len(names)
+    return list(names[first:last:step])
+
+
+def _geometry_points(project: ResolvedProject) -> np.ndarray | None:
+    geometry = project.case_file.geometry
+    if geometry.type == "flat_plate":
+        if geometry.trailing_edge_x_m is None:
+            return None
+        return np.array([
+            [geometry.leading_edge_x_m, geometry.wall_y_m],
+            [geometry.trailing_edge_x_m, geometry.wall_y_m],
+        ])
+    if geometry.type == "wedge":
+        angle = np.deg2rad(geometry.half_angle_deg)
+        leading = np.array([geometry.leading_edge_x_m, geometry.leading_edge_y_m])
+        return np.vstack((
+            leading,
+            leading + geometry.length_m * np.array([np.cos(angle), np.sin(angle)]),
+            leading + geometry.length_m * np.array([np.cos(angle), -np.sin(angle)]),
+        ))
+    if geometry.type == "polyline":
+        return np.asarray(geometry.points_m, dtype=float)
+    return None
 
 
 def create_plan(project: ResolvedProject, inventory: InputInventory | None = None) -> PreflightPlan:
@@ -171,44 +186,26 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
     sampling = _sampling_summary(project, inventory)
     case = project.case_file.case
     geometry = project.case_file.geometry.type
+    analysis_contracts: dict[str, dict[str, Any]] = {}
 
     if not project.enabled_analyses:
         findings.append(Finding(Severity.INFO, "NO_ANALYSES", "No analyses are enabled."))
 
     for analysis in project.enabled_analyses:
-        definition = recipe_for(analysis.recipe)
-        if case.dimensionality not in definition.supported_dimensions:
+        workflow = workflow_for(analysis.recipe)
+        analysis_contracts[analysis.id] = {
+            "recipe": analysis.recipe,
+            "physical_question": workflow.metadata.question,
+            "assumptions": list(workflow.metadata.assumptions),
+            "limitations": list(workflow.metadata.limitations),
+            "required_inputs": list(workflow.metadata.required_inputs),
+            "required_fields": list(workflow.metadata.required_fields),
+            "expected_artifact_ids": list(workflow.artifact_declarations),
+        }
+        for validation in workflow.validate(project, analysis, inventory):
             findings.append(Finding(
-                Severity.BLOCKER,
-                "UNSUPPORTED_DIMENSION",
-                f"{analysis.recipe} supports dimensions {definition.supported_dimensions}; "
-                "3-D extension interfaces are documented but no 3-D algorithm is implemented.",
-                analysis.id,
+                Severity(validation.level), validation.code, validation.message, analysis.id,
             ))
-        if geometry not in definition.supported_geometries:
-            findings.append(Finding(
-                Severity.BLOCKER, "UNSUPPORTED_GEOMETRY",
-                f"{analysis.recipe} does not support geometry {geometry!r}.", analysis.id,
-            ))
-        for required in definition.required_inputs:
-            available = {
-                "plotfiles": inventory.plotfiles is not None and inventory.plotfiles.count > 0,
-                "probes": inventory.probes is not None and inventory.probes.sample_count > 0,
-                "comparison_archives": bool(inventory.comparison_archives),
-            }[required]
-            if not available:
-                findings.append(Finding(
-                    Severity.BLOCKER, "MISSING_INPUT",
-                    f"Recipe {analysis.recipe} requires configured {required} input.", analysis.id,
-                ))
-        if definition.required_fields and inventory.plotfiles is not None:
-            for field in definition.required_fields:
-                if field not in inventory.plotfiles.canonical_fields:
-                    findings.append(Finding(
-                        Severity.BLOCKER, "MISSING_PLOTFILE_FIELD",
-                        f"Required canonical field {field!r} was not mapped from the plotfile.",
-                        analysis.id,
-                    ))
         variable = getattr(analysis, "variable", None)
         if variable is not None and inventory.probes is not None:
             value = str(variable.value if hasattr(variable, "value") else variable)
@@ -228,6 +225,13 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                 f"Requested maximum {maximum:.6g} Hz exceeds Nyquist {nyquist:.6g} Hz.",
                 analysis.id,
             ))
+        native_resolution = sampling.get("native_frequency_resolution_hz")
+        if maximum is not None and native_resolution is not None and maximum < native_resolution:
+            findings.append(Finding(
+                Severity.BLOCKER, "NO_RESOLVABLE_FREQUENCY_BIN",
+                f"Requested maximum {maximum:.6g} Hz is below the finite-record "
+                f"resolution {native_resolution:.6g} Hz.", analysis.id,
+            ))
         segment = sampling.get("segmented_estimators", {}).get(analysis.id)
         if segment and segment["segment_count"] < 4:
             findings.append(Finding(
@@ -235,6 +239,18 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                 f"Only {segment['segment_count']} segments are available; spectral confidence is weak.",
                 analysis.id,
             ))
+        if segment:
+            lower = getattr(analysis, "frequency_min_hz", None)
+            lower = lower if lower is not None else getattr(analysis, "band_min_hz", None)
+            if lower is not None and maximum is not None:
+                width = maximum - lower
+                if width < segment["effective_frequency_resolution_hz"]:
+                    findings.append(Finding(
+                        Severity.WARNING, "UNDER_RESOLVED_FREQUENCY_BAND",
+                        f"Selected bandwidth {width:.6g} Hz is narrower than the segmented "
+                        f"resolution {segment['effective_frequency_resolution_hz']:.6g} Hz.",
+                        analysis.id,
+                    ))
         if analysis.recipe == "single_pulse_response" and inventory.probes is not None:
             end = analysis.baseline_end_time_s
             if end is None:
@@ -242,6 +258,11 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
             start = inventory.probes.time_min_s
             dt = inventory.probes.median_timestep_s
             count = int(max(0, (end - start) / dt)) if end is not None and start is not None and dt else 0
+            sampling.setdefault("quiescent_baselines", {})[analysis.id] = {
+                "baseline_end_time_s": end,
+                "estimated_sample_count": count,
+                "minimum_sample_count": analysis.minimum_baseline_samples,
+            }
             if count < analysis.minimum_baseline_samples:
                 findings.append(Finding(
                     Severity.BLOCKER, "INSUFFICIENT_QUIESCENT_BASELINE",
@@ -269,6 +290,51 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                         Severity.BLOCKER, "PAIRED_BASELINE_MISMATCH",
                         f"Paired baseline is missing {len(missing_pairs)} current plotfile name(s): "
                         f"{', '.join(missing_pairs[:5])}.", analysis.id,
+                    ))
+
+        if analysis.recipe in {"surface_diagnostics", "aerodynamic_forces"}:
+            normal_distance = float(getattr(analysis, "normal_sample_distance_m"))
+            normal_points = int(getattr(analysis, "normal_sample_points"))
+            geometry_field = getattr(project.case_file.geometry, "field", None)
+            sampling.setdefault("geometry_requirements", {})[analysis.id] = {
+                "geometry_type": geometry,
+                "normal_sample_distance_m": normal_distance,
+                "normal_sample_points": normal_points,
+                "domain_bounds_m": (
+                    inventory.plotfiles.domain_bounds_m if inventory.plotfiles else None
+                ),
+                "volume_fraction_field": (
+                    geometry_field if geometry == "volume_fraction" else None
+                ),
+            }
+            if geometry == "volume_fraction" and inventory.plotfiles is not None:
+                assert geometry_field is not None
+                field = geometry_field
+                if field not in inventory.plotfiles.fields and field not in inventory.plotfiles.canonical_fields:
+                    findings.append(Finding(
+                        Severity.BLOCKER, "MISSING_GEOMETRY_FIELD",
+                        f"Configured volume-fraction field {field!r} is absent from plotfiles.",
+                        analysis.id,
+                    ))
+            bounds = inventory.plotfiles.domain_bounds_m if inventory.plotfiles else None
+            points = _geometry_points(project)
+            if bounds is None:
+                findings.append(Finding(
+                    Severity.INFO, "GEOMETRY_COVERAGE_RUNTIME_GATE",
+                    "Plotfile Header does not expose domain bounds; geometry and normal-sampling "
+                    "coverage will be gated when the selected field slab is loaded.", analysis.id,
+                ))
+            elif points is not None:
+                inside = all(
+                    bounds[axis][0] <= coordinate[axis] <= bounds[axis][1]
+                    for coordinate in points
+                    for axis in range(2)
+                )
+                if not inside:
+                    findings.append(Finding(
+                        Severity.BLOCKER, "GEOMETRY_OUTSIDE_DOMAIN",
+                        "Configured surface coordinates extend outside the plotfile domain.",
+                        analysis.id,
                     ))
         if analysis.recipe == "directional_wave":
             if inventory.probes is not None and inventory.probes.probe_count < 5:
@@ -344,10 +410,11 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
 
     estimate_items = []
     for analysis in project.enabled_analyses:
-        components = _estimate_memory(analysis, inventory)
+        workflow = workflow_for(analysis.recipe)
+        components = workflow.estimate_resources(analysis, inventory)
         estimate_items.append(AnalysisEstimate(
             analysis.id, analysis.recipe, sum(components.values()), components,
-            recipe_for(analysis.recipe).outputs,
+            workflow.artifact_declarations,
         ))
     estimates = tuple(estimate_items)
     limit = float(project.machine_file.compute.memory_limit_gb)
@@ -373,8 +440,13 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
     output = project.machine_file.outputs.root
     if not output.is_absolute():
         output = (project.root / output).resolve()
+    plotfile_names = inventory.plotfiles.names if inventory.plotfiles else ()
     sampling["selections"] = {
-        "plotfiles": list(inventory.plotfiles.names) if inventory.plotfiles else [],
+        "plotfiles": {
+            analysis.id: _selected_plotfile_names(analysis, plotfile_names)
+            for analysis in project.enabled_analyses
+            if "plotfiles" in recipe_for(analysis.recipe).required_inputs
+        },
         "probes": {
             analysis.id: list(getattr(analysis, "probe_indices", ())) or "all"
             for analysis in project.enabled_analyses
@@ -389,5 +461,6 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
         findings=tuple(findings),
         estimates=estimates,
         sampling=sampling,
+        analysis_contracts=analysis_contracts,
         output_root=str(output),
     )

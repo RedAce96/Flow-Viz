@@ -49,7 +49,18 @@ class RuntimeTests(unittest.TestCase):
             report = report_path.read_text(encoding="utf-8")
             links = set(re.findall(r"(?:href|src)='([^']+)'", report))
             for link in links:
-                self.assertTrue((report_path.parent / link).resolve().is_file(), link)
+                if link.startswith("#"):
+                    anchor = re.escape(link[1:])
+                    self.assertRegex(report, rf"id=['\"]{anchor}['\"]")
+                else:
+                    self.assertTrue((report_path.parent / link).resolve().is_file(), link)
+            manifest = json.loads((first.run_dir / "manifest.json").read_text())
+            fingerprints = manifest["provenance"]["input_fingerprints"]
+            project_fingerprint = next(
+                item for item in fingerprints if item["path"].endswith("case.yaml")
+            )
+            self.assertEqual(project_fingerprint["checksum_algorithm"], "sha256")
+            self.assertEqual(len(project_fingerprint["checksum"]), 64)
 
     def test_independent_failure_preserves_products_and_report(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -117,6 +128,13 @@ class RuntimeTests(unittest.TestCase):
             ids = {item["id"] for item in artifacts["artifacts"]}
             self.assertIn("wave.wave.wavenumber", ids)
             self.assertIn("wave.wave.komega", ids)
+            self.assertIn("wave.wave.spatial_spectrum", ids)
+            self.assertIn("wave.wave.komega_sensitivity", ids)
+            sensitivity = json.loads(
+                (result.run_dir / "data/wave/komega_sensitivity.json").read_text()
+            )
+            self.assertIn("window_sensitivity", sensitivity)
+            self.assertIn("first_vs_second_half_block_sensitivity", sensitivity)
 
     def test_modal_executor_registers_products_by_artifact_id(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -167,7 +185,7 @@ class RuntimeTests(unittest.TestCase):
                 "id": "compare", "recipe": "case_comparison",
                 "baseline_run": str(baseline.run_dir),
                 "comparison_run": str(comparison.run_dir),
-                "artifact_ids": ["spectrum.spectral.psd"],
+                "artifact_ids": ["spectrum.spectral.psd", "spectrum.spectral.confidence"],
             }]}
             machine = {
                 "schema_version": 1,
@@ -181,6 +199,10 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(result.status, "completed")
             metrics = json.loads((result.run_dir / "data/compare/comparison_metrics.json").read_text())
             self.assertTrue(metrics["metrics"])
+            self.assertTrue(any(
+                item["artifact_id"] == "spectrum.spectral.confidence"
+                for item in metrics["metrics"]
+            ))
 
     def test_interruption_is_atomic_and_reportable(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -14,6 +14,7 @@ import pp_plotting_database as plotting_api
 from pelecpost.config.models import ExplicitFreestream
 from pelecpost.errors import UnsupportedCapabilityError
 from pelecpost.geometry import (
+    SurfaceCurve2D,
     flat_plate_surface,
     polyline_surface,
     volume_fraction_surfaces,
@@ -100,6 +101,7 @@ def _surfaces(context: WorkflowContext, dataset: dict):
         dataset["x"], dataset["y"], dataset["fields"][geometry.field],
         iso_value=geometry.iso_value, fluid_value=geometry.fluid_value,
         minimum_component_points=geometry.minimum_component_points,
+        smoothing_window=geometry.smoothing_window,
     )
 
 
@@ -405,6 +407,7 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
             )
             components = []
             alternate_components = []
+            unsmoothed_components = []
             arrays = {}
             for component, surface in enumerate(_surfaces(context, dataset)):
                 _, _, _, _, fit = _sample_wall(
@@ -480,6 +483,64 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
                 )
                 components.append(load_component)
                 alternate_components.append(alternate_component)
+                if geometry.type == "volume_fraction":
+                    if surface.unsmoothed_coordinates_m is None:
+                        raise ValueError("volume-fraction surface omitted unsmoothed coordinates")
+                    unsmoothed_surface = SurfaceCurve2D.from_points(
+                        surface.unsmoothed_coordinates_m,
+                        closed=surface.closed,
+                        fluid_side=surface.fluid_side,
+                        component_id=surface.component_id,
+                        side_id=surface.side_id,
+                        source="volume_fraction_unsmoothed_sensitivity",
+                        confidence=surface.confidence,
+                    )
+                    _, _, _, _, unsmoothed_fit = _sample_wall(
+                        dataset, unsmoothed_surface, analysis.normal_sample_distance_m,
+                        analysis.normal_sample_points,
+                    )
+                    if baseline_dataset is not None:
+                        _, _, _, _, baseline_unsmoothed_fit = _sample_wall(
+                            baseline_dataset, unsmoothed_surface,
+                            analysis.normal_sample_distance_m,
+                            analysis.normal_sample_points,
+                        )
+                        unsmoothed_fit = type(unsmoothed_fit)(
+                            pressure_pa=(
+                                unsmoothed_fit.pressure_pa
+                                - baseline_unsmoothed_fit.pressure_pa
+                            ),
+                            tangential_velocity_gradient_s=(
+                                unsmoothed_fit.tangential_velocity_gradient_s
+                                - baseline_unsmoothed_fit.tangential_velocity_gradient_s
+                            ),
+                            temperature_gradient_k_m=(
+                                unsmoothed_fit.temperature_gradient_k_m
+                                - baseline_unsmoothed_fit.temperature_gradient_k_m
+                            ),
+                            pressure_residual_pa=unsmoothed_fit.pressure_residual_pa,
+                            velocity_residual_m_s=unsmoothed_fit.velocity_residual_m_s,
+                            temperature_residual_k=unsmoothed_fit.temperature_residual_k,
+                            point_count=np.minimum(
+                                unsmoothed_fit.point_count,
+                                baseline_unsmoothed_fit.point_count,
+                            ),
+                        )
+                    unsmoothed_components.append(integrate_surface_loads(
+                        unsmoothed_surface, unsmoothed_fit.pressure_pa,
+                        unsmoothed_fit.tangential_velocity_gradient_s,
+                        unsmoothed_fit.temperature_gradient_k_m,
+                        dynamic_viscosity_pa_s=analysis.dynamic_viscosity_pa_s,
+                        conductivity_w_m_k=analysis.conductivity_w_m_k,
+                        moment_origin_m=analysis.moment_origin_m,
+                        pressure_reference_pa=(
+                            0.0 if baseline_dataset is not None else freestream.pressure_pa
+                        ),
+                    ))
+                    arrays[f"component_{component:03d}_coordinates_m"] = surface.coordinates_m
+                    arrays[f"component_{component:03d}_unsmoothed_coordinates_m"] = (
+                        surface.unsmoothed_coordinates_m
+                    )
                 arrays[f"component_{component:03d}_force_pressure_n_m"] = load_component.force_pressure_n_m
                 arrays[f"component_{component:03d}_force_viscous_n_m"] = load_component.force_viscous_n_m
                 arrays[f"component_{component:03d}_heat_flux_w_m2"] = load_component.heat_flux_w_m2
@@ -488,6 +549,14 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
             alternate_force = np.sum([item.force_total_n_m for item in alternate_components], axis=0)
             moment = float(sum(item.moment_total_n for item in components))
             alternate_moment = float(sum(item.moment_total_n for item in alternate_components))
+            unsmoothed_force = (
+                np.sum([item.force_total_n_m for item in unsmoothed_components], axis=0)
+                if unsmoothed_components else None
+            )
+            unsmoothed_moment = (
+                float(sum(item.moment_total_n for item in unsmoothed_components))
+                if unsmoothed_components else None
+            )
             arrays["force_total_n_m"] = force
             arrays["moment_total_n"] = np.array(moment)
             path = context.data_dir / f"{label}_validated_2d_eb_forces.npz"
@@ -496,12 +565,19 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
             designation = "validated_2d_eb_v1"
             if baseline_plotfile is not None:
                 designation += "_increment"
-            sensitivity.append({
+            sensitivity_item = {
                 "plotfile": label,
                 "normal_fit_point_counts": [analysis.normal_sample_points, reduced_points],
                 "force_delta_n_m": (alternate_force - force).tolist(),
                 "moment_delta_n": alternate_moment - moment,
-            })
+            }
+            if unsmoothed_force is not None and unsmoothed_moment is not None:
+                sensitivity_item.update({
+                    "geometry_smoothing_window": geometry.smoothing_window,
+                    "unsmoothed_force_delta_n_m": (unsmoothed_force - force).tolist(),
+                    "unsmoothed_moment_delta_n": unsmoothed_moment - moment,
+                })
+            sensitivity.append(sensitivity_item)
             interpretation = (
                 "General two-dimensional EB pressure, viscous, thermal, force, and moment result; validated, not certified."
             )
@@ -527,7 +603,10 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
     context.register(
         artifact_id="forces.sensitivity", path=sensitivity_path, kind="json", variable="surface_load",
         units=None, coordinate_metadata={},
-        interpretation="Pressure-fit order or normal-fit point-count sensitivity for each snapshot.",
+        interpretation=(
+            "Pressure-fit order, normal-fit point-count, and configured EB geometry-smoothing "
+            "sensitivity for each snapshot."
+        ),
     )
     history_path = context.data_dir / "force_history.csv"
     with history_path.open("w", newline="", encoding="utf-8") as stream:

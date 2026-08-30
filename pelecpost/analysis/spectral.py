@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 from scipy.signal import welch
@@ -19,6 +20,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 import pp_functions_database as reviewed_spectral
+from pelecpost.config.models import (
+    DirectionalWaveAnalysis,
+    ProbeSpectrumAnalysis,
+    SinglePulseAnalysis,
+)
 from pelecpost.errors import UnsupportedCapabilityError
 from pelecpost.io.signals import open_compact_signal_workspace
 from pelecpost.runtime.context import WorkflowContext
@@ -64,7 +70,10 @@ def load_compact_signal(
         source = (context.project.root / source).resolve()
     inventory = context.plan.inventory.probes
     assert inventory is not None
-    variable = analysis.variable.value
+    configured_variable = getattr(analysis, "variable", None)
+    if configured_variable is None:
+        raise TypeError(f"Recipe {analysis.recipe!r} has no probe variable")
+    variable = configured_variable.value
     storage_field = _field(variable, inventory.fields)
     configured = getattr(analysis, "probe_indices", ())
     selected = np.asarray(configured if configured else range(inventory.probe_count), dtype=int)
@@ -97,7 +106,7 @@ def load_compact_signal(
 
 @executor("probe_spectrum")
 def run_probe_spectrum(context: WorkflowContext) -> None:
-    analysis = context.analysis
+    analysis = cast(ProbeSpectrumAnalysis, context.analysis)
     variable, unit, time, x_m, values, selected = load_compact_signal(context)
     dt = float(np.median(np.diff(time)))
     segment = analysis.welch_segment_samples or min(4096, len(time))
@@ -134,7 +143,7 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
             "window": analysis.window,
             "detrend": analysis.detrend, "segment_samples": segment,
             "overlap_samples": overlap,
-            "signal_workspace": context.resource_metadata["compact_signal"],
+            "signal_workspace": (context.resource_metadata or {})["compact_signal"],
         },
     )
     step = max(1, segment - overlap)
@@ -152,7 +161,7 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
     context.register(
         artifact_id="spectral.confidence", path=confidence_path, kind="json",
         variable=variable, units=None,
-        interpretation=confidence["interpretation"],
+        interpretation="Degrees of freedom are approximate because overlapped windowed segments are correlated.",
     )
     figure_path = context.figure_dir / "stationary_spectrum.png"
     fig, axis = plt.subplots(figsize=(9, 5))
@@ -181,7 +190,7 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
 
 @executor("single_pulse_response")
 def run_single_pulse_response(context: WorkflowContext) -> None:
-    analysis = context.analysis
+    analysis = cast(SinglePulseAnalysis, context.analysis)
     variable, unit, time, x_m, values, _ = load_compact_signal(context)
     baseline_end = analysis.baseline_end_time_s
     if baseline_end is None:
@@ -237,9 +246,86 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
     )
 
 
+def _komega_ridge(spectrum: dict, minimum_hz: float, maximum_hz: float) -> tuple[np.ndarray, np.ndarray]:
+    frequency = np.asarray(spectrum["frequency_hz"], dtype=float)
+    wavenumber = np.asarray(spectrum["wavenumber_rad_per_m"], dtype=float)
+    power = np.asarray(spectrum["power"], dtype=float)
+    selected = (frequency >= minimum_hz) & (frequency <= maximum_hz)
+    if not np.any(selected):
+        raise ValueError("k-omega sensitivity band contains no temporal FFT bins")
+    band_power = power[selected]
+    ridge = wavenumber[np.argmax(band_power, axis=1)]
+    return frequency[selected], ridge
+
+
+def _ridge_difference(reference: tuple[np.ndarray, np.ndarray], candidate: tuple[np.ndarray, np.ndarray]) -> dict:
+    frequency, ridge = reference
+    candidate_frequency, candidate_ridge = candidate
+    common = (
+        (frequency >= candidate_frequency[0])
+        & (frequency <= candidate_frequency[-1])
+    )
+    if not np.any(common):
+        raise ValueError("k-omega sensitivity spectra have no common frequency bins")
+    interpolated = np.interp(frequency[common], candidate_frequency, candidate_ridge)
+    difference = np.abs(ridge[common] - interpolated)
+    return {
+        "compared_frequency_count": int(np.count_nonzero(common)),
+        "median_absolute_ridge_difference_rad_m": float(np.median(difference)),
+        "percentile_90_absolute_ridge_difference_rad_m": float(np.percentile(difference, 90.0)),
+        "maximum_absolute_ridge_difference_rad_m": float(np.max(difference)),
+    }
+
+
+def _komega_sensitivity(
+    values: np.ndarray,
+    time: np.ndarray,
+    x_m: np.ndarray,
+    analysis: DirectionalWaveAnalysis,
+    full: dict,
+) -> dict:
+    reference = _komega_ridge(full, analysis.frequency_min_hz, analysis.frequency_max_hz)
+    alternate_window = "hann" if analysis.temporal_window == "rectangular" else "rectangular"
+    alternate = reviewed_spectral.compute_wavenumber_frequency_spectrum(
+        values, time, x_m, temporal_window=alternate_window,
+        spatial_window=analysis.spatial_window, temporal_mean_subtraction="mean",
+    )
+    half = len(time) // 2
+    if half < 8:
+        raise ValueError("k-omega block sensitivity requires at least 16 temporal samples")
+    first = reviewed_spectral.compute_wavenumber_frequency_spectrum(
+        values[:half], time[:half], x_m, temporal_window=analysis.temporal_window,
+        spatial_window=analysis.spatial_window, temporal_mean_subtraction="mean",
+    )
+    second = reviewed_spectral.compute_wavenumber_frequency_spectrum(
+        values[-half:], time[-half:], x_m, temporal_window=analysis.temporal_window,
+        spatial_window=analysis.spatial_window, temporal_mean_subtraction="mean",
+    )
+    return {
+        "schema_version": 1,
+        "frequency_band_hz": [analysis.frequency_min_hz, analysis.frequency_max_hz],
+        "configured_temporal_window": analysis.temporal_window,
+        "alternate_temporal_window": alternate_window,
+        "full_record_sample_count": len(time),
+        "block_sample_count": half,
+        "window_sensitivity": _ridge_difference(
+            reference,
+            _komega_ridge(alternate, analysis.frequency_min_hz, analysis.frequency_max_hz),
+        ),
+        "first_vs_second_half_block_sensitivity": _ridge_difference(
+            _komega_ridge(first, analysis.frequency_min_hz, analysis.frequency_max_hz),
+            _komega_ridge(second, analysis.frequency_min_hz, analysis.frequency_max_hz),
+        ),
+        "interpretation": (
+            "Dominant-ridge changes under temporal-window and half-record perturbations; "
+            "large differences limit directional-wave interpretation."
+        ),
+    }
+
+
 @executor("directional_wave")
 def run_directional_wave(context: WorkflowContext) -> None:
-    analysis = context.analysis
+    analysis = cast(DirectionalWaveAnalysis, context.analysis)
     variable, unit, time, x_m, values, _ = load_compact_signal(context)
     speed_bounds = None
     if analysis.expected_speed_min_m_s is not None and analysis.expected_speed_max_m_s is not None:
@@ -259,18 +345,20 @@ def run_directional_wave(context: WorkflowContext) -> None:
         values, time, x_m, temporal_window=analysis.temporal_window,
         spatial_window=analysis.spatial_window, temporal_mean_subtraction="mean",
     )
-    path = context.data_dir / "directional_wave.npz"
+    path = context.data_dir / "complex_wavenumber.npz"
     arrays = {
         "frequency_hz": local["frequency_hz"], "x_center_m": local["x_center_m"],
         "alpha_real_rad_m": local["alpha_real_rad_per_m"],
         "alpha_imag_rad_m": local["alpha_imag_rad_per_m"],
+        "alpha_real_ci95_rad_m": local["alpha_real_ci95_rad_per_m"],
+        "alpha_imag_ci95_rad_m": local["alpha_imag_ci95_rad_per_m"],
         "amplification_rate_per_m": local["amplification_rate_per_m"],
         "phase_speed_m_s": local["phase_speed_m_per_s"],
         "phase_valid_mask": local["phase_valid_mask"], "growth_valid_mask": local["growth_valid_mask"],
         "coherence_squared": local["mean_coherence_squared"],
-        "komega_frequency_hz": komega["frequency_hz"],
-        "komega_wavenumber_rad_m": komega["wavenumber_rad_per_m"],
-        "komega_power": komega["power"],
+        "phase_fit_r_squared": local["phase_fit_r_squared"],
+        "amplitude_fit_r_squared": local["amplitude_fit_r_squared"],
+        "spatial_alias_margin": local["spatial_alias_margin"],
     }
     np.savez_compressed(path, **arrays)
     accepted = float(np.mean(local["phase_valid_mask"]))
@@ -281,6 +369,43 @@ def run_directional_wave(context: WorkflowContext) -> None:
         interpretation="Coherence-gated dominant-wave estimate; it is not an LST/PSE eigensolution.",
         provenance={"phase_convention": local["phase_convention"], "accepted_fraction": accepted,
                     "growth_accepted_fraction": growth},
+    )
+    spectrum_path = context.data_dir / "local_spatial_spectrum.npz"
+    np.savez_compressed(
+        spectrum_path, frequency_hz=local["frequency_hz"],
+        x_center_m=local["x_center_m"], spectral_power=local["spectral_power"],
+        relative_spectral_power_db=local["relative_spectral_power_db"],
+        adjacent_coherence_squared=local["adjacent_coherence_squared"],
+        probe_x_m=local["probe_x_sorted_m"],
+    )
+    context.register(
+        artifact_id="wave.spatial_spectrum", path=spectrum_path, kind="array",
+        variable=variable, units=f"({unit})^2", coordinate_metadata={"frequency": "Hz", "x": "m"},
+        interpretation="Welch-averaged local spatial spectral power and adjacent-probe coherence.",
+    )
+    komega_path = context.data_dir / "komega_spectrum.npz"
+    np.savez_compressed(
+        komega_path, frequency_hz=komega["frequency_hz"],
+        wavenumber_rad_m=komega["wavenumber_rad_per_m"], power=komega["power"],
+        amplitude=komega["amplitude"],
+        native_frequency_resolution_hz=np.array(komega["native_frequency_resolution_hz"]),
+        native_wavenumber_resolution_rad_m=np.array(komega["native_wavenumber_resolution_rad_per_m"]),
+    )
+    context.register(
+        artifact_id="wave.komega", path=komega_path, kind="array", variable=variable,
+        units=f"({unit})^2", coordinate_metadata={"frequency": "Hz", "wavenumber": "rad/m"},
+        interpretation="Signed numerical k–omega map; positive k denotes downstream cos(omega t - k x).",
+        provenance={"temporal_window": analysis.temporal_window,
+                    "spatial_window": analysis.spatial_window,
+                    "direction_convention": komega["direction_convention"]},
+    )
+    sensitivity = _komega_sensitivity(values, time, x_m, analysis, komega)
+    sensitivity_path = context.data_dir / "komega_sensitivity.json"
+    sensitivity_path.write_text(json.dumps(sensitivity, indent=2) + "\n", encoding="utf-8")
+    context.register(
+        artifact_id="wave.komega_sensitivity", path=sensitivity_path, kind="json",
+        variable=variable, units="rad/m", coordinate_metadata={"frequency": "Hz"},
+        interpretation=sensitivity["interpretation"],
     )
     figure_path = context.figure_dir / "komega.png"
     fig, axis = plt.subplots(figsize=(9, 6))
@@ -296,7 +421,7 @@ def run_directional_wave(context: WorkflowContext) -> None:
     fig.savefig(figure_path, dpi=180)
     plt.close(fig)
     context.register(
-        artifact_id="wave.komega", path=figure_path, kind="figure", variable=variable,
+        artifact_id="wave.komega.figure", path=figure_path, kind="figure", variable=variable,
         units="relative dB", coordinate_metadata={"frequency": "Hz", "wavenumber": "rad/m"},
         interpretation="Signed k–omega map; positive k denotes downstream cos(omega t - k x).",
     )

@@ -1326,6 +1326,12 @@
             "title": "Minimum Component Points",
             "type": "integer"
           },
+          "smoothing_window": {
+            "default": 1,
+            "exclusiveMinimum": 0,
+            "title": "Smoothing Window",
+            "type": "integer"
+          },
           "type": {
             "const": "volume_fraction",
             "default": "volume_fraction",

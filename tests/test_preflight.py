@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import importlib
 from pathlib import Path
 
 import h5py
@@ -10,7 +11,13 @@ import yaml
 
 from pelecpost.config.loader import load_project
 from pelecpost.preflight import Severity, create_plan
-from pelecpost.workflows import RECIPES, build_workflow_graph
+from pelecpost.workflows import (
+    INTERNAL_WORKFLOWS,
+    RECIPES,
+    WORKFLOWS,
+    WorkflowProtocol,
+    build_workflow_graph,
+)
 from pelecpost.workflows.graph import WorkflowNode, _topological_order
 
 
@@ -73,6 +80,20 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(len(RECIPES), 11)
         self.assertTrue(all(item.outputs for item in RECIPES.values()))
         self.assertTrue(all(item.limitations for item in RECIPES.values()))
+        self.assertEqual(set(RECIPES), set(WORKFLOWS))
+        self.assertTrue(all(isinstance(item, WorkflowProtocol) for item in WORKFLOWS.values()))
+        self.assertTrue(all(item.artifact_declarations for item in WORKFLOWS.values()))
+        self.assertEqual(
+            INTERNAL_WORKFLOWS,
+            {"input.plotfiles", "input.probes", "input.comparison_archives", "geometry.surface"},
+        )
+
+    def test_every_public_workflow_has_a_lazy_executor_registration(self):
+        from pelecpost.analysis.executors import EXECUTORS
+
+        for module in ("spectral", "modal", "transient", "nonlinear", "plotfiles", "comparison"):
+            importlib.import_module(f"pelecpost.analysis.{module}")
+        self.assertEqual(set(EXECUTORS), set(WORKFLOWS))
 
     def test_probe_only_graph_has_no_plotfile_dependency(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -84,6 +105,9 @@ class PreflightTests(unittest.TestCase):
             self.assertEqual(graph.order, ("input.probes", "analysis.spectrum"))
             plan = create_plan(project)
             self.assertFalse(plan.blockers)
+            contract = plan.analysis_contracts["spectrum"]
+            self.assertIn("stationary", contract["assumptions"][0].lower())
+            self.assertEqual(contract["expected_artifact_ids"], list(RECIPES["probe_spectrum"].outputs))
 
     def test_above_nyquist_is_a_blocker(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -96,6 +120,18 @@ class PreflightTests(unittest.TestCase):
             )
             plan = create_plan(project)
             self.assertIn("ABOVE_NYQUIST", {item.code for item in plan.blockers})
+
+    def test_finite_record_with_no_resolvable_requested_bin_is_a_blocker(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(
+                Path(temporary),
+                [{
+                    "id": "spectrum", "recipe": "probe_spectrum",
+                    "variable": "temperature", "frequency_max_hz": 500,
+                }],
+            )
+            plan = create_plan(project)
+            self.assertIn("NO_RESOLVABLE_FREQUENCY_BIN", {item.code for item in plan.blockers})
 
     def test_three_dimensional_input_is_rejected_at_preflight(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -204,15 +204,23 @@ def volume_fraction_surfaces(
     x = np.asarray(x_m, dtype=float)
     y = np.asarray(y_m, dtype=float)
     values = np.asarray(fluid_fraction, dtype=float)
-    if values.shape != (len(y), len(x)):
-        raise ValueError("volume-fraction array shape must be (len(y), len(x))")
-    generator = contour_generator(x=x, y=y, z=values, name="serial", corner_mask=False)
+    if values.shape == (len(x), len(y)):
+        # StandardDataset fields use indexing='ij': (x, y). contourpy and the
+        # normal-direction sampler below use image order: (y, x).
+        values_yx = values.T
+    elif values.shape == (len(y), len(x)):
+        values_yx = values
+    else:
+        raise ValueError(
+            "volume-fraction array shape must be (len(x), len(y)) or (len(y), len(x))"
+        )
+    generator = contour_generator(x=x, y=y, z=values_yx, name="serial", corner_mask=False)
     lines = generator.lines(float(iso_value))
     curves: list[SurfaceCurve2D] = []
     from scipy.interpolate import RegularGridInterpolator
 
     sample_fraction = RegularGridInterpolator(
-        (y, x), values, method="linear", bounds_error=False, fill_value=np.nan
+        (y, x), values_yx, method="linear", bounds_error=False, fill_value=np.nan
     )
     grid_scale = min(float(np.min(np.diff(x))), float(np.min(np.diff(y))))
     for index, line in enumerate(lines):

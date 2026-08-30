@@ -111,6 +111,13 @@ class VolumeFractionGeometry(StrictModel):
     fluid_value: Literal[0, 1] = 1
     iso_value: float = Field(default=0.5, gt=0.0, lt=1.0)
     minimum_component_points: PositiveInt = 8
+    smoothing_window: PositiveInt = 1
+
+    @model_validator(mode="after")
+    def valid_smoothing(self) -> "VolumeFractionGeometry":
+        if self.smoothing_window % 2 == 0:
+            raise ValueError("smoothing_window must be odd")
+        return self
 
 
 GeometryConfig = Annotated[
