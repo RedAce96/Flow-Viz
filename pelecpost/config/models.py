@@ -171,6 +171,29 @@ class SurfaceDiagnosticsAnalysis(BaseAnalysis):
     normal_sample_points: PositiveInt = 8
 
 
+class ControlVolumeConfig(StrictModel):
+    x_range_m: tuple[float, float]
+    y_top_m: PositiveFloat
+    bulk_viscosity_pa_s: float = Field(default=0.0, ge=0.0)
+
+    @model_validator(mode="after")
+    def increasing_x(self) -> "ControlVolumeConfig":
+        if self.x_range_m[1] <= self.x_range_m[0]:
+            raise ValueError("control-volume x_range_m must be strictly increasing")
+        return self
+
+
+class ForceProbeLinkageConfig(StrictModel):
+    variable: Variable = Variable.PRESSURE
+    force_component: Literal["x", "y", "moment"] = "y"
+    forcing_frequency_hz: PositiveFloat
+    minimum_forcing_periods: PositiveFloat = 10.0
+    welch_segment_samples: PositiveInt = 16384
+    overlap_fraction: float = Field(default=0.5, ge=0.0, lt=1.0)
+    minimum_segments: PositiveInt = 8
+    probe_indices: tuple[int, ...] = ()
+
+
 class AerodynamicForcesAnalysis(BaseAnalysis):
     recipe: Literal["aerodynamic_forces"]
     reference_chord_m: PositiveFloat
@@ -183,6 +206,8 @@ class AerodynamicForcesAnalysis(BaseAnalysis):
     normal_sample_points: PositiveInt = 8
     baseline: Literal["none", "static", "paired"] = "none"
     baseline_id: str | None = None
+    control_volume: ControlVolumeConfig | None = None
+    probe_linkage: ForceProbeLinkageConfig | None = None
 
     @model_validator(mode="after")
     def baseline_contract(self) -> "AerodynamicForcesAnalysis":

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pelecpost.config.models import ResolvedProject
 from pelecpost.errors import ProjectConfigurationError
 
-from .registry import INTERNAL_WORKFLOWS, recipe_for
+from .registry import INTERNAL_WORKFLOWS, recipe_for, workflow_for
 
 
 @dataclass(frozen=True)
@@ -66,7 +66,7 @@ def build_workflow_graph(project: ResolvedProject) -> WorkflowGraph:
                 f"Recipe {analysis.recipe!r} conflicts with: {', '.join(sorted(active_conflicts))}"
             )
         dependency_ids: list[str] = []
-        for input_name in definition.required_inputs:
+        for input_name in workflow_for(analysis.recipe).required_inputs_for(analysis):
             node_id = f"input.{input_name}"
             if node_id not in INTERNAL_WORKFLOWS:
                 raise ProjectConfigurationError(

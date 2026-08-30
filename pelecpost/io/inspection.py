@@ -30,6 +30,7 @@ class PlotfileInventory:
     names: tuple[str, ...]
     time_min_s: float | None
     time_max_s: float | None
+    times_s: tuple[float | None, ...]
     dimensionality: int | None
     maximum_amr_level: int | None
     fields: tuple[str, ...]
@@ -126,6 +127,7 @@ def _inspect_plotfiles(project: ResolvedProject) -> PlotfileInventory | None:
     fields: tuple[str, ...] = ()
     dimensions: list[int] = []
     times: list[float] = []
+    times_by_candidate: list[float | None] = []
     levels: list[int] = []
     bounds_items: list[tuple[tuple[float, float], ...]] = []
     errors: list[str] = []
@@ -138,11 +140,13 @@ def _inspect_plotfiles(project: ResolvedProject) -> PlotfileInventory | None:
                 errors.append(f"field list differs in {path.name}")
             dimensions.append(dimension)
             times.append(physical_time)
+            times_by_candidate.append(physical_time)
             levels.append(level)
             if bounds is not None:
                 bounds_items.append(bounds)
         except (OSError, ValueError, IndexError) as exc:
             errors.append(f"{path.name}: {exc}")
+            times_by_candidate.append(None)
     unique_dimensions = set(dimensions)
     if len(unique_dimensions) > 1:
         errors.append("plotfiles report inconsistent dimensionality")
@@ -160,6 +164,7 @@ def _inspect_plotfiles(project: ResolvedProject) -> PlotfileInventory | None:
         names=tuple(path.name for path in candidates),
         time_min_s=min(times) if times else None,
         time_max_s=max(times) if times else None,
+        times_s=tuple(times_by_candidate),
         dimensionality=dimensions[0] if dimensions else None,
         maximum_amr_level=max(levels) if levels else None,
         fields=fields,

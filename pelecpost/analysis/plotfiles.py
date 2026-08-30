@@ -5,13 +5,21 @@ from __future__ import annotations
 import json
 import csv
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
 import pp_functions_database as fields_api
 import pp_plotting_database as plotting_api
-from pelecpost.config.models import ExplicitFreestream
+from pelecpost.config.models import (
+    AerodynamicForcesAnalysis,
+    BoundaryLayerAnalysis,
+    ExplicitFreestream,
+    FlatPlateGeometry,
+    FlowOverviewAnalysis,
+    SurfaceDiagnosticsAnalysis,
+)
 from pelecpost.errors import UnsupportedCapabilityError
 from pelecpost.geometry import (
     SurfaceCurve2D,
@@ -24,6 +32,7 @@ from pelecpost.runtime.context import WorkflowContext
 
 from .executors import executor
 from .fields import add_normalized_fields, resolve_freestream_reference
+from .spectral import load_compact_variable
 from .surface_forces import fit_wall_quantities, integrate_surface_loads
 
 
@@ -135,7 +144,7 @@ def _sample_wall(dataset: dict, surface, maximum_distance_m: float, points: int)
 
 @executor("flow_overview")
 def run_flow_overview(context: WorkflowContext) -> None:
-    analysis = context.analysis
+    analysis = cast(FlowOverviewAnalysis, context.analysis)
     output_fields = {item.value for item in analysis.fields}
     requested = set(output_fields)
     if analysis.streamlines:
@@ -184,17 +193,19 @@ def run_flow_overview(context: WorkflowContext) -> None:
 
 @executor("boundary_layer_reference")
 def run_boundary_layer_reference(context: WorkflowContext) -> None:
-    analysis = context.analysis
+    analysis = cast(BoundaryLayerAnalysis, context.analysis)
+    geometry = cast(FlatPlateGeometry, context.project.case_file.geometry)
     for plotfile in _paths(context):
         profiles = fields_api.extract_native_flat_plate_boundary_layers(
             plotfile, analysis.stations_x_m, maximum_height_m=analysis.maximum_height_m,
-            wall_y_m=context.project.case_file.geometry.wall_y_m,
+            wall_y_m=geometry.wall_y_m,
             wall_temperature_k=analysis.wall_temperature_k,
             viscosity_pa_s=analysis.dynamic_viscosity_pa_s,
             conductivity_w_m_k=analysis.conductivity_w_m_k,
         )
         label = Path(plotfile).name
         arrays: dict[str, np.ndarray] = {"station_count": np.array(len(profiles))}
+        thickness_rows: list[dict] = []
         for index, profile in enumerate(profiles):
             for key, value in profile.items():
                 candidate = np.asarray(value)
@@ -209,6 +220,17 @@ def run_boundary_layer_reference(context: WorkflowContext) -> None:
                 candidate = np.asarray(value)
                 if candidate.dtype != object:
                     arrays[f"station_{index:03d}_gpi_{key}"] = candidate
+            thickness_rows.append({
+                "x_station_m": profile["x_station_m"],
+                "delta_99_m": profile["delta_99_m"],
+                "delta_star_m": profile["delta_star_m"],
+                "theta_m": profile["theta_m"],
+                "shape_factor": profile["H"],
+                "re_theta": profile["Re_theta"],
+                "wall_shear_pa": profile["tau_wall_pa"],
+                "skin_friction_coefficient": profile["C_f"],
+                "wall_heat_flux_w_m2": profile["q_wall_w_m2"],
+            })
             freestream = context.project.case_file.freestream
             if isinstance(freestream, ExplicitFreestream):
                 similarity = fields_api.compute_compressible_flat_plate_reference_profile(
@@ -232,11 +254,26 @@ def run_boundary_layer_reference(context: WorkflowContext) -> None:
             interpretation="Native-AMR flat-plate profiles and integral thicknesses under laminar ZPG assumptions.",
             provenance={"plotfile": plotfile, "assumptions": ["laminar", "zero pressure gradient"]},
         )
+        thickness_path = context.data_dir / f"{label}_boundary_layer_thickness.csv"
+        with thickness_path.open("w", newline="", encoding="utf-8") as stream:
+            writer = csv.DictWriter(stream, fieldnames=tuple(thickness_rows[0]))
+            writer.writeheader()
+            writer.writerows(thickness_rows)
+        context.register(
+            artifact_id=f"boundary_layer.thickness.{label}", path=thickness_path,
+            kind="table", variable="boundary_layer", units="SI in unit-bearing columns",
+            coordinate_metadata={"x_station": "m"},
+            interpretation=(
+                "Compressible integral thickness, wall transport, and Reynolds-number summary "
+                "for each configured flat-plate station."
+            ),
+            provenance={"plotfile": plotfile},
+        )
 
 
 @executor("surface_diagnostics")
 def run_surface_diagnostics(context: WorkflowContext) -> None:
-    analysis = context.analysis
+    analysis = cast(SurfaceDiagnosticsAnalysis, context.analysis)
     geometry = context.project.case_file.geometry
     requested = {"pressure", "temperature", "x_velocity", "y_velocity"}
     if geometry.type == "volume_fraction":
@@ -296,7 +333,7 @@ def run_surface_diagnostics(context: WorkflowContext) -> None:
             )
 @executor("aerodynamic_forces")
 def run_aerodynamic_forces(context: WorkflowContext) -> None:
-    analysis = context.analysis
+    analysis = cast(AerodynamicForcesAnalysis, context.analysis)
     geometry = context.project.case_file.geometry
     freestream = context.project.case_file.freestream
     if not isinstance(freestream, ExplicitFreestream):
@@ -310,6 +347,7 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
     }
     baseline_paths: list[str] = []
     if analysis.baseline != "none":
+        assert analysis.baseline_id is not None
         baseline_config = context.project.machine_file.inputs.baselines[analysis.baseline_id]
         baseline_source = (
             baseline_config.source if baseline_config.source.is_absolute()
@@ -332,6 +370,7 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
         return matches[0]
     history: list[dict] = []
     sensitivity: list[dict] = []
+    control_volume_rows: list[dict] = []
     for plotfile in _paths(context):
         label = Path(plotfile).name
         baseline_plotfile = baseline_for(plotfile)
@@ -385,14 +424,58 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
             designation = "stationary_one_sided_flat_plate"
             if baseline_plotfile is not None:
                 designation += "_increment"
-            sensitivity.append({
+            sensitivity_item = {
                 "plotfile": label, "pressure_fit_orders": [2, 1],
                 "force_delta_n_m": [
                     alternate["D_total_N_m"] - force[0],
                     alternate["N_total_N_m"] - force[1],
                 ],
                 "moment_delta_n": alternate["M_total_N"] - moment,
-            })
+            }
+            if analysis.control_volume is not None:
+                control = analysis.control_volume
+                control_dataset = _load(
+                    context, plotfile,
+                    {"density", "pressure", "x_velocity", "y_velocity"},
+                )
+                control_result = fields_api.compute_flat_plate_control_volume_force(
+                    control_dataset, control.x_range_m, control.y_top_m,
+                    analysis.dynamic_viscosity_pa_s,
+                    bulk_viscosity_pa_s=control.bulk_viscosity_pa_s,
+                )
+                if baseline_plotfile is not None:
+                    baseline_control_dataset = _load(
+                        context, baseline_plotfile,
+                        {"density", "pressure", "x_velocity", "y_velocity"},
+                    )
+                    baseline_control = fields_api.compute_flat_plate_control_volume_force(
+                        baseline_control_dataset, control.x_range_m, control.y_top_m,
+                        analysis.dynamic_viscosity_pa_s,
+                        bulk_viscosity_pa_s=control.bulk_viscosity_pa_s,
+                    )
+                    for key in (
+                        "D_control_volume_N_m", "N_control_volume_N_m",
+                        "momentum_flux_x_N_m", "momentum_flux_y_N_m",
+                        "other_boundary_stress_x_N_m", "other_boundary_stress_y_N_m",
+                    ):
+                        control_result[key] -= baseline_control[key]
+                    control_result["baseline_plotfile"] = baseline_plotfile
+                control_result.update({"plotfile": label, "time_s": float(time_s)})
+                control_volume_rows.append(control_result)
+                for key, value in control_result.items():
+                    candidate = np.asarray(value)
+                    if candidate.dtype.kind in "biufc":
+                        arrays[f"control_volume_{key}"] = candidate
+                sensitivity_item.update({
+                    "surface_minus_control_volume_force_n_m": [
+                        force[0] - control_result["D_control_volume_N_m"],
+                        force[1] - control_result["N_control_volume_N_m"],
+                    ],
+                    "control_volume_assumption": control_result["assumption"],
+                })
+                # Re-save after adding the optional control-volume arrays.
+                np.savez_compressed(path, **arrays)
+            sensitivity.append(sensitivity_item)
             interpretation = (
                 "Reviewed stationary one-sided flat-plate pressure, viscous force, and moment."
             )
@@ -573,7 +656,7 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
             }
             if unsmoothed_force is not None and unsmoothed_moment is not None:
                 sensitivity_item.update({
-                    "geometry_smoothing_window": geometry.smoothing_window,
+                    "geometry_smoothing_window": getattr(geometry, "smoothing_window"),
                     "unsmoothed_force_delta_n_m": (unsmoothed_force - force).tolist(),
                     "unsmoothed_moment_delta_n": unsmoothed_moment - moment,
                 })
@@ -608,6 +691,23 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
             "sensitivity for each snapshot."
         ),
     )
+    if control_volume_rows:
+        control_path = context.data_dir / "control_volume_balance.json"
+        control_path.write_text(json.dumps({
+            "schema_version": 1,
+            "balances": control_volume_rows,
+            "interpretation": (
+                "Steady rectangular momentum balances are independent flat-plate force diagnostics; "
+                "unsteady momentum storage is omitted."
+            ),
+        }, indent=2) + "\n", encoding="utf-8")
+        context.register(
+            artifact_id="forces.control_volume", path=control_path, kind="json",
+            variable="surface_load", units="N/m", coordinate_metadata={"x": "m", "y": "m"},
+            interpretation=(
+                "Steady rectangular control-volume force balance and discrepancy from wall integration."
+            ),
+        )
     history_path = context.data_dir / "force_history.csv"
     with history_path.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=tuple(history[0]))
@@ -618,3 +718,51 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
         units="time_s, N/m, N", coordinate_metadata={"time": "s"},
         interpretation="Chronological integrated force and moment history.",
     )
+    if analysis.probe_linkage is not None:
+        linkage = analysis.probe_linkage
+        ordered_history = sorted(history, key=lambda item: float(item["time_s"]))
+        force_time = np.asarray([item["time_s"] for item in ordered_history], dtype=float)
+        force_key = {
+            "x": "force_x_n_m", "y": "force_y_n_m", "moment": "moment_n",
+        }[linkage.force_component]
+        force_signal = np.asarray([item[force_key] for item in ordered_history], dtype=float)
+        variable, probe_unit, probe_time, probe_x, probe_values, selected = load_compact_variable(
+            context, linkage.variable.value, linkage.probe_indices,
+        )
+        linkage_result = fields_api.compute_probe_force_linkage(
+            force_time, force_signal, probe_time, probe_values, probe_x,
+            linkage.forcing_frequency_hz,
+            minimum_forcing_periods=linkage.minimum_forcing_periods,
+            nperseg=linkage.welch_segment_samples,
+            noverlap=linkage.overlap_fraction,
+            minimum_segments=linkage.minimum_segments,
+        )
+        linkage_arrays = {
+            "probe_indices": selected,
+            "force_component": np.array(linkage.force_component),
+            "probe_variable": np.array(variable),
+            "probe_unit": np.array(probe_unit),
+        }
+        for key, value in linkage_result.items():
+            if value is None:
+                continue
+            candidate = np.asarray(value)
+            if candidate.dtype != object:
+                linkage_arrays[key] = candidate
+        linkage_path = context.data_dir / "force_probe_linkage.npz"
+        np.savez_compressed(linkage_path, **linkage_arrays)
+        context.register(
+            artifact_id="forces.probe_linkage", path=linkage_path, kind="array",
+            variable=f"{linkage.force_component}_force_vs_{variable}", units="mixed; see arrays",
+            coordinate_metadata={"time": "s", "frequency": "Hz", "probe_x": "m"},
+            interpretation=(
+                "Synchronized lag, coherence, phase, and H1 linkage between measured probes and "
+                "integrated force; association does not establish causality."
+            ),
+            provenance={
+                "force_component": linkage.force_component,
+                "forcing_frequency_hz": linkage.forcing_frequency_hz,
+                "spectral_status": linkage_result["spectral_status"],
+                "anti_alias_filter": linkage_result["anti_alias_filter"],
+            },
+        )

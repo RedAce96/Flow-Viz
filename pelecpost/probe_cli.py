@@ -12,6 +12,7 @@ import stat
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import h5py
 
@@ -143,7 +144,7 @@ def _detect_windows(collection, stage, args):
     dt_value = float(np.median(np.diff(time)))
     min_active = max(args.min_active_fraction * duration, 8.0 * dt_value)
     min_quiet = max(args.min_quiet_fraction * duration, 32.0 * dt_value)
-    results = [None] * n_probes
+    results: list[dict[str, Any]] = [{} for _ in range(n_probes)]
     dataset = stage["detection_field"]
     for first in range(0, n_probes, args.detection_batch_size):
         last = min(first + args.detection_batch_size, n_probes)

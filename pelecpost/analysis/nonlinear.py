@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from typing import cast
 
 import numpy as np
 from scipy.signal import find_peaks, welch
 
 import pp_functions_database as reviewed_nonlinear
+from pelecpost.config.models import NonlinearCouplingAnalysis
 from pelecpost.runtime.context import WorkflowContext
 
 from .executors import executor
@@ -35,7 +37,7 @@ def _automatic_targets(signal: np.ndarray, fs: float, segment: int, maximum: flo
 
 @executor("nonlinear_coupling")
 def run_nonlinear_coupling(context: WorkflowContext) -> None:
-    analysis = context.analysis
+    analysis = cast(NonlinearCouplingAnalysis, context.analysis)
     variable, unit, time, _x_m, values, _ = load_compact_signal(context)
     signal = np.median(values, axis=1)
     fs = 1.0 / float(np.median(np.diff(time)))

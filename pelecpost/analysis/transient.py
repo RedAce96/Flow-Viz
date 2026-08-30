@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+from typing import cast
 
 import numpy as np
 from scipy.signal import hilbert, stft
 from scipy.stats import linregress
 
 import pp_functions_database as reviewed_transient
+from pelecpost.config.models import TransientWavepacketAnalysis
 from pelecpost.runtime.context import WorkflowContext
 
 from .executors import executor
@@ -17,7 +19,7 @@ from .spectral import load_compact_signal
 
 @executor("transient_wavepacket")
 def run_transient_wavepacket(context: WorkflowContext) -> None:
-    analysis = context.analysis
+    analysis = cast(TransientWavepacketAnalysis, context.analysis)
     variable, unit, time, x_m, values, selected = load_compact_signal(context)
     if analysis.baseline_end_time_s is not None:
         baseline = reviewed_transient.subtract_quiescent_probe_baseline(

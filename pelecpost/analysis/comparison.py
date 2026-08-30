@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import csv
 from pathlib import Path
+from typing import Any, cast
 
 import h5py
 import matplotlib
@@ -13,6 +14,7 @@ import numpy as np
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from pelecpost.config.models import CaseComparisonAnalysis
 from pelecpost.runtime.context import WorkflowContext
 
 from .executors import executor
@@ -179,7 +181,7 @@ def _artifact_metrics(first: Path, second: Path) -> list[dict]:
 
 @executor("case_comparison")
 def run_case_comparison(context: WorkflowContext) -> None:
-    analysis = context.analysis
+    analysis = cast(CaseComparisonAnalysis, context.analysis)
     baseline = _run_path(context, analysis.baseline_run)
     comparison = _run_path(context, analysis.comparison_run)
     baseline_artifacts = _artifacts(baseline)
@@ -195,7 +197,7 @@ def run_case_comparison(context: WorkflowContext) -> None:
         second_path = comparison / second["path"]
         for metric in _artifact_metrics(first_path, second_path):
             all_metrics.append({"artifact_id": artifact_id, **metric})
-    payload = {
+    payload: dict[str, Any] = {
         "schema_version": 1, "baseline_run": str(baseline),
         "comparison_run": str(comparison), "metrics": all_metrics,
         "interpretation": "Differences are reported only after strict metadata and shape compatibility checks.",
@@ -204,7 +206,7 @@ def run_case_comparison(context: WorkflowContext) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     context.register(
         artifact_id="comparison.metrics", path=path, kind="json", variable=None,
-        units=None, coordinate_metadata={}, interpretation=payload["interpretation"],
+        units=None, coordinate_metadata={}, interpretation=str(payload["interpretation"]),
         provenance={"baseline_run": str(baseline), "comparison_run": str(comparison)},
     )
     figure_path = context.figure_dir / "comparison_linf.png"

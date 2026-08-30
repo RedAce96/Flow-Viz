@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias, cast
 
 import numpy as np
+
+
+SurfaceSide: TypeAlias = Literal["left", "right", "outside", "inside", "above", "below"]
 
 
 def _validate_intersections(points: np.ndarray, closed: bool) -> None:
@@ -56,7 +59,7 @@ class SurfaceCurve2D:
     side_id: str
     source: str
     confidence: float
-    fluid_side: str
+    fluid_side: SurfaceSide
     diagnostics: dict[str, Any] = field(default_factory=dict)
     unsmoothed_coordinates_m: np.ndarray | None = None
 
@@ -66,7 +69,7 @@ class SurfaceCurve2D:
         points_m: np.ndarray,
         *,
         closed: bool,
-        fluid_side: Literal["left", "right", "outside", "inside", "above", "below"],
+        fluid_side: SurfaceSide,
         component_id: str = "component-0",
         side_id: str = "surface",
         source: str = "polyline",
@@ -215,7 +218,7 @@ def volume_fraction_surfaces(
             "volume-fraction array shape must be (len(x), len(y)) or (len(y), len(x))"
         )
     generator = contour_generator(x=x, y=y, z=values_yx, name="serial", corner_mask=False)
-    lines = generator.lines(float(iso_value))
+    lines = cast(list[np.ndarray], generator.lines(float(iso_value)))
     curves: list[SurfaceCurve2D] = []
     from scipy.interpolate import RegularGridInterpolator
 

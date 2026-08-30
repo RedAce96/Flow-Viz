@@ -1,3 +1,12 @@
 schema_version: 1
 analyses:
-  - {id: forces, recipe: aerodynamic_forces, reference_chord_m: 0.4, reference_span_m: 1.0, dynamic_viscosity_pa_s: 8.65e-6, conductivity_w_m_k: 0.012415}
+  - id: forces
+    recipe: aerodynamic_forces
+    reference_chord_m: 0.4
+    reference_span_m: 1.0
+    dynamic_viscosity_pa_s: 8.65e-6
+    conductivity_w_m_k: 0.012415
+    # Optional independent steady momentum-balance diagnostic:
+    # control_volume: {x_range_m: [0.0, 0.4], y_top_m: 0.03}
+    # Optional measured force/probe association (also configure inputs.probes):
+    # probe_linkage: {variable: pressure, force_component: y, forcing_frequency_hz: 1.0e6}

@@ -1,4 +1,4 @@
-"""Bounded compact-probe signal workspaces.
+"""Bounded compact-HDF5 and probe-v2 signal workspaces.
 
 The compact HDF5 archive remains the authoritative source.  Selected matrices
 that do not fit the configured resident budget are staged into a temporary
@@ -16,6 +16,7 @@ from typing import Literal
 
 import h5py
 import numpy as np
+from pp_probe_store import ProbeV2Collection
 
 
 DEFAULT_MAX_RESIDENT_BYTES = 256 * 1024**2
@@ -141,6 +142,96 @@ def open_compact_signal_workspace(
                 block = np.asarray(dataset[start:stop, sorted_indices], dtype=np.float64)
                 np.multiply(block, si_factor, out=block)
                 values[start:stop] = block[:, restore]
+            if isinstance(values, np.memmap):
+                values.flush()
+        assert values is not None
+        return CompactSignalWorkspace(
+            time_s=time_s,
+            x_m=x_m,
+            values=values,
+            selected_probe_indices=selected,
+            storage=storage,
+            source_matrix_bytes=source_bytes,
+            resident_bound_bytes=resident_bound,
+            read_block_rows=block_rows,
+            spill_path=spill_path,
+        )
+    except BaseException:
+        if isinstance(values, np.memmap):
+            mmap = getattr(values, "_mmap", None)
+            if mmap is not None:
+                mmap.close()
+        if spill_path is not None:
+            try:
+                spill_path.unlink()
+            except FileNotFoundError:
+                pass
+        raise
+
+
+def open_probe_v2_signal_workspace(
+    paths: tuple[str, ...],
+    field: str,
+    probe_indices: np.ndarray,
+    *,
+    si_factor: float,
+    memory_limit_gb: float,
+    spill_threshold_bytes: int | None = None,
+    read_block_bytes: int = DEFAULT_READ_BLOCK_BYTES,
+    scratch_directory: Path | None = None,
+) -> CompactSignalWorkspace:
+    """Stage selected raw probe-v2 data with the compact-reader memory contract."""
+    selected = np.asarray(probe_indices, dtype=np.int64)
+    if selected.ndim != 1 or selected.size == 0:
+        raise ValueError("at least one probe index is required")
+    if len(np.unique(selected)) != len(selected):
+        raise ValueError("probe indices must be unique")
+    if read_block_bytes <= 0:
+        raise ValueError("read_block_bytes must be positive")
+
+    spill_path: Path | None = None
+    values: np.ndarray | None = None
+    try:
+        with ProbeV2Collection(paths) as collection:
+            if field not in collection.field_names:
+                raise KeyError(f"Unknown probe field {field!r}; have {collection.field_names}")
+            if np.any(selected < 0) or np.any(selected >= collection.n_probes):
+                raise ValueError(f"probe indices must lie in [0, {collection.n_probes})")
+            sample_count = len(collection.time)
+            time_s = np.asarray(collection.time, dtype=np.float64)
+            x_m = np.asarray(collection.header["requested_x"], dtype=np.float64)[selected] * 0.01
+            source_bytes = int(sample_count * selected.size * np.dtype(np.float64).itemsize)
+            resident_bound = (
+                _resident_budget(memory_limit_gb)
+                if spill_threshold_bytes is None
+                else int(spill_threshold_bytes)
+            )
+            if resident_bound <= 0:
+                raise ValueError("spill_threshold_bytes must be positive")
+            storage: Literal["memory", "disk"] = (
+                "memory" if source_bytes <= resident_bound else "disk"
+            )
+            shape = (sample_count, selected.size)
+            if storage == "memory":
+                values = np.empty(shape, dtype=np.float64)
+            else:
+                scratch = Path(scratch_directory) if scratch_directory is not None else None
+                if scratch is not None:
+                    scratch.mkdir(parents=True, exist_ok=True)
+                descriptor, temporary_name = tempfile.mkstemp(
+                    prefix="pelec-post-signal-", suffix=".mmap",
+                    dir=str(scratch) if scratch is not None else None,
+                )
+                os.close(descriptor)
+                spill_path = Path(temporary_name)
+                values = np.memmap(spill_path, mode="w+", dtype=np.float64, shape=shape)
+            bytes_per_row = max(1, selected.size * np.dtype(np.float64).itemsize)
+            block_rows = max(1, read_block_bytes // bytes_per_row)
+            for start in range(0, sample_count, block_rows):
+                stop = min(sample_count, start + block_rows)
+                block = collection.read_field(field, start, stop, probes=selected)
+                np.multiply(block, si_factor, out=block)
+                values[start:stop] = block
             if isinstance(values, np.memmap):
                 values.flush()
         assert values is not None

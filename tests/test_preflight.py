@@ -109,6 +109,69 @@ class PreflightTests(unittest.TestCase):
             self.assertIn("stationary", contract["assumptions"][0].lower())
             self.assertEqual(contract["expected_artifact_ids"], list(RECIPES["probe_spectrum"].outputs))
 
+    def test_force_probe_linkage_adds_probe_input_and_artifact_contract(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = self.project(root, [{
+                "id": "loads", "recipe": "aerodynamic_forces",
+                "reference_chord_m": 0.1,
+                "dynamic_viscosity_pa_s": 1.0e-5,
+                "conductivity_w_m_k": 0.02,
+                "probe_linkage": {
+                    "variable": "pressure", "force_component": "x",
+                    "forcing_frequency_hz": 25_000,
+                },
+            }])
+            plot = root / "plotfiles" / "plt00010"
+            plot.mkdir(parents=True)
+            header = [
+                "HyperCLaw-V1.1", "5", "density", "x_velocity", "y_velocity",
+                "pressure", "temperature", "2", "1.0e-6", "0", "0.0 -3.0",
+                "10.0 3.0",
+            ]
+            (plot / "Header").write_text("\n".join(header) + "\n", encoding="utf-8")
+            machine_path = root / "machine.yaml"
+            machine = yaml.safe_load(machine_path.read_text())
+            machine["inputs"]["plotfiles"] = {
+                "source": str(root / "plotfiles"), "prefix": "plt",
+            }
+            machine_path.write_text(yaml.safe_dump(machine), encoding="utf-8")
+            project = load_project(root)
+            graph = build_workflow_graph(project)
+            self.assertEqual(
+                set(graph.node("analysis.loads").dependencies),
+                {"input.plotfiles", "input.probes", "geometry.surface"},
+            )
+            plan = create_plan(project)
+            self.assertIn(
+                "forces.probe_linkage",
+                plan.analysis_contracts["loads"]["expected_artifact_ids"],
+            )
+
+    def test_control_volume_is_rejected_for_non_flat_plate_geometry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.project(root, [{
+                "id": "loads", "recipe": "aerodynamic_forces",
+                "reference_chord_m": 0.1,
+                "dynamic_viscosity_pa_s": 1.0e-5,
+                "conductivity_w_m_k": 0.02,
+                "control_volume": {"x_range_m": [0.0, 0.1], "y_top_m": 0.02},
+            }])
+            case_path = root / "case.yaml"
+            case = yaml.safe_load(case_path.read_text())
+            case["geometry"] = {
+                "type": "wedge", "leading_edge_x_m": 0.0,
+                "leading_edge_y_m": 0.0, "length_m": 0.1,
+                "half_angle_deg": 10.0, "fluid_side": "outside",
+            }
+            case_path.write_text(yaml.safe_dump(case), encoding="utf-8")
+            plan = create_plan(load_project(root))
+            self.assertIn(
+                "CONTROL_VOLUME_FLAT_PLATE_ONLY",
+                {item.code for item in plan.blockers},
+            )
+
     def test_above_nyquist_is_a_blocker(self):
         with tempfile.TemporaryDirectory() as temporary:
             project = self.project(
@@ -143,6 +206,34 @@ class PreflightTests(unittest.TestCase):
             plan = create_plan(project)
             finding = next(item for item in plan.blockers if item.code == "UNSUPPORTED_DIMENSION")
             self.assertIn("3-D extension interfaces", finding.message)
+
+    def test_plotfile_dimension_must_match_case_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.project(root, [{
+                "id": "overview", "recipe": "flow_overview",
+                "fields": ["temperature"],
+            }])
+            plot = root / "plotfiles" / "plt00010"
+            plot.mkdir(parents=True)
+            header = [
+                "HyperCLaw-V1.1", "5", "density", "x_velocity", "y_velocity",
+                "pressure", "temperature", "3", "1.0e-6", "0",
+                "0.0 -3.0 -2.0", "10.0 3.0 2.0",
+            ]
+            (plot / "Header").write_text("\n".join(header) + "\n", encoding="utf-8")
+            machine_path = root / "machine.yaml"
+            machine = yaml.safe_load(machine_path.read_text())
+            machine["inputs"]["plotfiles"] = {
+                "source": str(root / "plotfiles"), "prefix": "plt",
+            }
+            machine_path.write_text(yaml.safe_dump(machine), encoding="utf-8")
+            plan = create_plan(load_project(root))
+            finding = next(
+                item for item in plan.blockers
+                if item.code == "PLOTFILE_DIMENSION_MISMATCH"
+            )
+            self.assertIn("case.yaml declares 2-D", finding.message)
 
     def test_directional_wave_reports_spatial_aliasing(self):
         with tempfile.TemporaryDirectory() as temporary:

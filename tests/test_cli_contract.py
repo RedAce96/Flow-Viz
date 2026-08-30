@@ -79,6 +79,15 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("clean-break interface", result.stdout)
 
+    def test_old_flags_are_rejected_with_clean_break_migration_message(self):
+        for option in ("--config", "--output-dir", "--validation-case"):
+            with self.subTest(option=option):
+                result = command(option, "retired-value")
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("retired JSON/flag", result.stdout)
+                self.assertIn("interface", result.stdout)
+                self.assertIn("pelec-post run PROJECT_DIR", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

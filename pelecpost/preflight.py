@@ -198,9 +198,9 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
             "physical_question": workflow.metadata.question,
             "assumptions": list(workflow.metadata.assumptions),
             "limitations": list(workflow.metadata.limitations),
-            "required_inputs": list(workflow.metadata.required_inputs),
+            "required_inputs": list(workflow.required_inputs_for(analysis)),
             "required_fields": list(workflow.metadata.required_fields),
-            "expected_artifact_ids": list(workflow.artifact_declarations),
+            "expected_artifact_ids": list(workflow.artifact_declarations_for(analysis)),
         }
         for validation in workflow.validate(project, analysis, inventory):
             findings.append(Finding(
@@ -213,6 +213,26 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                 findings.append(Finding(
                     Severity.BLOCKER, "MISSING_PROBE_FIELD",
                     f"Probe variable {value!r} is absent; available: {inventory.probes.fields}.",
+                    analysis.id,
+                ))
+        linkage = getattr(analysis, "probe_linkage", None)
+        if linkage is not None and inventory.probes is not None:
+            value = linkage.variable.value
+            if not _has_probe_field(value, inventory.probes.fields):
+                findings.append(Finding(
+                    Severity.BLOCKER, "MISSING_LINKAGE_PROBE_FIELD",
+                    f"Force–probe linkage variable {value!r} is absent from the archive.",
+                    analysis.id,
+                ))
+            selected_indices = linkage.probe_indices
+            if selected_indices and (
+                len(set(selected_indices)) != len(selected_indices)
+                or min(selected_indices) < 0
+                or max(selected_indices) >= inventory.probes.probe_count
+            ):
+                findings.append(Finding(
+                    Severity.BLOCKER, "INVALID_LINKAGE_PROBES",
+                    "Force–probe linkage probe_indices must be unique archive indices.",
                     analysis.id,
                 ))
 
@@ -291,6 +311,75 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                         f"Paired baseline is missing {len(missing_pairs)} current plotfile name(s): "
                         f"{', '.join(missing_pairs[:5])}.", analysis.id,
                     ))
+        if analysis.recipe == "aerodynamic_forces":
+            control_volume = analysis.control_volume
+            if control_volume is not None:
+                if geometry != "flat_plate":
+                    findings.append(Finding(
+                        Severity.BLOCKER, "CONTROL_VOLUME_FLAT_PLATE_ONLY",
+                        "The reviewed steady rectangular control-volume balance is limited to flat plates.",
+                        analysis.id,
+                    ))
+                if inventory.plotfiles is not None and "density" not in inventory.plotfiles.canonical_fields:
+                    findings.append(Finding(
+                        Severity.BLOCKER, "CONTROL_VOLUME_DENSITY_REQUIRED",
+                        "Control-volume momentum balance requires density.", analysis.id,
+                    ))
+            if linkage is not None:
+                selected_names = _selected_plotfile_names(
+                    analysis, inventory.plotfiles.names if inventory.plotfiles else ()
+                )
+                if len(selected_names) < 4:
+                    findings.append(Finding(
+                        Severity.BLOCKER, "INSUFFICIENT_FORCE_HISTORY",
+                        "Force–probe linkage requires at least four selected force snapshots.",
+                        analysis.id,
+                    ))
+                if inventory.plotfiles and inventory.probes:
+                    time_by_name = dict(zip(
+                        inventory.plotfiles.names, inventory.plotfiles.times_s
+                    ))
+                    selected_times = [
+                        float(time_value) for name in selected_names
+                        if (time_value := time_by_name.get(name)) is not None
+                    ]
+                    if len(selected_times) != len(selected_names):
+                        findings.append(Finding(
+                            Severity.BLOCKER, "MISSING_FORCE_TIMES",
+                            "Every force snapshot needs a readable physical time for probe linkage.",
+                            analysis.id,
+                        ))
+                    elif any(
+                        right <= left
+                        for left, right in zip(selected_times, selected_times[1:])
+                    ):
+                        findings.append(Finding(
+                            Severity.BLOCKER, "NONMONOTONIC_FORCE_TIMES",
+                            "Selected force snapshot times must be strictly increasing for synchronization.",
+                            analysis.id,
+                        ))
+                    start = max(
+                        inventory.plotfiles.time_min_s or 0.0,
+                        inventory.probes.time_min_s or 0.0,
+                    )
+                    stop = min(
+                        inventory.plotfiles.time_max_s or 0.0,
+                        inventory.probes.time_max_s or 0.0,
+                    )
+                    periods = max(0.0, stop - start) * linkage.forcing_frequency_hz
+                    sampling.setdefault("force_probe_linkage", {})[analysis.id] = {
+                        "common_time_start_s": start,
+                        "common_time_stop_s": stop,
+                        "estimated_forcing_periods": periods,
+                        "minimum_forcing_periods": linkage.minimum_forcing_periods,
+                    }
+                    if periods < linkage.minimum_forcing_periods:
+                        findings.append(Finding(
+                            Severity.WARNING, "SHORT_FORCE_PROBE_RECORD",
+                            f"Only {periods:.3g} forcing periods are estimated in the common record; "
+                            "lag products remain available but spectral linkage will be unavailable.",
+                            analysis.id,
+                        ))
 
         if analysis.recipe in {"surface_diagnostics", "aerodynamic_forces"}:
             normal_distance = float(getattr(analysis, "normal_sample_distance_m"))
@@ -414,7 +503,7 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
         components = workflow.estimate_resources(analysis, inventory)
         estimate_items.append(AnalysisEstimate(
             analysis.id, analysis.recipe, sum(components.values()), components,
-            workflow.artifact_declarations,
+            workflow.artifact_declarations_for(analysis),
         ))
     estimates = tuple(estimate_items)
     limit = float(project.machine_file.compute.memory_limit_gb)
@@ -445,12 +534,12 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
         "plotfiles": {
             analysis.id: _selected_plotfile_names(analysis, plotfile_names)
             for analysis in project.enabled_analyses
-            if "plotfiles" in recipe_for(analysis.recipe).required_inputs
+            if "plotfiles" in workflow_for(analysis.recipe).required_inputs_for(analysis)
         },
         "probes": {
             analysis.id: list(getattr(analysis, "probe_indices", ())) or "all"
             for analysis in project.enabled_analyses
-            if "probes" in recipe_for(analysis.recipe).required_inputs
+            if "probes" in workflow_for(analysis.recipe).required_inputs_for(analysis)
         },
         "expected_output_root": str(output),
     }

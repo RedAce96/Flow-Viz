@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import cast
 
 import numpy as np
-from scipy.signal import welch
+from scipy.signal import coherence, csd, welch
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/pelecpost-matplotlib")
 os.environ.setdefault("XDG_CACHE_HOME", "/tmp/pelecpost-cache")
@@ -26,7 +26,10 @@ from pelecpost.config.models import (
     SinglePulseAnalysis,
 )
 from pelecpost.errors import UnsupportedCapabilityError
-from pelecpost.io.signals import open_compact_signal_workspace
+from pelecpost.io.signals import (
+    open_compact_signal_workspace,
+    open_probe_v2_signal_workspace,
+)
 from pelecpost.runtime.context import WorkflowContext
 
 from .executors import executor
@@ -60,23 +63,32 @@ def load_compact_signal(
 ) -> tuple[str, str, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Read one configured probe variable and convert it to SI."""
     analysis = context.analysis
-    probe_input = context.project.machine_file.inputs.probes
-    if probe_input is None or probe_input.compact_file is None:
-        raise UnsupportedCapabilityError(
-            f"The migrated {analysis.recipe} executor currently requires a compact HDF5 probe archive"
-        )
-    source = probe_input.compact_file
-    if not source.is_absolute():
-        source = (context.project.root / source).resolve()
-    inventory = context.plan.inventory.probes
-    assert inventory is not None
     configured_variable = getattr(analysis, "variable", None)
     if configured_variable is None:
         raise TypeError(f"Recipe {analysis.recipe!r} has no probe variable")
-    variable = configured_variable.value
+    return load_compact_variable(
+        context, configured_variable.value, getattr(analysis, "probe_indices", ())
+    )
+
+
+def load_compact_variable(
+    context: WorkflowContext,
+    variable: str,
+    probe_indices: tuple[int, ...] = (),
+) -> tuple[str, str, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Read an explicitly selected compact-probe variable through the SI boundary."""
+    analysis = context.analysis
+    probe_input = context.project.machine_file.inputs.probes
+    if probe_input is None:
+        raise UnsupportedCapabilityError(
+            f"The {analysis.recipe} executor requires a configured probe source"
+        )
+    inventory = context.plan.inventory.probes
+    assert inventory is not None
     storage_field = _field(variable, inventory.fields)
-    configured = getattr(analysis, "probe_indices", ())
-    selected = np.asarray(configured if configured else range(inventory.probe_count), dtype=int)
+    selected = np.asarray(
+        probe_indices if probe_indices else range(inventory.probe_count), dtype=int
+    )
     if selected.size == 0 or np.any(selected < 0) or np.any(selected >= inventory.probe_count):
         raise ValueError("probe_indices contain no valid probes")
     factor, unit = SI[variable]
@@ -85,11 +97,32 @@ def load_compact_signal(
     scratch = context.project.machine_file.compute.scratch_directory
     if scratch is not None and not scratch.is_absolute():
         scratch = (context.project.root / scratch).resolve()
-    workspace = open_compact_signal_workspace(
-        source, storage_field, selected, si_factor=factor,
-        memory_limit_gb=float(context.project.machine_file.compute.memory_limit_gb),
-        scratch_directory=scratch,
-    )
+    memory_limit = float(context.project.machine_file.compute.memory_limit_gb)
+    if probe_input.compact_file is not None:
+        source = probe_input.compact_file
+        if not source.is_absolute():
+            source = (context.project.root / source).resolve()
+        workspace = open_compact_signal_workspace(
+            source, storage_field, selected, si_factor=factor,
+            memory_limit_gb=memory_limit, scratch_directory=scratch,
+        )
+    else:
+        patterns = []
+        for pattern in probe_input.binary_files:
+            configured = Path(pattern)
+            if any(character in pattern for character in "*?["):
+                parent = configured.parent
+                if not parent.is_absolute():
+                    parent = (context.project.root / parent).resolve()
+                patterns.append(str(parent / configured.name))
+            else:
+                if not configured.is_absolute():
+                    configured = (context.project.root / configured).resolve()
+                patterns.append(str(configured))
+        workspace = open_probe_v2_signal_workspace(
+            tuple(patterns), storage_field, selected, si_factor=factor,
+            memory_limit_gb=memory_limit, scratch_directory=scratch,
+        )
     context.add_cleanup(workspace.close)
     assert context.resource_metadata is not None
     context.resource_metadata["compact_signal"] = {
@@ -163,6 +196,56 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
         variable=variable, units=None,
         interpretation="Degrees of freedom are approximate because overlapped windowed segments are correlated.",
     )
+    order = np.argsort(x_m)
+    pair_columns = np.column_stack((order[:-1], order[1:])) if len(order) > 1 else np.empty((0, 2), dtype=int)
+    coherence_values = []
+    phase_values = []
+    coherence_frequency = np.fft.rfftfreq(segment, dt)
+    for first, second in pair_columns:
+        pair_frequency, pair_coherence = coherence(
+            values[:, first], values[:, second], fs=1.0 / dt, window=window,
+            nperseg=segment, noverlap=overlap, detrend=detrend,
+        )
+        _, pair_cross = csd(
+            values[:, first], values[:, second], fs=1.0 / dt, window=window,
+            nperseg=segment, noverlap=overlap, detrend=detrend, scaling="density",
+        )
+        coherence_frequency = pair_frequency
+        coherence_values.append(pair_coherence)
+        phase_values.append(np.angle(pair_cross))
+    coherence_matrix = (
+        np.asarray(coherence_values).T
+        if coherence_values else np.empty((len(coherence_frequency), 0))
+    )
+    phase_matrix = (
+        np.asarray(phase_values).T
+        if phase_values else np.empty((len(coherence_frequency), 0))
+    )
+    coherence_keep = np.ones(len(coherence_frequency), dtype=bool)
+    if analysis.frequency_max_hz is not None:
+        coherence_keep &= coherence_frequency <= analysis.frequency_max_hz
+    coherence_path = context.data_dir / "adjacent_probe_coherence.npz"
+    np.savez_compressed(
+        coherence_path,
+        frequency_hz=coherence_frequency[coherence_keep],
+        coherence_squared=coherence_matrix[coherence_keep],
+        cross_phase_rad=phase_matrix[coherence_keep],
+        upstream_probe_indices=selected[pair_columns[:, 0]] if len(pair_columns) else np.array([], dtype=int),
+        downstream_probe_indices=selected[pair_columns[:, 1]] if len(pair_columns) else np.array([], dtype=int),
+        upstream_x_m=x_m[pair_columns[:, 0]] if len(pair_columns) else np.array([]),
+        downstream_x_m=x_m[pair_columns[:, 1]] if len(pair_columns) else np.array([]),
+        convention=np.array("conj(upstream) * downstream"),
+    )
+    context.register(
+        artifact_id="spectral.coherence", path=coherence_path, kind="array",
+        variable=variable, units="dimensionless", coordinate_metadata={"frequency": "Hz", "probe_x": "m"},
+        interpretation=(
+            "Magnitude-squared coherence and downstream-minus-upstream cross phase for "
+            "adjacent probes ordered by physical x coordinate."
+        ),
+        provenance={"segment_samples": segment, "overlap_samples": overlap,
+                    "pair_count": len(pair_columns)},
+    )
     figure_path = context.figure_dir / "stationary_spectrum.png"
     fig, axis = plt.subplots(figsize=(9, 5))
     positive = frequency > 0
@@ -219,6 +302,26 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
     keep = np.ones_like(frequency, dtype=bool)
     if analysis.frequency_max_hz is not None:
         keep &= frequency <= analysis.frequency_max_hz
+    source_path = context.data_dir / "single_pulse_source_spectrum.npz"
+    np.savez_compressed(
+        source_path, time_s=source["time_s"], source_power_w_m=source["power"],
+        frequency_hz=frequency[keep], physical_complex_j_m=source["physical_complex"][keep],
+        physical_spectrum_j_m=source["physical_spectrum"][keep],
+        ideal_spectrum_j_m=source["ideal_spectrum"][keep],
+        processed_complex_w_m=source["processed_complex"][keep],
+        sigma_s=np.array(source["sigma_s"]), center_s=np.array(source["center_s"]),
+    )
+    context.register(
+        artifact_id="pulse.source_spectrum", path=source_path, kind="array",
+        variable="source_power", units="J/m", coordinate_metadata={"time": "s", "frequency": "Hz"},
+        interpretation=(
+            "Code-matched finite Gaussian pulse history, physical continuous-time spectrum, "
+            "and processed spectrum used for deconvolution."
+        ),
+        provenance={"energy_per_pulse_j_m": analysis.energy_per_pulse_j_m,
+                    "pulse_fwhm_s": analysis.pulse_fwhm_s,
+                    "pulse_period_s": analysis.pulse_period_s},
+    )
     path = context.data_dir / "single_pulse_response.npz"
     np.savez_compressed(
         path, frequency_hz=frequency[keep], source_spectrum_j_m=source["physical_spectrum"][keep],

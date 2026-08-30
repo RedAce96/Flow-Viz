@@ -39,6 +39,7 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(len(ids), len(set(ids)))
             self.assertEqual(len(paths), len(set(paths)))
             self.assertIn("temperature-spectrum.spectral.psd", ids)
+            self.assertIn("temperature-spectrum.spectral.coherence", ids)
             self.assertTrue((first.run_dir / "report/index.html").is_file())
             created = {
                 str(path.relative_to(first.run_dir))
@@ -112,6 +113,7 @@ class RuntimeTests(unittest.TestCase):
             artifacts = json.loads((result.run_dir / "artifacts.json").read_text())
             ids = {item["id"] for item in artifacts["artifacts"]}
             self.assertIn("pulse.pulse.transfer", ids)
+            self.assertIn("pulse.pulse.source_spectrum", ids)
             self.assertIn("pulse.pulse.validity", ids)
 
     def test_directional_executor_registers_wavenumber_and_komega(self):

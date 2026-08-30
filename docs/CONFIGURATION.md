@@ -8,4 +8,14 @@ Unknown keys are errors. A key in the wrong file is an error. Public dimensional
 
 Use the generated JSON Schema for editor completion. Direct YAML editing and wizard output pass through the same strict loader.
 
+`aerodynamic_forces` can optionally add a flat-plate steady rectangular
+`control_volume` diagnostic and a `probe_linkage` section. Probe linkage adds
+the compact-probe archive as an explicit DAG dependency and reports lag,
+coherence, phase, and H1 association without making a causality claim. These
+sections are optional, so their artifacts appear in the plan only when they
+are configured. See the generated schema for all unit-bearing fields.
+
 Large selected probe matrices spill to a bounded temporary memory-mapped workspace. Set `compute.scratch_directory` to node-local storage on an HPC system; relative paths resolve from the project directory. Spill files are removed after each workflow and never become run artifacts.
+
+Repository maintainers regenerate the committed recipe reference and example
+schemas with `python tools/generate_reference_docs.py`.

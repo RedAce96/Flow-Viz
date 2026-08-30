@@ -31,6 +31,17 @@
             "title": "Conductivity W M K",
             "type": "number"
           },
+          "control_volume": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ControlVolumeConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "dynamic_viscosity_pa_s": {
             "exclusiveMinimum": 0.0,
             "title": "Dynamic Viscosity Pa S",
@@ -75,6 +86,17 @@
             "exclusiveMinimum": 0,
             "title": "Normal Sample Points",
             "type": "integer"
+          },
+          "probe_linkage": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ForceProbeLinkageConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "recipe": {
             "const": "aerodynamic_forces",
@@ -230,6 +252,42 @@
           "artifact_ids"
         ],
         "title": "CaseComparisonAnalysis",
+        "type": "object"
+      },
+      "ControlVolumeConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "bulk_viscosity_pa_s": {
+            "default": 0.0,
+            "minimum": 0.0,
+            "title": "Bulk Viscosity Pa S",
+            "type": "number"
+          },
+          "x_range_m": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "X Range M",
+            "type": "array"
+          },
+          "y_top_m": {
+            "exclusiveMinimum": 0.0,
+            "title": "Y Top M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x_range_m",
+          "y_top_m"
+        ],
+        "title": "ControlVolumeConfig",
         "type": "object"
       },
       "DirectionalWaveAnalysis": {
@@ -451,6 +509,68 @@
           "recipe"
         ],
         "title": "FlowOverviewAnalysis",
+        "type": "object"
+      },
+      "ForceProbeLinkageConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "force_component": {
+            "default": "y",
+            "enum": [
+              "x",
+              "y",
+              "moment"
+            ],
+            "title": "Force Component",
+            "type": "string"
+          },
+          "forcing_frequency_hz": {
+            "exclusiveMinimum": 0.0,
+            "title": "Forcing Frequency Hz",
+            "type": "number"
+          },
+          "minimum_forcing_periods": {
+            "default": 10.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Minimum Forcing Periods",
+            "type": "number"
+          },
+          "minimum_segments": {
+            "default": 8,
+            "exclusiveMinimum": 0,
+            "title": "Minimum Segments",
+            "type": "integer"
+          },
+          "overlap_fraction": {
+            "default": 0.5,
+            "exclusiveMaximum": 1.0,
+            "minimum": 0.0,
+            "title": "Overlap Fraction",
+            "type": "number"
+          },
+          "probe_indices": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Probe Indices",
+            "type": "array"
+          },
+          "variable": {
+            "$ref": "#/$defs/Variable",
+            "default": "pressure"
+          },
+          "welch_segment_samples": {
+            "default": 16384,
+            "exclusiveMinimum": 0,
+            "title": "Welch Segment Samples",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "forcing_frequency_hz"
+        ],
+        "title": "ForceProbeLinkageConfig",
         "type": "object"
       },
       "ModalScreeningAnalysis": {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
 from typing import Optional
 
 import typer
@@ -31,6 +32,11 @@ probes_app = typer.Typer(help="Create, verify, and prune compact probe archives.
 app.add_typer(recipes_app, name="recipes")
 app.add_typer(probes_app, name="probes")
 console = Console()
+RETIRED_OPTIONS = frozenset({
+    "--config", "--output-dir", "--snapshot-start", "--snapshot-end",
+    "--validate-config", "--write-effective-config", "--validation-case",
+    "--validation-output",
+})
 
 
 @app.command("init")
@@ -206,6 +212,21 @@ def probes_prune_command(context: typer.Context) -> None:
 
 
 def main() -> None:
+    retired = next(
+        (
+            option for argument in sys.argv[1:] for option in RETIRED_OPTIONS
+            if argument == option or argument.startswith(option + "=")
+        ),
+        None,
+    )
+    if retired is not None:
+        console.print(
+            f"[red]Configuration error:[/] {retired} belongs to the retired JSON/flag "
+            "interface. This clean-break release uses `pelec-post run PROJECT_DIR`; "
+            "create the YAML project with `pelec-post init PROJECT_DIR`.",
+            highlight=False,
+        )
+        raise SystemExit(CONFIGURATION_EXIT_CODE)
     try:
         app()
     except PelecPostError as exc:

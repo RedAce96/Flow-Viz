@@ -102,7 +102,10 @@ RECIPES: dict[str, RecipeDefinition] = {
             inputs=("plotfiles",),
             fields=("pressure", "temperature", "x_velocity", "y_velocity"),
             assumptions=("Newtonian stress and configured transport properties apply.",),
-            outputs=("forces.history", "forces.components", "forces.sensitivity"),
+            outputs=(
+                "forces.history", "forces.components", "forces.sensitivity",
+                "forces.control_volume", "forces.probe_linkage",
+            ),
             limitations=("General EB output is validated_2d_eb_v1, not externally certified.",),
             dependencies=("geometry.surface",),
         ),

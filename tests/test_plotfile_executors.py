@@ -12,6 +12,7 @@ import yaml
 from pelecpost.config.loader import load_project
 from pelecpost.preflight import create_plan
 from pelecpost.runtime import run_project
+from tests.test_preflight import write_compact
 
 
 class PlotfileExecutorTests(unittest.TestCase):
@@ -108,6 +109,167 @@ class PlotfileExecutorTests(unittest.TestCase):
             self.assertIn("wall.surface.curve.plt00010.0", ids)
             self.assertIn("wall.surface.samples.plt00010.0", ids)
             self.assertIn("wall.surface.quality.plt00010.0", ids)
+
+    def test_boundary_layer_registers_explicit_thickness_table(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(Path(temporary), {
+                "id": "layer", "recipe": "boundary_layer_reference",
+                "stations_x_m": [0.05], "maximum_height_m": 0.02,
+                "wall_temperature_k": 300.0,
+                "dynamic_viscosity_pa_s": 1.0e-5,
+                "conductivity_w_m_k": 0.02,
+            })
+            profile = {
+                "x_station_m": 0.05,
+                "wall_distance_m": np.linspace(0.0, 0.02, 16),
+                "u_t_m_s": np.linspace(0.0, 10.0, 16),
+                "temperature_k": np.linspace(300.0, 295.0, 16),
+                "rho_kg_m3": np.ones(16),
+                "delta_99_m": 0.018,
+                "delta_star_m": 0.004,
+                "theta_m": 0.002,
+                "H": 2.0,
+                "Re_theta": 2_000.0,
+                "tau_wall_pa": 0.5,
+                "C_f": 0.01,
+                "q_wall_w_m2": 5.0,
+            }
+            with (
+                patch(
+                    "pp_functions_database.extract_native_flat_plate_boundary_layers",
+                    return_value=[profile],
+                ),
+                patch("pp_functions_database.compute_gpi_criterion", return_value={}),
+                patch(
+                    "pp_functions_database.compute_compressible_flat_plate_reference_profile",
+                    return_value={},
+                ),
+            ):
+                result = run_project(project)
+            self.assertEqual(result.status, "completed")
+            artifacts = json.loads((result.run_dir / "artifacts.json").read_text())
+            self.assertIn(
+                "layer.boundary_layer.thickness.plt00010",
+                {item["id"] for item in artifacts["artifacts"]},
+            )
+            table = (result.run_dir / "data/layer/plt00010_boundary_layer_thickness.csv")
+            self.assertIn("delta_99_m", table.read_text(encoding="utf-8"))
+
+    def test_flat_plate_force_control_volume_is_registered_and_compared(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(Path(temporary), {
+                "id": "loads", "recipe": "aerodynamic_forces",
+                "reference_chord_m": 0.098,
+                "dynamic_viscosity_pa_s": 1.0e-5,
+                "conductivity_w_m_k": 0.02,
+                "control_volume": {
+                    "x_range_m": [0.01, 0.09], "y_top_m": 0.02,
+                },
+            })
+            edges = np.linspace(0.001, 0.099, 17)
+            wall = {
+                "source": "synthetic", "plot_label": "plt00010", "time_s": 1.0e-6,
+                "x_left_m": edges[:-1], "x_right_m": edges[1:],
+                "p_wall_pa": np.full(16, 100.0),
+                "p_wall_linear_pa": np.full(16, 100.0),
+                "tau_wall_pa": np.full(16, 0.5),
+                "valid": np.ones(16, dtype=bool),
+                "wall_y_m": np.zeros(16),
+                "requested_x_range_m": [0.001, 0.099],
+            }
+            with (
+                patch("pp_functions_database.extract_native_flat_plate_wall", return_value=wall),
+                patch("pp_functions_database.load_pelec_plotfile", return_value=self.dataset()),
+            ):
+                result = run_project(project)
+            self.assertEqual(result.status, "completed")
+            artifacts = json.loads((result.run_dir / "artifacts.json").read_text())
+            self.assertIn(
+                "loads.forces.control_volume",
+                {item["id"] for item in artifacts["artifacts"]},
+            )
+            sensitivity = json.loads(
+                (result.run_dir / "data/loads/force_sensitivity.json").read_text()
+            )
+            self.assertIn(
+                "surface_minus_control_volume_force_n_m",
+                sensitivity["fit_sensitivity"][0],
+            )
+
+    def test_flat_plate_force_probe_linkage_is_registered(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.project(root, {
+                "id": "loads", "recipe": "aerodynamic_forces",
+                "reference_chord_m": 0.098,
+                "dynamic_viscosity_pa_s": 1.0e-5,
+                "conductivity_w_m_k": 0.02,
+                "probe_linkage": {
+                    "variable": "pressure", "force_component": "x",
+                    "forcing_frequency_hz": 25_000,
+                    "minimum_forcing_periods": 0.1,
+                    "welch_segment_samples": 8, "minimum_segments": 2,
+                },
+            })
+            original_header = root / "inputs/plt00010/Header"
+            for suffix in (20, 30, 40):
+                candidate = root / "inputs" / f"plt{suffix:05d}"
+                candidate.mkdir()
+                lines = original_header.read_text(encoding="utf-8").splitlines()
+                lines[8] = f"{suffix * 1.0e-7:.9g}"
+                (candidate / "Header").write_text(
+                    "\n".join(lines) + "\n", encoding="utf-8"
+                )
+            compact = root / "probes.h5"
+            write_compact(compact)
+            machine_path = root / "machine.yaml"
+            machine = yaml.safe_load(machine_path.read_text())
+            machine["inputs"]["probes"] = {"compact_file": str(compact)}
+            machine_path.write_text(yaml.safe_dump(machine), encoding="utf-8")
+            edges = np.linspace(0.001, 0.099, 17)
+            call = {"index": 0}
+
+            def wall_history(*_args, **_kwargs):
+                index = call["index"]
+                call["index"] += 1
+                return {
+                    "source": "synthetic", "plot_label": f"plt{10 * (index + 1):05d}",
+                    "time_s": (index + 1) * 1.0e-6,
+                    "x_left_m": edges[:-1], "x_right_m": edges[1:],
+                    "p_wall_pa": np.full(16, 100.0),
+                    "p_wall_linear_pa": np.full(16, 100.0),
+                    "tau_wall_pa": np.full(16, 0.5 + 0.1 * index),
+                    "valid": np.ones(16, dtype=bool), "wall_y_m": np.zeros(16),
+                    "requested_x_range_m": [0.001, 0.099],
+                }
+
+            linkage = {
+                "time_s": np.arange(16) * 1.0e-6,
+                "force": np.sin(np.arange(16)),
+                "probe_matrix": np.zeros((16, 8)),
+                "probe_x_m": np.arange(8) * 0.01,
+                "peak_lag_s": np.zeros(8), "peak_correlation": np.ones(8),
+                "forcing_periods": 0.4, "spectral_status": "insufficient_data",
+                "spectral_reason": "synthetic executor contract",
+                "sample_rate_resampled_hz": 1.0e6,
+                "anti_alias_filter": "synthetic test filter",
+            }
+            with (
+                patch(
+                    "pp_functions_database.extract_native_flat_plate_wall",
+                    side_effect=wall_history,
+                ),
+                patch("pp_functions_database.compute_probe_force_linkage", return_value=linkage),
+            ):
+                result = run_project(load_project(root))
+            self.assertEqual(result.status, "completed")
+            artifacts = json.loads((result.run_dir / "artifacts.json").read_text())
+            self.assertIn(
+                "loads.forces.probe_linkage",
+                {item["id"] for item in artifacts["artifacts"]},
+            )
+            with np.load(result.run_dir / "data/loads/force_probe_linkage.npz") as arrays:
+                self.assertIn("peak_lag_s", arrays.files)
 
     def test_general_wedge_forces_use_validated_designation_and_sensitivity(self):
         with tempfile.TemporaryDirectory() as temporary:

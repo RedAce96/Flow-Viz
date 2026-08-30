@@ -30,6 +30,10 @@ class WorkflowProtocol(Protocol):
     @property
     def artifact_declarations(self) -> tuple[str, ...]: ...
 
+    def artifact_declarations_for(self, analysis: "AnalysisConfig") -> tuple[str, ...]: ...
+
+    def required_inputs_for(self, analysis: "AnalysisConfig") -> tuple[str, ...]: ...
+
     def validate(
         self,
         project: "ResolvedProject",
@@ -65,6 +69,26 @@ class RegisteredWorkflow:
     def artifact_declarations(self) -> tuple[str, ...]:
         return self.metadata.outputs
 
+    def required_inputs_for(self, analysis: "AnalysisConfig") -> tuple[str, ...]:
+        inputs = list(self.metadata.required_inputs)
+        if self.metadata.name == "aerodynamic_forces" and getattr(analysis, "probe_linkage", None):
+            inputs.append("probes")
+        return tuple(dict.fromkeys(inputs))
+
+    def artifact_declarations_for(self, analysis: "AnalysisConfig") -> tuple[str, ...]:
+        outputs = list(self.artifact_declarations)
+        if self.metadata.name == "flow_overview":
+            if not getattr(analysis, "line_stations_x_m", ()):
+                outputs.remove("field.lines")
+            if not getattr(analysis, "streamlines", False):
+                outputs.remove("field.streamlines")
+        if self.metadata.name == "aerodynamic_forces":
+            if getattr(analysis, "control_volume", None) is None:
+                outputs.remove("forces.control_volume")
+            if getattr(analysis, "probe_linkage", None) is None:
+                outputs.remove("forces.probe_linkage")
+        return tuple(outputs)
+
     def validate(
         self,
         project: "ResolvedProject",
@@ -86,12 +110,24 @@ class RegisteredWorkflow:
                 "BLOCKER", "UNSUPPORTED_GEOMETRY",
                 f"{analysis.recipe} does not support geometry {geometry!r}.",
             ))
-        for name in self.metadata.required_inputs:
+        required_inputs = self.required_inputs_for(analysis)
+        for name in required_inputs:
             if not _input_available(name, inventory):
                 findings.append(WorkflowValidation(
                     "BLOCKER", "MISSING_INPUT",
                     f"Recipe {analysis.recipe} requires configured {name} input.",
                 ))
+        if (
+            "plotfiles" in required_inputs
+            and inventory.plotfiles is not None
+            and inventory.plotfiles.dimensionality is not None
+            and inventory.plotfiles.dimensionality != dimensionality
+        ):
+            findings.append(WorkflowValidation(
+                "BLOCKER", "PLOTFILE_DIMENSION_MISMATCH",
+                f"case.yaml declares {dimensionality}-D but inspected plotfiles are "
+                f"{inventory.plotfiles.dimensionality}-D; correct the case identity or input path.",
+            ))
         if self.metadata.required_fields and inventory.plotfiles is not None:
             for field in self.metadata.required_fields:
                 if field not in inventory.plotfiles.canonical_fields:
@@ -107,13 +143,28 @@ class RegisteredWorkflow:
         inventory: "InputInventory",
     ) -> dict[str, float]:
         probes = inventory.probes
-        if self.metadata.name in {
+        probe_recipe = self.metadata.name in {
             "probe_spectrum", "single_pulse_response", "directional_wave",
             "transient_wavepacket", "nonlinear_coupling", "modal_screening",
-        } and probes is not None:
-            selected = getattr(analysis, "probe_indices", ())
+        }
+        force_linkage = (
+            self.metadata.name == "aerodynamic_forces"
+            and getattr(analysis, "probe_linkage", None) is not None
+        )
+        if (probe_recipe or force_linkage) and probes is not None:
+            selection_source = (
+                getattr(analysis, "probe_linkage") if force_linkage else analysis
+            )
+            selected = getattr(selection_source, "probe_indices", ())
             probe_count = len(selected) if selected else probes.probe_count
             matrix = probes.sample_count * probe_count * 8
+            if force_linkage:
+                return {
+                    "field_slab": 1.5,
+                    "plotting_workspace": 0.5,
+                    "probe_signal_or_disk_workspace": matrix / 1024**3,
+                    "force_probe_spectral_workspace": 3.0 * matrix / 1024**3,
+                }
             multiplier = {
                 "probe_spectrum": 3.0,
                 "single_pulse_response": 4.0,

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 
 import pp_modal_database as reviewed_modal
+from pelecpost.config.models import ModalScreeningAnalysis
 from pelecpost.runtime.context import WorkflowContext
 
 from .executors import executor
@@ -12,11 +15,12 @@ from .spectral import load_compact_signal
 
 
 def _register_npz(context: WorkflowContext, name: str, arrays: dict, interpretation: str) -> None:
+    analysis = cast(ModalScreeningAnalysis, context.analysis)
     path = context.data_dir / f"{name}.npz"
     np.savez_compressed(path, **arrays)
     context.register(
         artifact_id=f"modal.{name}", path=path, kind="array",
-        variable=context.analysis.variable.value, units="variable-dependent",
+        variable=analysis.variable.value, units="variable-dependent",
         coordinate_metadata={"probe_x": "m", "frequency": "Hz", "time": "s"},
         interpretation=interpretation,
     )
@@ -24,7 +28,7 @@ def _register_npz(context: WorkflowContext, name: str, arrays: dict, interpretat
 
 @executor("modal_screening")
 def run_modal_screening(context: WorkflowContext) -> None:
-    analysis = context.analysis
+    analysis = cast(ModalScreeningAnalysis, context.analysis)
     variable, _unit, time, x_m, values, _ = load_compact_signal(context)
     stride = int(analysis.probe_stride)
     x_m = x_m[::stride]
