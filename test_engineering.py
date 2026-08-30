@@ -21,7 +21,7 @@ try:
 except ImportError:
     standalone_similarity = None
 
-import pelec_post
+import pelecpost.legacy_driver as pelec_post
 import pp_functions_database as functions
 import pp_config
 import pp_modal_database as modal

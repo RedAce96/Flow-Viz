@@ -165,6 +165,41 @@ def recipes_show_command(recipe: str) -> None:
         console.print(f"[bold]{label}:[/] {', '.join(values) if values else 'none'}")
 
 
+def _run_probe_utility(arguments: list[str]) -> None:
+    from compact_probes import main as compact_main
+
+    status = compact_main(arguments)
+    if status:
+        raise typer.Exit(1)
+
+
+@probes_app.command(
+    "compact",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def probes_compact_command(context: typer.Context) -> None:
+    """Create a compact archive; accepts the standalone compactor options."""
+    _run_probe_utility(["create", *context.args])
+
+
+@probes_app.command(
+    "verify",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def probes_verify_command(context: typer.Context) -> None:
+    """Verify an archive exactly against its acquisition files."""
+    _run_probe_utility(["verify", *context.args])
+
+
+@probes_app.command(
+    "prune",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def probes_prune_command(context: typer.Context) -> None:
+    """Preview or prune sources covered by a verification manifest."""
+    _run_probe_utility(["prune", *context.args])
+
+
 def main() -> None:
     try:
         app()

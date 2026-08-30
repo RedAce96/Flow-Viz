@@ -150,6 +150,8 @@ def run_project(project: ResolvedProject, run_name: str | None = None) -> RunRes
                 record(node_id, "completed", "preflight-validated shared resource")
                 dependencies_ok[node_id] = True
                 continue
+            if node.analysis_id is None:
+                raise RuntimeError(f"public workflow node {node_id} has no analysis owner")
             analysis = analyses[node.analysis_id]
             try:
                 execute(WorkflowContext(project, plan, run_dir, analysis, registry))

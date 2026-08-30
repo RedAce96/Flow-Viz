@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 from difflib import get_close_matches
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import yaml
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from pelecpost.errors import ProjectConfigurationError
 
@@ -16,6 +16,7 @@ from .models import AnalysesFile, CaseFile, MachineFile, ResolvedProject, Strict
 
 
 PROJECT_FILES = ("case.yaml", "analyses.yaml", "machine.yaml")
+ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
 def _known_configuration_keys() -> set[str]:
@@ -74,6 +75,13 @@ def _format_validation(path: Path, exc: ValidationError) -> str:
     return "\n".join(lines)
 
 
+def _validated_file(path: Path, model: type[ModelT]) -> ModelT:
+    try:
+        return model.model_validate(_load_yaml(path))
+    except ValidationError as exc:
+        raise ProjectConfigurationError(_format_validation(path, exc)) from exc
+
+
 def load_project(project_dir: str | Path) -> ResolvedProject:
     root = Path(project_dir).expanduser().resolve()
     if root.suffix.lower() == ".json":
@@ -84,18 +92,14 @@ def load_project(project_dir: str | Path) -> ResolvedProject:
         raise ProjectConfigurationError(
             f"Project directory does not exist: {root}. Run `pelec-post init {root}`."
         )
-    models = []
-    for filename, model in zip(PROJECT_FILES, (CaseFile, AnalysesFile, MachineFile)):
-        path = root / filename
-        try:
-            models.append(model.model_validate(_load_yaml(path)))
-        except ValidationError as exc:
-            raise ProjectConfigurationError(_format_validation(path, exc)) from exc
+    case_file = _validated_file(root / "case.yaml", CaseFile)
+    analyses_file = _validated_file(root / "analyses.yaml", AnalysesFile)
+    machine_file = _validated_file(root / "machine.yaml", MachineFile)
     return ResolvedProject(
         root=root,
-        case_file=models[0],
-        analyses_file=models[1],
-        machine_file=models[2],
+        case_file=case_file,
+        analyses_file=analyses_file,
+        machine_file=machine_file,
     )
 
 
