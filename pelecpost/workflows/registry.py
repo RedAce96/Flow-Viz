@@ -93,7 +93,10 @@ RECIPES: dict[str, RecipeDefinition] = {
             inputs=("plotfiles",),
             fields=("pressure", "temperature", "x_velocity", "y_velocity"),
             assumptions=("A unique fluid-facing surface normal can be established.",),
-            outputs=("surface.curve", "surface.samples", "surface.quality", "surface.figure"),
+            outputs=(
+                "surface.curve", "surface.samples", "surface.quality", "surface.figure",
+                "surface.normal_profile",
+            ),
             limitations=("Resolution and normal-fit quality constrain wall quantities.",),
             dependencies=("geometry.surface",),
         ),

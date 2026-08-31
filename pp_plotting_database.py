@@ -82,7 +82,7 @@ def field_label(field_key):
     return _FIELD_LABELS.get(field_key, field_title(field_key))
 
 
-def format_flow_time(time_seconds, reference_time=None, origin=0.0):
+def format_flow_time(time_seconds, reference_time=None, origin=0.0, precision=4):
     """Format physical flow time, or nondimensional time when a scale is set."""
     if time_seconds is None or not np.isfinite(time_seconds):
         return ""
@@ -91,14 +91,14 @@ def format_flow_time(time_seconds, reference_time=None, origin=0.0):
         reference_time = float(reference_time)
         if reference_time <= 0:
             raise ValueError("reference_time must be positive")
-        return rf"$t^* = {elapsed / reference_time:.4g}$"
+        return rf"$t^* = {elapsed / reference_time:.{precision}g}$"
     if abs(elapsed) >= 1.0:
-        return rf"$t = {elapsed:.4g}$ s"
+        return rf"$t = {elapsed:.{precision}g}$ s"
     if abs(elapsed) >= 1.0e-3:
-        return rf"$t = {elapsed * 1.0e3:.4g}$ ms"
+        return rf"$t = {elapsed * 1.0e3:.{precision}g}$ ms"
     if abs(elapsed) >= 1.0e-6:
-        return rf"$t = {elapsed * 1.0e6:.4g}$ $\mu$s"
-    return rf"$t = {elapsed:.4e}$ s"
+        return rf"$t = {elapsed * 1.0e6:.{precision}g}$ $\mu$s"
+    return rf"$t = {elapsed:.{precision}e}$ s"
 
 
 def streamwise_domain_length(dataset):
@@ -114,7 +114,7 @@ def streamwise_domain_length(dataset):
 
 
 def format_dataset_time(dataset, mode="physical", freestream_velocity=None,
-                        reference_time=None, origin=0.0):
+                        reference_time=None, origin=0.0, precision=4):
     """Format dataset time in physical, reference, or flow-through units."""
     time_seconds = dataset.get("time")
     if mode == "flow_through":
@@ -129,6 +129,7 @@ def format_dataset_time(dataset, mode="physical", freestream_velocity=None,
         time_seconds,
         reference_time=reference_time if mode == "reference" else None,
         origin=origin,
+        precision=precision,
     )
 
 

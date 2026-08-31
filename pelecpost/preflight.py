@@ -536,6 +536,7 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
             normal_distance = float(getattr(analysis, "normal_sample_distance_m"))
             normal_points = int(getattr(analysis, "normal_sample_points"))
             geometry_field = getattr(project.case_file.geometry, "field", None)
+            bounds = inventory.plotfiles.domain_bounds_m if inventory.plotfiles else None
             sampling.setdefault("geometry_requirements", {})[analysis.id] = {
                 "geometry_type": geometry,
                 "normal_sample_distance_m": normal_distance,
@@ -547,6 +548,30 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                     geometry_field if geometry == "volume_fraction" else None
                 ),
             }
+            normal_profiles = getattr(analysis, "normal_profiles", None)
+            if normal_profiles is not None:
+                sampling["geometry_requirements"][analysis.id]["selected_normal_profiles"] = [
+                    station.model_dump(mode="json", exclude_none=True)
+                    for station in normal_profiles.stations
+                ]
+                for station in normal_profiles.stations:
+                    if geometry == "wedge" and station.side_id is None:
+                        findings.append(Finding(
+                            Severity.BLOCKER, "AMBIGUOUS_WEDGE_NORMAL_STATION",
+                            f"Surface-normal station {station.id!r} must select side_id "
+                            "'upper' or 'lower' for wedge geometry.", analysis.id,
+                        ))
+                    if (
+                        station.location.type == "x"
+                        and bounds is not None
+                        and not bounds[0][0] <= station.location.value_m <= bounds[0][1]
+                    ):
+                        findings.append(Finding(
+                            Severity.BLOCKER, "NORMAL_STATION_OUTSIDE_DOMAIN",
+                            f"Surface-normal station {station.id!r} at x="
+                            f"{station.location.value_m:.6g} m lies outside the plotfile domain.",
+                            analysis.id,
+                        ))
             if geometry == "volume_fraction" and inventory.plotfiles is not None:
                 assert geometry_field is not None
                 field = geometry_field
@@ -556,7 +581,6 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                         f"Configured volume-fraction field {field!r} is absent from plotfiles.",
                         analysis.id,
                     ))
-            bounds = inventory.plotfiles.domain_bounds_m if inventory.plotfiles else None
             points = _geometry_points(project)
             if bounds is None:
                 findings.append(Finding(

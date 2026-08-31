@@ -111,6 +111,67 @@ class PlotfileExecutorTests(unittest.TestCase):
             self.assertIn("wall.surface.quality.plt00010.0", ids)
             self.assertIn("wall.surface.figure.plt00010.0", ids)
 
+    def test_surface_diagnostics_extracts_selected_normal_profile(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(Path(temporary), {
+                "id": "wall", "recipe": "surface_diagnostics",
+                "normal_sample_distance_m": 0.01, "normal_sample_points": 8,
+                "normal_profiles": {
+                    "fields": ["pressure", "temperature"],
+                    "spacing": "wall_clustered", "clustering_exponent": 2.0,
+                    "include_wall_extrapolation": True,
+                    "stations": [{
+                        "id": "x-50mm", "location": {"type": "x", "value_m": 0.05},
+                    }],
+                },
+            })
+            with patch("pp_functions_database.load_pelec_plotfile", return_value=self.dataset()):
+                result = run_project(project)
+            self.assertEqual(result.status, "completed")
+            artifacts = json.loads((result.run_dir / "artifacts.json").read_text())
+            ids = {item["id"] for item in artifacts["artifacts"]}
+            self.assertIn("wall.surface.normal_profile.array.plt00010.x-50mm", ids)
+            self.assertIn("wall.surface.normal_profile.table.plt00010.x-50mm", ids)
+            archive = np.load(result.run_dir / "data/wall/plt00010_normal_x-50mm.npz")
+            self.assertEqual(float(archive["normal_distance_m"][0]), 0.0)
+            self.assertTrue(bool(archive["is_wall_extrapolation"][0]))
+            self.assertAlmostEqual(float(archive["pressure"][0]), 100.0, places=8)
+            self.assertTrue(np.all(np.diff(archive["normal_distance_m"]) > 0.0))
+
+    def test_flow_overview_registers_styled_variants_and_line_data(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.project(root, {
+                "id": "overview", "recipe": "flow_overview", "fields": ["pressure"],
+                "line_stations_x_m": [0.05],
+                "contours": {"fields": {"pressure": {
+                    "colormap": "plasma",
+                    "range": {"mode": "fixed", "minimum": 99.0, "maximum": 101.0},
+                }}},
+                "line_profiles": {
+                    "coordinate_range_m": [0.0, 0.01], "sample_points": 11,
+                    "fields": {"pressure": {"color": "tab:blue", "linestyle": "dashed"}},
+                },
+            })
+            analyses_path = root / "analyses.yaml"
+            analyses = yaml.safe_load(analyses_path.read_text())
+            analyses["presentation"] = {"figure": {"formats": ["png", "pdf"]}}
+            analyses_path.write_text(yaml.safe_dump(analyses), encoding="utf-8")
+            project = load_project(root)
+            with patch("pp_functions_database.load_pelec_plotfile", return_value=self.dataset()):
+                result = run_project(project)
+            self.assertEqual(result.status, "completed")
+            artifacts = json.loads((result.run_dir / "artifacts.json").read_text())
+            ids = {item["id"] for item in artifacts["artifacts"]}
+            self.assertIn("overview.field.contours.plt00010.pressure", ids)
+            self.assertIn("overview.field.contours.plt00010.pressure.pdf", ids)
+            self.assertIn("overview.field.lines.data.plt00010.x-0.05.pressure", ids)
+            contour = next(
+                item for item in artifacts["artifacts"]
+                if item["id"] == "overview.field.contours.plt00010.pressure"
+            )
+            self.assertEqual(contour["provenance"]["resolved_color_range"], [99.0, 101.0])
+
     def test_boundary_layer_registers_explicit_thickness_table(self):
         with tempfile.TemporaryDirectory() as temporary:
             project = self.project(Path(temporary), {

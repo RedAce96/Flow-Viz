@@ -89,6 +89,9 @@ class RegisteredWorkflow:
                 outputs.remove("field.lines")
             if not getattr(analysis, "streamlines", False):
                 outputs.remove("field.streamlines")
+        if self.metadata.name == "surface_diagnostics":
+            if getattr(analysis, "normal_profiles", None) is None:
+                outputs.remove("surface.normal_profile")
         if self.metadata.name == "aerodynamic_forces":
             if getattr(analysis, "control_volume", None) is None:
                 outputs.remove("forces.control_volume")
@@ -160,6 +163,25 @@ class RegisteredWorkflow:
                         f"Requested flow field {field!r} requires mapped canonical field(s): "
                         f"{', '.join(sorted(missing))}.",
                     ))
+        if self.metadata.name == "surface_diagnostics" and inventory.plotfiles is not None:
+            normal_profiles = getattr(analysis, "normal_profiles", None)
+            if normal_profiles is not None:
+                available_fields = set(inventory.plotfiles.canonical_fields)
+                derived_requirements = {
+                    "mach_number": {"density", "pressure", "x_velocity", "y_velocity"},
+                    "schlieren": {"density"},
+                    "vorticity": {"x_velocity", "y_velocity"},
+                    "vorticity_magnitude": {"x_velocity", "y_velocity"},
+                }
+                for requested in normal_profiles.fields:
+                    field = requested.value
+                    missing = derived_requirements.get(field, {field}) - available_fields
+                    if missing:
+                        findings.append(WorkflowValidation(
+                            "BLOCKER", "MISSING_NORMAL_PROFILE_FIELD",
+                            f"Requested surface-normal field {field!r} requires mapped "
+                            f"canonical field(s): {', '.join(sorted(missing))}.",
+                        ))
         return tuple(findings)
 
     def estimate_resources(

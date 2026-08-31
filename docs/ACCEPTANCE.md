@@ -8,10 +8,11 @@ worktree remains at `cf286e0` with its pre-existing local files, and
 
 ## Verification performed
 
-- `python -m pytest -q tests`: 119 passed.
+- `python -m pytest -q tests`: 128 passed (one pre-existing Matplotlib layout
+  warning in the unrelated case-comparison figure).
 - `python -m pytest -q test_engineering.py`: 102 passed, 1 skipped because the
   optional standalone `compressible_similarity` module is not branch input.
-- `python -m mypy pelecpost`: no issues in 37 package modules.
+- `python -m mypy pelecpost`: no issues in 38 package modules.
 - `python -m compileall -q pelecpost tools benchmarks`: passed.
 - `git diff --check`: passed.
 - Nonlegacy Pyflakes inspection: no findings. The preserved legacy driver remains
@@ -38,6 +39,10 @@ worktree remains at `cf286e0` with its pre-existing local files, and
 - Existing 2-D numerical contracts pass the engineering suite. Freestream
   references are explicit or region-derived with provenance; stationary,
   single-pulse, transient, nonlinear, modal, and force estimators remain distinct.
+- Flow-overview contours and profiles have strict YAML presentation contracts,
+  external collision-tested time/colorbar layouts, stable multi-format figures,
+  and registered CSV line data. Surface diagnostics add selected x/arc-length
+  normal profiles without changing full-surface wall fitting or force integration.
 - General 2-D EB geometry and loads carry the `validated_2d_eb_v1` designation;
   reviewed flat-plate products retain their certified designation. Manufactured
   pressure, shear, heat-flux, wedge, orientation, and resolution cases pass.

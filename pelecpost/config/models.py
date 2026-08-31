@@ -6,7 +6,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, PositiveInt, model_validator
+from pydantic import (
+    BaseModel, ConfigDict, Field, PositiveFloat, PositiveInt,
+    field_validator, model_validator,
+)
 
 
 class StrictModel(BaseModel):
@@ -28,6 +31,214 @@ class Variable(StrEnum):
     VORTICITY_MAGNITUDE = "vorticity_magnitude"
     MACH_NUMBER = "mach_number"
     SCHLIEREN = "schlieren"
+
+
+FigureFormat = Literal["png", "pdf", "svg"]
+AxisScale = Literal["linear", "log", "symlog"]
+
+
+class FigurePresentation(StrictModel):
+    formats: tuple[FigureFormat, ...] = ("png",)
+    dpi: PositiveInt = 300
+    width_in: PositiveFloat = 14.0
+    height_in: PositiveFloat = 4.5
+    transparent: bool = False
+
+    @model_validator(mode="after")
+    def unique_formats(self) -> "FigurePresentation":
+        if not self.formats:
+            raise ValueError("figure formats cannot be empty")
+        if len(self.formats) != len(set(self.formats)):
+            raise ValueError("figure formats must be unique")
+        return self
+
+
+class TypographyPresentation(StrictModel):
+    font_family: str = "DejaVu Sans"
+    base_size: PositiveFloat = 14.0
+    axes_label_size: PositiveFloat = 16.0
+    tick_label_size: PositiveFloat = 14.0
+    legend_size: PositiveFloat = 13.0
+
+
+class TimeAnnotationPresentation(StrictModel):
+    enabled: bool = True
+    position: Literal[
+        "top_left", "top_center", "top_right",
+        "bottom_left", "bottom_center", "bottom_right",
+    ] = "top_left"
+    boxed: bool = True
+    precision: int = Field(default=4, ge=1, le=12)
+
+
+class ContourRange(StrictModel):
+    mode: Literal[
+        "fixed", "per_snapshot_percentile", "selected_snapshots_minmax",
+        "selected_snapshots_percentile",
+    ] = "per_snapshot_percentile"
+    minimum: float | None = None
+    maximum: float | None = None
+    lower_percentile: float = Field(default=1.0, ge=0.0, le=100.0)
+    upper_percentile: float = Field(default=99.0, ge=0.0, le=100.0)
+
+    @model_validator(mode="after")
+    def valid_range(self) -> "ContourRange":
+        if self.lower_percentile >= self.upper_percentile:
+            raise ValueError("lower_percentile must be below upper_percentile")
+        if self.mode == "fixed":
+            if self.minimum is None or self.maximum is None:
+                raise ValueError("fixed contour ranges require minimum and maximum")
+            if self.maximum <= self.minimum:
+                raise ValueError("fixed contour maximum must exceed minimum")
+        elif self.minimum is not None or self.maximum is not None:
+            raise ValueError("minimum and maximum are only valid for fixed contour ranges")
+        return self
+
+
+class ColorbarPresentation(StrictModel):
+    position: Literal["top", "bottom", "left", "right"] = "top"
+    tick_format: str = "auto"
+    label: str = "auto"
+
+
+class ColorbarOverride(StrictModel):
+    position: Literal["top", "bottom", "left", "right"] | None = None
+    tick_format: str | None = None
+    label: str | None = None
+
+
+class ContourRendering(StrictModel):
+    mode: Literal["continuous", "discrete"] = "continuous"
+    levels: PositiveInt | tuple[float, ...] | None = None
+
+    @model_validator(mode="after")
+    def valid_levels(self) -> "ContourRendering":
+        if self.mode == "discrete" and self.levels is None:
+            raise ValueError("discrete contours require levels")
+        if isinstance(self.levels, tuple):
+            if len(self.levels) < 2 or any(
+                second <= first for first, second in zip(self.levels, self.levels[1:])
+            ):
+                raise ValueError("explicit contour levels must be strictly increasing")
+        return self
+
+
+class ContourRenderingOverride(StrictModel):
+    mode: Literal["continuous", "discrete"] | None = None
+    levels: PositiveInt | tuple[float, ...] | None = None
+
+
+class ContourStyle(StrictModel):
+    colormap: str = "viridis"
+    normalization: AxisScale = "linear"
+    range: ContourRange = ContourRange()
+    colorbar: ColorbarPresentation = ColorbarPresentation()
+    rendering: ContourRendering = ContourRendering()
+    symmetric_about_zero: bool = False
+    symlog_linear_threshold: PositiveFloat | None = None
+
+    @field_validator("colormap")
+    @classmethod
+    def known_colormap(cls, value: str) -> str:
+        from matplotlib import colormaps
+        custom = {"my_reds", "my_blues", "my_reds_r", "my_blues_r", "Blue2Red"}
+        if value not in custom and value not in colormaps:
+            raise ValueError(f"unknown Matplotlib colormap {value!r}")
+        return value
+
+    @model_validator(mode="after")
+    def compatible_normalization(self) -> "ContourStyle":
+        if self.symlog_linear_threshold is not None and self.normalization != "symlog":
+            raise ValueError("symlog_linear_threshold requires symlog normalization")
+        if self.symmetric_about_zero and self.normalization == "log":
+            raise ValueError("log contours cannot be symmetric about zero")
+        return self
+
+
+class ContourStyleOverride(StrictModel):
+    colormap: str | None = None
+    normalization: AxisScale | None = None
+    range: ContourRange | None = None
+    colorbar: ColorbarOverride | None = None
+    rendering: ContourRenderingOverride | None = None
+    symmetric_about_zero: bool | None = None
+    symlog_linear_threshold: PositiveFloat | None = None
+
+    @field_validator("colormap")
+    @classmethod
+    def known_colormap(cls, value: str | None) -> str | None:
+        if value is not None:
+            ContourStyle.known_colormap(value)
+        return value
+
+
+class LineStyle(StrictModel):
+    linewidth: PositiveFloat = 2.0
+    linestyle: Literal["solid", "dashed", "dashdot", "dotted"] = "solid"
+    marker: Literal["none", "circle", "square", "triangle", "diamond"] = "none"
+    color: str | None = None
+    grid: bool = True
+    legend_position: Literal[
+        "best", "upper_left", "upper_right", "lower_left", "lower_right",
+    ] = "best"
+    coordinate_scale: AxisScale = "linear"
+    value_scale: AxisScale = "linear"
+
+
+class LineStyleOverride(StrictModel):
+    linewidth: PositiveFloat | None = None
+    linestyle: Literal["solid", "dashed", "dashdot", "dotted"] | None = None
+    marker: Literal["none", "circle", "square", "triangle", "diamond"] | None = None
+    color: str | None = None
+    grid: bool | None = None
+    legend_position: Literal[
+        "best", "upper_left", "upper_right", "lower_left", "lower_right",
+    ] | None = None
+    coordinate_scale: AxisScale | None = None
+    value_scale: AxisScale | None = None
+
+
+class PresentationConfig(StrictModel):
+    preset: Literal["publication"] = "publication"
+    figure: FigurePresentation = FigurePresentation()
+    typography: TypographyPresentation = TypographyPresentation()
+    time_annotation: TimeAnnotationPresentation = TimeAnnotationPresentation()
+    contour_defaults: ContourStyle = ContourStyle()
+    line_defaults: LineStyle = LineStyle()
+
+
+class FigurePresentationOverride(StrictModel):
+    formats: tuple[FigureFormat, ...] | None = None
+    dpi: PositiveInt | None = None
+    width_in: PositiveFloat | None = None
+    height_in: PositiveFloat | None = None
+    transparent: bool | None = None
+
+
+class TypographyPresentationOverride(StrictModel):
+    font_family: str | None = None
+    base_size: PositiveFloat | None = None
+    axes_label_size: PositiveFloat | None = None
+    tick_label_size: PositiveFloat | None = None
+    legend_size: PositiveFloat | None = None
+
+
+class TimeAnnotationOverride(StrictModel):
+    enabled: bool | None = None
+    position: Literal[
+        "top_left", "top_center", "top_right",
+        "bottom_left", "bottom_center", "bottom_right",
+    ] | None = None
+    boxed: bool | None = None
+    precision: int | None = Field(default=None, ge=1, le=12)
+
+
+class PresentationOverride(StrictModel):
+    figure: FigurePresentationOverride | None = None
+    typography: TypographyPresentationOverride | None = None
+    time_annotation: TimeAnnotationOverride | None = None
+    contour_defaults: ContourStyleOverride | None = None
+    line_defaults: LineStyleOverride | None = None
 
 
 class CaseIdentity(StrictModel):
@@ -151,6 +362,7 @@ class CaseFile(StrictModel):
 class BaseAnalysis(StrictModel):
     id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
     enabled: bool = True
+    presentation: PresentationOverride | None = None
 
 
 class ProbeAnalysis(BaseAnalysis):
@@ -165,6 +377,109 @@ class ProbeAnalysis(BaseAnalysis):
         return self
 
 
+class ContourConfig(StrictModel):
+    fields: dict[Variable, ContourStyleOverride] = Field(default_factory=dict)
+
+
+class LineProfileConfig(StrictModel):
+    coordinate_range_m: tuple[float, float] | None = None
+    interpolation: Literal["linear", "nearest"] = "linear"
+    sample_points: PositiveInt | None = None
+    layout: Literal["separate_fields", "combined"] = "separate_fields"
+    normalize_values: bool = False
+    coordinate_limits: tuple[float, float] | None = None
+    value_limits: tuple[float, float] | None = None
+    coordinate_scale: AxisScale | None = None
+    value_scale: AxisScale | None = None
+    grid: bool | None = None
+    legend_position: Literal[
+        "best", "upper_left", "upper_right", "lower_left", "lower_right",
+    ] | None = None
+    fields: dict[Variable, LineStyleOverride] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def increasing_limits(self) -> "LineProfileConfig":
+        for name in ("coordinate_range_m", "coordinate_limits", "value_limits"):
+            limits = getattr(self, name)
+            if limits is not None and limits[1] <= limits[0]:
+                raise ValueError(f"{name} must be strictly increasing")
+        return self
+
+
+class SurfaceXLocation(StrictModel):
+    type: Literal["x"] = "x"
+    value_m: float
+
+
+class SurfaceArcLocation(StrictModel):
+    type: Literal["arc_length"] = "arc_length"
+    value_m: float = Field(ge=0.0)
+
+
+SurfaceProfileLocation = Annotated[
+    SurfaceXLocation | SurfaceArcLocation, Field(discriminator="type"),
+]
+
+
+class SurfaceNormalStation(StrictModel):
+    id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+    location: SurfaceProfileLocation
+    component_id: str | int | None = None
+    side_id: str | None = None
+    distance_m: PositiveFloat | None = None
+    sample_points: PositiveInt | None = None
+
+
+class SurfaceProfileFigure(StrictModel):
+    layout: Literal["separate_fields", "combined"] = "separate_fields"
+    normalize_values: bool = False
+    coordinate_scale: AxisScale = "linear"
+    value_scale: AxisScale = "linear"
+    grid: bool = True
+
+
+class SurfaceNormalProfiles(StrictModel):
+    fields: tuple[Variable, ...] = Field(min_length=1)
+    interpolation: Literal["linear", "nearest"] = "linear"
+    spacing: Literal["uniform", "wall_clustered"] = "uniform"
+    clustering_exponent: PositiveFloat = 2.0
+    include_wall_extrapolation: bool = True
+    stations: tuple[SurfaceNormalStation, ...] = Field(min_length=1)
+    figure: SurfaceProfileFigure = SurfaceProfileFigure()
+
+    @model_validator(mode="after")
+    def valid_profiles(self) -> "SurfaceNormalProfiles":
+        if len(self.fields) != len(set(self.fields)):
+            raise ValueError("surface-normal fields must be unique")
+        ids = [station.id for station in self.stations]
+        if len(ids) != len(set(ids)):
+            raise ValueError("surface-normal station ids must be unique")
+        if self.spacing == "wall_clustered" and self.clustering_exponent <= 1.0:
+            raise ValueError("wall_clustered spacing requires clustering_exponent > 1")
+        if self.figure.layout == "combined" and not self.figure.normalize_values:
+            units = {
+                Variable.DENSITY: "density", Variable.PRESSURE: "pressure",
+                Variable.TEMPERATURE: "temperature",
+                Variable.X_VELOCITY: "velocity", Variable.Y_VELOCITY: "velocity",
+                Variable.MACH_NUMBER: "dimensionless",
+                Variable.VORTICITY: "frequency", Variable.VORTICITY_MAGNITUDE: "frequency",
+                Variable.SCHLIEREN: "schlieren",
+            }
+            if len({units[field] for field in self.fields}) > 1:
+                raise ValueError(
+                    "combined surface-normal profiles require compatible units or "
+                    "normalize_values: true"
+                )
+        return self
+
+
+class SurfaceGeometryFigure(StrictModel):
+    maximum_normal_arrows: PositiveInt = 40
+    normal_arrow_length: Literal["sample_distance"] | PositiveFloat = "sample_distance"
+    normal_color: str = "tab:orange"
+    surface_color: str = "black"
+
+
 class FlowOverviewAnalysis(BaseAnalysis):
     recipe: Literal["flow_overview"]
     fields: tuple[Variable, ...] = Field(
@@ -176,7 +491,27 @@ class FlowOverviewAnalysis(BaseAnalysis):
     x_limits_m: tuple[float, float] | None = None
     y_limits_m: tuple[float, float] | None = None
     line_stations_x_m: tuple[float, ...] = ()
+    contours: ContourConfig = ContourConfig()
+    line_profiles: LineProfileConfig = LineProfileConfig()
     streamlines: bool = False
+
+    @model_validator(mode="after")
+    def compatible_line_layout(self) -> "FlowOverviewAnalysis":
+        if self.line_profiles.layout == "combined" and not self.line_profiles.normalize_values:
+            units = {
+                Variable.DENSITY: "density", Variable.PRESSURE: "pressure",
+                Variable.TEMPERATURE: "temperature",
+                Variable.X_VELOCITY: "velocity", Variable.Y_VELOCITY: "velocity",
+                Variable.MACH_NUMBER: "dimensionless",
+                Variable.VORTICITY: "frequency", Variable.VORTICITY_MAGNITUDE: "frequency",
+                Variable.SCHLIEREN: "schlieren",
+            }
+            if len({units[field] for field in self.fields}) > 1:
+                raise ValueError(
+                    "combined line profiles require fields with compatible units or "
+                    "normalize_values: true"
+                )
+        return self
 
 
 class BoundaryLayerAnalysis(BaseAnalysis):
@@ -196,6 +531,8 @@ class SurfaceDiagnosticsAnalysis(BaseAnalysis):
     snapshot_end: int | None = None
     normal_sample_distance_m: PositiveFloat = 0.001
     normal_sample_points: PositiveInt = 8
+    normal_profiles: SurfaceNormalProfiles | None = None
+    geometry_figure: SurfaceGeometryFigure = SurfaceGeometryFigure()
 
 
 class ControlVolumeConfig(StrictModel):
@@ -380,6 +717,7 @@ AnalysisConfig = Annotated[
 
 class AnalysesFile(StrictModel):
     schema_version: Literal[1] = 1
+    presentation: PresentationConfig = PresentationConfig()
     analyses: tuple[AnalysisConfig, ...] = ()
 
     @model_validator(mode="after")

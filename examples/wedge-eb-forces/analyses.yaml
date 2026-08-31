@@ -1,4 +1,21 @@
 schema_version: 1
 analyses:
-  - {id: surface, recipe: surface_diagnostics, normal_sample_distance_m: 0.002, normal_sample_points: 8}
+  - id: surface
+    recipe: surface_diagnostics
+    normal_sample_distance_m: 0.002
+    normal_sample_points: 8
+    normal_profiles:
+      fields: [pressure, temperature, x_velocity]
+      spacing: wall_clustered
+      clustering_exponent: 2.0
+      stations:
+        - id: upper-midpoint
+          component_id: wedge
+          side_id: upper
+          location: {type: arc_length, value_m: 0.1}
+    geometry_figure:
+      maximum_normal_arrows: 30
+      normal_arrow_length: sample_distance
+      normal_color: tab:orange
+      surface_color: black
   - {id: forces, recipe: aerodynamic_forces, reference_chord_m: 0.2, reference_span_m: 1.0, dynamic_viscosity_pa_s: 8.65e-6, conductivity_w_m_k: 0.012415, normal_sample_distance_m: 0.002, normal_sample_points: 8}

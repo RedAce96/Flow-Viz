@@ -121,6 +121,7 @@ after each workflow and are not run artifacts.
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
 | `schema_version` | no | `1` | `1` | — |
+| `presentation` | no | `PresentationConfig` | `{"contour_defaults": {"colorbar": {"label": "auto", "position": "top", "tick_format": "auto"}, "colormap": "viridis", "normalization": "linear", "range": {"lower_percentile": 1.0, "maximum": null, "minimum": null, "mode": "per_snapshot_percentile", "upper_percentile": 99.0}, "rendering": {"levels": null, "mode": "continuous"}, "symlog_linear_threshold": null, "symmetric_about_zero": false}, "figure": {"dpi": 300, "formats": ["png"], "height_in": 4.5, "transparent": false, "width_in": 14.0}, "line_defaults": {"color": null, "coordinate_scale": "linear", "grid": true, "legend_position": "best", "linestyle": "solid", "linewidth": 2.0, "marker": "none", "value_scale": "linear"}, "preset": "publication", "time_annotation": {"boxed": true, "enabled": true, "position": "top_left", "precision": 4}, "typography": {"axes_label_size": 16.0, "base_size": 14.0, "font_family": "DejaVu Sans", "legend_size": 13.0, "tick_label_size": 14.0}}` | — |
 | `analyses` | no | `array[FlowOverviewAnalysis \| BoundaryLayerAnalysis \| SurfaceDiagnosticsAnalysis \| AerodynamicForcesAnalysis \| ProbeSpectrumAnalysis \| SinglePulseAnalysis \| DirectionalWaveAnalysis \| TransientWavepacketAnalysis \| NonlinearCouplingAnalysis \| ModalScreeningAnalysis \| CaseComparisonAnalysis]` | `[]` | — |
 
 ### `AerodynamicForcesAnalysis`
@@ -129,6 +130,7 @@ after each workflow and are not run artifacts.
 | --- | --- | --- | --- | --- |
 | `id` | yes | `string` | — | pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `enabled` | no | `boolean` | `true` | — |
+| `presentation` | no | `PresentationOverride \| null` | `null` | — |
 | `recipe` | yes | `'aerodynamic_forces'` | — | — |
 | `reference_chord_m` | yes | `number` | — | greater than: `0.0` |
 | `reference_span_m` | no | `number` | `1.0` | greater than: `0.0` |
@@ -149,6 +151,7 @@ after each workflow and are not run artifacts.
 | --- | --- | --- | --- | --- |
 | `id` | yes | `string` | — | pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `enabled` | no | `boolean` | `true` | — |
+| `presentation` | no | `PresentationOverride \| null` | `null` | — |
 | `recipe` | yes | `'boundary_layer_reference'` | — | — |
 | `stations_x_m` | yes | `array[number]` | — | — |
 | `maximum_height_m` | yes | `number` | — | greater than: `0.0` |
@@ -164,10 +167,81 @@ after each workflow and are not run artifacts.
 | --- | --- | --- | --- | --- |
 | `id` | yes | `string` | — | pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `enabled` | no | `boolean` | `true` | — |
+| `presentation` | no | `PresentationOverride \| null` | `null` | — |
 | `recipe` | yes | `'case_comparison'` | — | — |
 | `baseline_id` | yes | `string` | — | — |
 | `comparison_id` | yes | `string` | — | — |
 | `artifact_ids` | yes | `array[string]` | — | minimum items: `1` |
+
+### `ColorbarOverride`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `position` | no | `'top' \| 'bottom' \| 'left' \| 'right' \| null` | `null` | — |
+| `tick_format` | no | `string \| null` | `null` | — |
+| `label` | no | `string \| null` | `null` | — |
+
+### `ColorbarPresentation`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `position` | no | `'top' \| 'bottom' \| 'left' \| 'right'` | `"top"` | — |
+| `tick_format` | no | `string` | `"auto"` | — |
+| `label` | no | `string` | `"auto"` | — |
+
+### `ContourConfig`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `fields` | no | `mapping[string, ContourStyleOverride]` | — | — |
+
+### `ContourRange`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `mode` | no | `'fixed' \| 'per_snapshot_percentile' \| 'selected_snapshots_minmax' \| 'selected_snapshots_percentile'` | `"per_snapshot_percentile"` | — |
+| `minimum` | no | `number \| null` | `null` | — |
+| `maximum` | no | `number \| null` | `null` | — |
+| `lower_percentile` | no | `number` | `1.0` | minimum: `0.0`; maximum: `100.0` |
+| `upper_percentile` | no | `number` | `99.0` | minimum: `0.0`; maximum: `100.0` |
+
+### `ContourRendering`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `mode` | no | `'continuous' \| 'discrete'` | `"continuous"` | — |
+| `levels` | no | `integer \| array[number] \| null` | `null` | — |
+
+### `ContourRenderingOverride`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `mode` | no | `'continuous' \| 'discrete' \| null` | `null` | — |
+| `levels` | no | `integer \| array[number] \| null` | `null` | — |
+
+### `ContourStyle`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `colormap` | no | `string` | `"viridis"` | — |
+| `normalization` | no | `'linear' \| 'log' \| 'symlog'` | `"linear"` | — |
+| `range` | no | `ContourRange` | `{"lower_percentile": 1.0, "maximum": null, "minimum": null, "mode": "per_snapshot_percentile", "upper_percentile": 99.0}` | — |
+| `colorbar` | no | `ColorbarPresentation` | `{"label": "auto", "position": "top", "tick_format": "auto"}` | — |
+| `rendering` | no | `ContourRendering` | `{"levels": null, "mode": "continuous"}` | — |
+| `symmetric_about_zero` | no | `boolean` | `false` | — |
+| `symlog_linear_threshold` | no | `number \| null` | `null` | — |
+
+### `ContourStyleOverride`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `colormap` | no | `string \| null` | `null` | — |
+| `normalization` | no | `'linear' \| 'log' \| 'symlog' \| null` | `null` | — |
+| `range` | no | `ContourRange \| null` | `null` | — |
+| `colorbar` | no | `ColorbarOverride \| null` | `null` | — |
+| `rendering` | no | `ContourRenderingOverride \| null` | `null` | — |
+| `symmetric_about_zero` | no | `boolean \| null` | `null` | — |
+| `symlog_linear_threshold` | no | `number \| null` | `null` | — |
 
 ### `ControlVolumeConfig`
 
@@ -183,6 +257,7 @@ after each workflow and are not run artifacts.
 | --- | --- | --- | --- | --- |
 | `id` | yes | `string` | — | pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `enabled` | no | `boolean` | `true` | — |
+| `presentation` | no | `PresentationOverride \| null` | `null` | — |
 | `probe_indices` | no | `array[integer]` | `[]` | — |
 | `recipe` | yes | `'directional_wave'` | — | — |
 | `variable` | yes | `Variable` | — | — |
@@ -194,12 +269,33 @@ after each workflow and are not run artifacts.
 | `spatial_window` | no | `'hann' \| 'hamming' \| 'blackman' \| 'rectangular'` | `"hann"` | — |
 | `temporal_window` | no | `'hann' \| 'hamming' \| 'blackman' \| 'rectangular'` | `"rectangular"` | — |
 
+### `FigurePresentation`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `formats` | no | `array['png' \| 'pdf' \| 'svg']` | `["png"]` | — |
+| `dpi` | no | `integer` | `300` | greater than: `0` |
+| `width_in` | no | `number` | `14.0` | greater than: `0.0` |
+| `height_in` | no | `number` | `4.5` | greater than: `0.0` |
+| `transparent` | no | `boolean` | `false` | — |
+
+### `FigurePresentationOverride`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `formats` | no | `array['png' \| 'pdf' \| 'svg'] \| null` | `null` | — |
+| `dpi` | no | `integer \| null` | `null` | — |
+| `width_in` | no | `number \| null` | `null` | — |
+| `height_in` | no | `number \| null` | `null` | — |
+| `transparent` | no | `boolean \| null` | `null` | — |
+
 ### `FlowOverviewAnalysis`
 
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
 | `id` | yes | `string` | — | pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `enabled` | no | `boolean` | `true` | — |
+| `presentation` | no | `PresentationOverride \| null` | `null` | — |
 | `recipe` | yes | `'flow_overview'` | — | — |
 | `fields` | no | `array[Variable]` | `["temperature", "pressure"]` | minimum items: `1` |
 | `snapshot_start` | no | `integer \| null` | `null` | — |
@@ -208,6 +304,8 @@ after each workflow and are not run artifacts.
 | `x_limits_m` | no | `tuple[number, number] \| null` | `null` | — |
 | `y_limits_m` | no | `tuple[number, number] \| null` | `null` | — |
 | `line_stations_x_m` | no | `array[number]` | `[]` | — |
+| `contours` | no | `ContourConfig` | `{"fields": {}}` | — |
+| `line_profiles` | no | `LineProfileConfig` | `{"coordinate_limits": null, "coordinate_range_m": null, "coordinate_scale": null, "fields": {}, "grid": null, "interpolation": "linear", "layout": "separate_fields", "legend_position": null, "normalize_values": false, "sample_points": null, "value_limits": null, "value_scale": null}` | — |
 | `streamlines` | no | `boolean` | `false` | — |
 
 ### `ForceProbeLinkageConfig`
@@ -223,12 +321,56 @@ after each workflow and are not run artifacts.
 | `minimum_segments` | no | `integer` | `8` | greater than: `0` |
 | `probe_indices` | no | `array[integer]` | `[]` | — |
 
+### `LineProfileConfig`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `coordinate_range_m` | no | `tuple[number, number] \| null` | `null` | — |
+| `interpolation` | no | `'linear' \| 'nearest'` | `"linear"` | — |
+| `sample_points` | no | `integer \| null` | `null` | — |
+| `layout` | no | `'separate_fields' \| 'combined'` | `"separate_fields"` | — |
+| `normalize_values` | no | `boolean` | `false` | — |
+| `coordinate_limits` | no | `tuple[number, number] \| null` | `null` | — |
+| `value_limits` | no | `tuple[number, number] \| null` | `null` | — |
+| `coordinate_scale` | no | `'linear' \| 'log' \| 'symlog' \| null` | `null` | — |
+| `value_scale` | no | `'linear' \| 'log' \| 'symlog' \| null` | `null` | — |
+| `grid` | no | `boolean \| null` | `null` | — |
+| `legend_position` | no | `'best' \| 'upper_left' \| 'upper_right' \| 'lower_left' \| 'lower_right' \| null` | `null` | — |
+| `fields` | no | `mapping[string, LineStyleOverride]` | — | — |
+
+### `LineStyle`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `linewidth` | no | `number` | `2.0` | greater than: `0.0` |
+| `linestyle` | no | `'solid' \| 'dashed' \| 'dashdot' \| 'dotted'` | `"solid"` | — |
+| `marker` | no | `'none' \| 'circle' \| 'square' \| 'triangle' \| 'diamond'` | `"none"` | — |
+| `color` | no | `string \| null` | `null` | — |
+| `grid` | no | `boolean` | `true` | — |
+| `legend_position` | no | `'best' \| 'upper_left' \| 'upper_right' \| 'lower_left' \| 'lower_right'` | `"best"` | — |
+| `coordinate_scale` | no | `'linear' \| 'log' \| 'symlog'` | `"linear"` | — |
+| `value_scale` | no | `'linear' \| 'log' \| 'symlog'` | `"linear"` | — |
+
+### `LineStyleOverride`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `linewidth` | no | `number \| null` | `null` | — |
+| `linestyle` | no | `'solid' \| 'dashed' \| 'dashdot' \| 'dotted' \| null` | `null` | — |
+| `marker` | no | `'none' \| 'circle' \| 'square' \| 'triangle' \| 'diamond' \| null` | `null` | — |
+| `color` | no | `string \| null` | `null` | — |
+| `grid` | no | `boolean \| null` | `null` | — |
+| `legend_position` | no | `'best' \| 'upper_left' \| 'upper_right' \| 'lower_left' \| 'lower_right' \| null` | `null` | — |
+| `coordinate_scale` | no | `'linear' \| 'log' \| 'symlog' \| null` | `null` | — |
+| `value_scale` | no | `'linear' \| 'log' \| 'symlog' \| null` | `null` | — |
+
 ### `ModalScreeningAnalysis`
 
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
 | `id` | yes | `string` | — | pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `enabled` | no | `boolean` | `true` | — |
+| `presentation` | no | `PresentationOverride \| null` | `null` | — |
 | `probe_indices` | no | `array[integer]` | `[]` | — |
 | `recipe` | yes | `'modal_screening'` | — | — |
 | `variable` | yes | `Variable` | — | — |
@@ -244,6 +386,7 @@ after each workflow and are not run artifacts.
 | --- | --- | --- | --- | --- |
 | `id` | yes | `string` | — | pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `enabled` | no | `boolean` | `true` | — |
+| `presentation` | no | `PresentationOverride \| null` | `null` | — |
 | `probe_indices` | no | `array[integer]` | `[]` | — |
 | `recipe` | yes | `'nonlinear_coupling'` | — | — |
 | `variable` | yes | `Variable` | — | — |
@@ -255,12 +398,34 @@ after each workflow and are not run artifacts.
 | `target_frequencies_hz` | no | `array[number]` | `[]` | — |
 | `automatic_frequency_selection` | no | `boolean` | `false` | — |
 
+### `PresentationConfig`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `preset` | no | `'publication'` | `"publication"` | — |
+| `figure` | no | `FigurePresentation` | `{"dpi": 300, "formats": ["png"], "height_in": 4.5, "transparent": false, "width_in": 14.0}` | — |
+| `typography` | no | `TypographyPresentation` | `{"axes_label_size": 16.0, "base_size": 14.0, "font_family": "DejaVu Sans", "legend_size": 13.0, "tick_label_size": 14.0}` | — |
+| `time_annotation` | no | `TimeAnnotationPresentation` | `{"boxed": true, "enabled": true, "position": "top_left", "precision": 4}` | — |
+| `contour_defaults` | no | `ContourStyle` | `{"colorbar": {"label": "auto", "position": "top", "tick_format": "auto"}, "colormap": "viridis", "normalization": "linear", "range": {"lower_percentile": 1.0, "maximum": null, "minimum": null, "mode": "per_snapshot_percentile", "upper_percentile": 99.0}, "rendering": {"levels": null, "mode": "continuous"}, "symlog_linear_threshold": null, "symmetric_about_zero": false}` | — |
+| `line_defaults` | no | `LineStyle` | `{"color": null, "coordinate_scale": "linear", "grid": true, "legend_position": "best", "linestyle": "solid", "linewidth": 2.0, "marker": "none", "value_scale": "linear"}` | — |
+
+### `PresentationOverride`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `figure` | no | `FigurePresentationOverride \| null` | `null` | — |
+| `typography` | no | `TypographyPresentationOverride \| null` | `null` | — |
+| `time_annotation` | no | `TimeAnnotationOverride \| null` | `null` | — |
+| `contour_defaults` | no | `ContourStyleOverride \| null` | `null` | — |
+| `line_defaults` | no | `LineStyleOverride \| null` | `null` | — |
+
 ### `ProbeSpectrumAnalysis`
 
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
 | `id` | yes | `string` | — | pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `enabled` | no | `boolean` | `true` | — |
+| `presentation` | no | `PresentationOverride \| null` | `null` | — |
 | `probe_indices` | no | `array[integer]` | `[]` | — |
 | `recipe` | yes | `'probe_spectrum'` | — | — |
 | `variable` | yes | `Variable` | — | — |
@@ -276,6 +441,7 @@ after each workflow and are not run artifacts.
 | --- | --- | --- | --- | --- |
 | `id` | yes | `string` | — | pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `enabled` | no | `boolean` | `true` | — |
+| `presentation` | no | `PresentationOverride \| null` | `null` | — |
 | `probe_indices` | no | `array[integer]` | `[]` | — |
 | `recipe` | yes | `'single_pulse_response'` | — | — |
 | `variable` | yes | `Variable` | — | — |
@@ -289,17 +455,94 @@ after each workflow and are not run artifacts.
 | `minimum_relative_source_amplitude` | no | `number` | `0.001` | greater than: `0.0`; less than: `1.0` |
 | `frequency_max_hz` | no | `number \| null` | `null` | — |
 
+### `SurfaceArcLocation`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `type` | no | `'arc_length'` | `"arc_length"` | — |
+| `value_m` | yes | `number` | — | minimum: `0.0` |
+
 ### `SurfaceDiagnosticsAnalysis`
 
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
 | `id` | yes | `string` | — | pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `enabled` | no | `boolean` | `true` | — |
+| `presentation` | no | `PresentationOverride \| null` | `null` | — |
 | `recipe` | yes | `'surface_diagnostics'` | — | — |
 | `snapshot_start` | no | `integer \| null` | `null` | — |
 | `snapshot_end` | no | `integer \| null` | `null` | — |
 | `normal_sample_distance_m` | no | `number` | `0.001` | greater than: `0.0` |
 | `normal_sample_points` | no | `integer` | `8` | greater than: `0` |
+| `normal_profiles` | no | `SurfaceNormalProfiles \| null` | `null` | — |
+| `geometry_figure` | no | `SurfaceGeometryFigure` | `{"maximum_normal_arrows": 40, "normal_arrow_length": "sample_distance", "normal_color": "tab:orange", "surface_color": "black"}` | — |
+
+### `SurfaceGeometryFigure`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `maximum_normal_arrows` | no | `integer` | `40` | greater than: `0` |
+| `normal_arrow_length` | no | `'sample_distance' \| number` | `"sample_distance"` | — |
+| `normal_color` | no | `string` | `"tab:orange"` | — |
+| `surface_color` | no | `string` | `"black"` | — |
+
+### `SurfaceNormalProfiles`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `fields` | yes | `array[Variable]` | — | minimum items: `1` |
+| `interpolation` | no | `'linear' \| 'nearest'` | `"linear"` | — |
+| `spacing` | no | `'uniform' \| 'wall_clustered'` | `"uniform"` | — |
+| `clustering_exponent` | no | `number` | `2.0` | greater than: `0.0` |
+| `include_wall_extrapolation` | no | `boolean` | `true` | — |
+| `stations` | yes | `array[SurfaceNormalStation]` | — | minimum items: `1` |
+| `figure` | no | `SurfaceProfileFigure` | `{"coordinate_scale": "linear", "grid": true, "layout": "separate_fields", "normalize_values": false, "value_scale": "linear"}` | — |
+
+### `SurfaceNormalStation`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `id` | yes | `string` | — | pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
+| `location` | yes | `SurfaceXLocation \| SurfaceArcLocation` | — | discriminator: `type` |
+| `component_id` | no | `string \| integer \| null` | `null` | — |
+| `side_id` | no | `string \| null` | `null` | — |
+| `distance_m` | no | `number \| null` | `null` | — |
+| `sample_points` | no | `integer \| null` | `null` | — |
+
+### `SurfaceProfileFigure`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `layout` | no | `'separate_fields' \| 'combined'` | `"separate_fields"` | — |
+| `normalize_values` | no | `boolean` | `false` | — |
+| `coordinate_scale` | no | `'linear' \| 'log' \| 'symlog'` | `"linear"` | — |
+| `value_scale` | no | `'linear' \| 'log' \| 'symlog'` | `"linear"` | — |
+| `grid` | no | `boolean` | `true` | — |
+
+### `SurfaceXLocation`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `type` | no | `'x'` | `"x"` | — |
+| `value_m` | yes | `number` | — | — |
+
+### `TimeAnnotationOverride`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `enabled` | no | `boolean \| null` | `null` | — |
+| `position` | no | `'top_left' \| 'top_center' \| 'top_right' \| 'bottom_left' \| 'bottom_center' \| 'bottom_right' \| null` | `null` | — |
+| `boxed` | no | `boolean \| null` | `null` | — |
+| `precision` | no | `integer \| null` | `null` | — |
+
+### `TimeAnnotationPresentation`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `enabled` | no | `boolean` | `true` | — |
+| `position` | no | `'top_left' \| 'top_center' \| 'top_right' \| 'bottom_left' \| 'bottom_center' \| 'bottom_right'` | `"top_left"` | — |
+| `boxed` | no | `boolean` | `true` | — |
+| `precision` | no | `integer` | `4` | minimum: `1`; maximum: `12` |
 
 ### `TransientWavepacketAnalysis`
 
@@ -307,6 +550,7 @@ after each workflow and are not run artifacts.
 | --- | --- | --- | --- | --- |
 | `id` | yes | `string` | — | pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `enabled` | no | `boolean` | `true` | — |
+| `presentation` | no | `PresentationOverride \| null` | `null` | — |
 | `probe_indices` | no | `array[integer]` | `[]` | — |
 | `recipe` | yes | `'transient_wavepacket'` | — | — |
 | `variable` | yes | `Variable` | — | — |
@@ -315,6 +559,26 @@ after each workflow and are not run artifacts.
 | `baseline_end_time_s` | no | `number \| null` | `null` | — |
 | `stft_segment_samples` | no | `integer` | `2048` | greater than: `0` |
 | `overlap_fraction` | no | `number` | `0.75` | minimum: `0.0`; less than: `1.0` |
+
+### `TypographyPresentation`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `font_family` | no | `string` | `"DejaVu Sans"` | — |
+| `base_size` | no | `number` | `14.0` | greater than: `0.0` |
+| `axes_label_size` | no | `number` | `16.0` | greater than: `0.0` |
+| `tick_label_size` | no | `number` | `14.0` | greater than: `0.0` |
+| `legend_size` | no | `number` | `13.0` | greater than: `0.0` |
+
+### `TypographyPresentationOverride`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `font_family` | no | `string \| null` | `null` | — |
+| `base_size` | no | `number \| null` | `null` | — |
+| `axes_label_size` | no | `number \| null` | `null` | — |
+| `tick_label_size` | no | `number \| null` | `null` | — |
+| `legend_size` | no | `number \| null` | `null` | — |
 
 ### `Variable`
 

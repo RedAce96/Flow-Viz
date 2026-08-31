@@ -59,7 +59,7 @@ Surface coordinates, normals, wall samples, and fit-quality diagnostics.
 - Required plotfile fields: pressure, temperature, x_velocity, y_velocity
 - Dependencies: geometry.surface
 - Conflicts: none
-- Artifact IDs: surface.curve, surface.samples, surface.quality, surface.figure
+- Artifact IDs: surface.curve, surface.samples, surface.quality, surface.figure, surface.normal_profile
 
 Assumptions:
 

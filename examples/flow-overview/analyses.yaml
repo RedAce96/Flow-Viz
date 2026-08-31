@@ -1,3 +1,56 @@
 schema_version: 1
+
+presentation:
+  preset: publication
+  figure:
+    formats: [png, pdf]
+    dpi: 300
+    width_in: 14.0
+    height_in: 4.5
+  time_annotation:
+    position: top_left
+    boxed: true
+  contour_defaults:
+    colormap: viridis
+    normalization: linear
+    colorbar:
+      position: top
+  line_defaults:
+    linewidth: 2.0
+    grid: true
+
 analyses:
-  - {id: overview, recipe: flow_overview, fields: [pressure, temperature, mach_number], streamlines: true}
+  - id: overview
+    recipe: flow_overview
+    fields: [pressure, temperature, mach_number, vorticity]
+    x_limits_m: [0.0, 0.2]
+    y_limits_m: [0.0, 0.02]
+    line_stations_x_m: [0.05, 0.1, 0.15]
+    streamlines: false
+    contours:
+      fields:
+        temperature:
+          colormap: inferno
+          range:
+            mode: fixed
+            minimum: 100.0
+            maximum: 2000.0
+        pressure:
+          colormap: coolwarm
+          range:
+            mode: selected_snapshots_percentile
+            lower_percentile: 1.0
+            upper_percentile: 99.0
+        vorticity:
+          colormap: RdBu_r
+          normalization: symlog
+          symmetric_about_zero: true
+          symlog_linear_threshold: 1000.0
+    line_profiles:
+      coordinate_range_m: [0.0, 0.02]
+      interpolation: linear
+      sample_points: 250
+      layout: separate_fields
+      fields:
+        temperature: {color: tab:red, linewidth: 2.5}
+        pressure: {color: tab:blue, linestyle: dashed}

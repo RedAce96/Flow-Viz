@@ -13,13 +13,16 @@ from scipy.interpolate import RegularGridInterpolator
 
 import pp_functions_database as fields_api
 import pp_plotting_database as plotting_api
+import pelecpost.visualization as visualization
 from pelecpost.config.models import (
     AerodynamicForcesAnalysis,
     BoundaryLayerAnalysis,
+    ContourStyle,
     ExplicitFreestream,
     FlatPlateGeometry,
     FlowOverviewAnalysis,
     SurfaceDiagnosticsAnalysis,
+    Variable,
 )
 from pelecpost.errors import UnsupportedCapabilityError
 from pelecpost.geometry import (
@@ -198,53 +201,484 @@ def _coarsened_surface_load(
     )
 
 
+def _analysis_presentation(context: WorkflowContext, analysis):
+    return visualization.resolve_presentation(
+        context.project.analyses_file.presentation, analysis.presentation,
+    )
+
+
+def _field_contour_style(context: WorkflowContext, analysis: FlowOverviewAnalysis, field: str):
+    default = _analysis_presentation(context, analysis).contour_defaults
+    override = analysis.contours.fields.get(Variable(field))
+    if field == "vorticity" and override is None:
+        default = default.model_copy(update={
+            "colormap": "RdBu_r", "symmetric_about_zero": True,
+        })
+    return visualization.resolve_contour_style(default, override)
+
+
+def _shared_contour_ranges(
+    context: WorkflowContext,
+    analysis: FlowOverviewAnalysis,
+    paths: list[str],
+    requested: set[str],
+    styles: dict[str, ContourStyle],
+) -> dict[str, tuple[float, float]]:
+    selected = {
+        field: style for field, style in styles.items()
+        if style.range.mode in {"selected_snapshots_minmax", "selected_snapshots_percentile"}
+    }
+    if not selected:
+        return {}
+    extrema = {field: [np.inf, -np.inf] for field in selected}
+    samples: dict[str, np.ndarray] = {field: np.empty(0) for field in selected}
+    maximum_samples = 500_000
+    for plotfile in paths:
+        dataset = _load(context, plotfile, requested, _region(analysis))
+        for field, style in selected.items():
+            values = np.asarray(dataset["fields"][field], dtype=float).ravel()
+            values = values[np.isfinite(values)]
+            if not len(values):
+                continue
+            extrema[field][0] = min(extrema[field][0], float(np.min(values)))
+            extrema[field][1] = max(extrema[field][1], float(np.max(values)))
+            if style.range.mode == "selected_snapshots_percentile":
+                stride = max(1, int(np.ceil(len(values) / 100_000)))
+                combined = np.concatenate((samples[field], values[::stride]))
+                if len(combined) > maximum_samples:
+                    reduction = int(np.ceil(len(combined) / maximum_samples))
+                    combined = combined[::reduction]
+                samples[field] = combined
+    resolved = {}
+    for field, style in selected.items():
+        if not np.isfinite(extrema[field]).all():
+            raise ValueError(f"cannot determine a finite shared contour range for {field}")
+        if style.range.mode == "selected_snapshots_minmax":
+            limits = tuple(extrema[field])
+        else:
+            limits = tuple(np.percentile(
+                samples[field],
+                [style.range.lower_percentile, style.range.upper_percentile],
+            ))
+        resolved[field] = (float(limits[0]), float(limits[1]))
+    return resolved
+
+
+def _contour_limits(values: np.ndarray, style, shared=None) -> tuple[float, float]:
+    if shared is not None:
+        limits = shared
+    elif style.range.mode == "fixed":
+        limits = (style.range.minimum, style.range.maximum)
+    elif style.range.mode == "per_snapshot_percentile":
+        finite = np.asarray(values, dtype=float)
+        finite = finite[np.isfinite(finite)]
+        if not len(finite):
+            raise ValueError("contour field contains no finite values")
+        limits = tuple(np.percentile(
+            finite, [style.range.lower_percentile, style.range.upper_percentile],
+        ))
+    else:
+        raise ValueError(f"shared range {style.range.mode!r} was not resolved")
+    minimum, maximum = map(float, limits)
+    if not maximum > minimum:
+        raise ValueError("contour range must have positive width")
+    return minimum, maximum
+
+
+def _register_figure_variants(
+    context: WorkflowContext,
+    *,
+    artifact_id: str,
+    paths: tuple[Path, ...],
+    variable: str | None,
+    units: str | None,
+    coordinate_metadata: dict,
+    interpretation: str,
+    provenance: dict | None = None,
+) -> None:
+    for index, path in enumerate(paths):
+        identifier = artifact_id if index == 0 else f"{artifact_id}.{path.suffix.lstrip('.')}"
+        context.register(
+            artifact_id=identifier, path=path, kind="figure", variable=variable,
+            units=units, coordinate_metadata=coordinate_metadata,
+            interpretation=interpretation,
+            provenance={**(provenance or {}), "figure_format": path.suffix.lstrip(".")},
+        )
+
+
+def _resample_cartesian_profile(profile: dict, config) -> dict:
+    coordinate = np.asarray(profile["y"], dtype=float)
+    values = np.asarray(profile["values"], dtype=float)
+    if config.coordinate_range_m is not None:
+        lower, upper = config.coordinate_range_m
+        mask = (coordinate >= lower) & (coordinate <= upper)
+        coordinate, values = coordinate[mask], values[mask]
+    if not len(coordinate):
+        raise ValueError("line-profile coordinate range contains no samples")
+    if config.sample_points is not None:
+        target = np.linspace(float(coordinate[0]), float(coordinate[-1]), config.sample_points)
+        if config.interpolation == "nearest":
+            indices = np.searchsorted(coordinate, target, side="left")
+            indices = np.clip(indices, 0, len(coordinate) - 1)
+            left = np.maximum(indices - 1, 0)
+            choose_left = np.abs(target - coordinate[left]) < np.abs(target - coordinate[indices])
+            indices[choose_left] = left[choose_left]
+            values = values[indices]
+        else:
+            values = np.interp(target, coordinate, values)
+        coordinate = target
+    return {**profile, "y": coordinate, "values": values}
+
+
+def _line_style(context: WorkflowContext, analysis: FlowOverviewAnalysis, field: str):
+    config = analysis.line_profiles
+    default = _analysis_presentation(context, analysis).line_defaults
+    updates = {
+        key: value for key, value in {
+            "coordinate_scale": config.coordinate_scale,
+            "value_scale": config.value_scale,
+            "grid": config.grid,
+            "legend_position": config.legend_position,
+        }.items() if value is not None
+    }
+    default = default.model_copy(update=updates)
+    return visualization.resolve_line_style(default, config.fields.get(Variable(field)))
+
+
+def _normalise_profile_values(values: np.ndarray) -> np.ndarray:
+    values = np.asarray(values, dtype=float)
+    lower, upper = float(np.nanmin(values)), float(np.nanmax(values))
+    if not upper > lower:
+        return np.zeros_like(values)
+    return (values - lower) / (upper - lower)
+
+
+def _render_cartesian_profiles(
+    context: WorkflowContext,
+    analysis: FlowOverviewAnalysis,
+    dataset: dict,
+    label: str,
+    station: float,
+    profiles: list[dict],
+    time_text: str,
+) -> None:
+    presentation = _analysis_presentation(context, analysis)
+    groups = [[profile] for profile in profiles]
+    if analysis.line_profiles.layout == "combined":
+        groups = [profiles]
+    for group_index, group in enumerate(groups):
+        figure, axis, _, _ = visualization.line_figure(presentation, time_text)
+        for profile in group:
+            field = profile["field_key"]
+            style = _line_style(context, analysis, field)
+            values = np.asarray(profile["values"], dtype=float)
+            if analysis.line_profiles.normalize_values:
+                values = _normalise_profile_values(values)
+            visualization.plot_profile(
+                axis, profile["y"], values, plotting_api.field_title(field), style,
+            )
+        representative = _line_style(context, analysis, group[0]["field_key"])
+        visualization.style_line_axis(axis, representative)
+        axis.set_xlabel(r"$y$ [m]")
+        axis.set_ylabel(
+            "Normalized value" if analysis.line_profiles.normalize_values
+            else plotting_api.field_label(group[0]["field_key"])
+        )
+        axis.set_title(
+            rf"Cartesian profile at requested $x={station:.6g}$ m "
+            rf"(sampled $x={float(group[0]['x_sampled']):.6g}$ m)"
+        )
+        if analysis.line_profiles.coordinate_limits is not None:
+            axis.set_xlim(analysis.line_profiles.coordinate_limits)
+        if analysis.line_profiles.value_limits is not None:
+            axis.set_ylim(analysis.line_profiles.value_limits)
+        if len(group) > 1:
+            axis.legend(loc=visualization.legend_location(representative))
+        field_suffix = "combined" if len(group) > 1 else group[0]["field_key"]
+        figure_paths = visualization.save_figure_variants(
+            figure, context.figure_dir / f"{label}_line_x_{station:.6g}_{field_suffix}",
+            presentation.figure,
+        )
+        base_id = f"field.lines.{label}.x-{station:.9g}"
+        if group_index > 0 or len(groups) > 1:
+            base_id = f"{base_id}.{field_suffix}"
+        _register_figure_variants(
+            context, artifact_id=base_id, paths=figure_paths,
+            variable=None if len(group) > 1 else group[0]["field_key"],
+            units="dimensionless" if analysis.line_profiles.normalize_values else "SI",
+            coordinate_metadata={
+                "coordinate": "y_m", "requested_x_m": float(station),
+                "sampled_x_m": float(group[0]["x_sampled"]),
+            },
+            interpretation="Styled Cartesian line profile at one registered plotfile time.",
+            provenance={
+                "plotfile": dataset.get("source"), "layout": analysis.line_profiles.layout,
+                "normalized": analysis.line_profiles.normalize_values,
+            },
+        )
+
+
+def _surface_point_at_arc(surface: SurfaceCurve2D, distance_m: float):
+    total = float(np.sum(surface.segment_length_m))
+    if distance_m < 0.0 or distance_m > total:
+        raise ValueError(
+            f"arc-length station {distance_m:g} m lies outside [0, {total:g}] m"
+        )
+    starts = surface.arc_length_m
+    index = int(np.searchsorted(starts, distance_m, side="right") - 1)
+    index = min(max(index, 0), len(surface.segment_length_m) - 1)
+    start = surface.coordinates_m[index]
+    end_index = (index + 1) % len(surface.coordinates_m)
+    fraction = (distance_m - float(starts[index])) / float(surface.segment_length_m[index])
+    point = start + fraction * (surface.coordinates_m[end_index] - start)
+    return point, surface.segment_tangent[index], surface.segment_fluid_normal[index], distance_m
+
+
+def _surface_x_intersections(surface: SurfaceCurve2D, x_m: float):
+    results: list[tuple[np.ndarray, np.ndarray, np.ndarray, float]] = []
+    for index in range(len(surface.segment_length_m)):
+        start = surface.coordinates_m[index]
+        end = surface.coordinates_m[(index + 1) % len(surface.coordinates_m)]
+        lower, upper = sorted((float(start[0]), float(end[0])))
+        tolerance = max(1.0, abs(x_m)) * 1.0e-12
+        if x_m < lower - tolerance or x_m > upper + tolerance:
+            continue
+        delta_x = float(end[0] - start[0])
+        if abs(delta_x) <= tolerance:
+            if abs(x_m - float(start[0])) <= tolerance:
+                raise ValueError(
+                    f"x={x_m:g} m overlaps a vertical surface segment; use arc_length"
+                )
+            continue
+        fraction = float(np.clip((x_m - float(start[0])) / delta_x, 0.0, 1.0))
+        point = start + fraction * (end - start)
+        arc = float(surface.arc_length_m[index] + fraction * surface.segment_length_m[index])
+        candidate = (point, surface.segment_tangent[index], surface.segment_fluid_normal[index], arc)
+        if not any(np.linalg.norm(point - existing[0]) <= tolerance for existing in results):
+            results.append(candidate)
+    return results
+
+
+def _resolve_normal_station(surfaces, station):
+    candidates = []
+    for index, surface in enumerate(surfaces):
+        if station.component_id is not None:
+            requested = str(station.component_id)
+            if requested not in {str(index), str(surface.component_id)}:
+                continue
+        if station.side_id is not None and station.side_id != surface.side_id:
+            continue
+        if station.location.type == "arc_length":
+            candidates.append((surface, *_surface_point_at_arc(surface, station.location.value_m)))
+        else:
+            candidates.extend(
+                (surface, *item)
+                for item in _surface_x_intersections(surface, station.location.value_m)
+            )
+    if not candidates:
+        raise ValueError(
+            f"surface-normal station {station.id!r} does not intersect the selected geometry"
+        )
+    if len(candidates) > 1:
+        raise ValueError(
+            f"surface-normal station {station.id!r} is ambiguous; select component_id/side_id "
+            "and use arc_length for multi-valued geometry"
+        )
+    return candidates[0]
+
+
+def _sample_selected_normal(dataset: dict, point, normal, distance_m, points, config):
+    x = np.asarray(dataset["x"], dtype=float)
+    y = np.asarray(dataset["y"], dtype=float)
+    first = 0.5 * min(float(np.median(np.diff(x))), float(np.median(np.diff(y))))
+    if distance_m <= first:
+        raise ValueError("normal profile distance must exceed half the local grid spacing")
+    fraction = np.linspace(0.0, 1.0, points)
+    if config.spacing == "wall_clustered":
+        fraction = fraction ** config.clustering_exponent
+    distances = first + (distance_m - first) * fraction
+    coordinates = np.asarray(point)[None, :] + distances[:, None] * np.asarray(normal)[None, :]
+    values = {}
+    for variable in config.fields:
+        field = variable.value
+        interpolator = RegularGridInterpolator(
+            (x, y), np.asarray(dataset["fields"][field]),
+            method=config.interpolation, bounds_error=False, fill_value=np.nan,
+        )
+        sampled = interpolator(coordinates)
+        if not np.any(np.isfinite(sampled)):
+            raise ValueError(f"surface-normal station has no finite {field} samples")
+        values[field] = sampled
+    return distances, coordinates, values
+
+
+def _wall_extrapolation(distances: np.ndarray, values: np.ndarray) -> float:
+    finite = np.isfinite(distances) & np.isfinite(values)
+    if np.count_nonzero(finite) < 2:
+        return float("nan")
+    count = min(4, int(np.count_nonzero(finite)))
+    return float(np.polyfit(distances[finite][:count], values[finite][:count], 1)[1])
+
+
+def _surface_profile_style(context: WorkflowContext, profiles):
+    analysis = cast(SurfaceDiagnosticsAnalysis, context.analysis)
+    default = _analysis_presentation(context, analysis).line_defaults
+    return default.model_copy(update={
+        "coordinate_scale": profiles.figure.coordinate_scale,
+        "value_scale": profiles.figure.value_scale,
+        "grid": profiles.figure.grid,
+    })
+
+
+def _render_surface_profile_figures(
+    context: WorkflowContext,
+    label: str,
+    station,
+    distances: np.ndarray,
+    values: dict[str, np.ndarray],
+    time_text: str,
+    profiles,
+) -> None:
+    analysis = cast(SurfaceDiagnosticsAnalysis, context.analysis)
+    presentation = _analysis_presentation(context, analysis)
+    groups = [[field] for field in values]
+    if profiles.figure.layout == "combined":
+        groups = [list(values)]
+    for group_index, fields in enumerate(groups):
+        figure, axis, _, _ = visualization.line_figure(presentation, time_text)
+        style = _surface_profile_style(context, profiles)
+        for field in fields:
+            plotted = values[field]
+            if profiles.figure.normalize_values:
+                plotted = _normalise_profile_values(plotted)
+            visualization.plot_profile(
+                axis, distances, plotted, plotting_api.field_title(field), style,
+            )
+        visualization.style_line_axis(axis, style)
+        axis.set_xlabel("Surface-normal distance [m]")
+        axis.set_ylabel(
+            "Normalized value" if profiles.figure.normalize_values
+            else plotting_api.field_label(fields[0])
+        )
+        axis.set_title(f"Surface-normal profile: {station.id}")
+        if len(fields) > 1:
+            axis.legend(loc=visualization.legend_location(style))
+        suffix = "combined" if len(fields) > 1 else fields[0]
+        figure_paths = visualization.save_figure_variants(
+            figure, context.figure_dir / f"{label}_{station.id}_{suffix}", presentation.figure,
+        )
+        artifact_id = f"surface.normal_profile.figure.{label}.{station.id}"
+        if group_index > 0 or len(groups) > 1:
+            artifact_id = f"{artifact_id}.{suffix}"
+        _register_figure_variants(
+            context, artifact_id=artifact_id, paths=figure_paths,
+            variable=None if len(fields) > 1 else fields[0],
+            units="dimensionless" if profiles.figure.normalize_values else "SI",
+            coordinate_metadata={"normal_distance": "m"},
+            interpretation="Selected geometry-aware surface-normal profile.",
+        )
+
+
 @executor("flow_overview")
 def run_flow_overview(context: WorkflowContext) -> None:
     analysis = cast(FlowOverviewAnalysis, context.analysis)
+    presentation = _analysis_presentation(context, analysis)
     output_fields = {item.value for item in analysis.fields}
     requested = set(output_fields)
     if analysis.streamlines:
         requested.update(("x_velocity", "y_velocity"))
-    for plotfile in _paths(context):
-        dataset = _load(context, plotfile, requested, _region(analysis))
-        label = dataset["plot_label"]
-        for field in sorted(output_fields):
-            path = context.figure_dir / f"{label}_{field}.png"
-            plotting_api.plot_contour(
-                dataset, field, output_path=path, xlim=analysis.x_limits_m,
-                ylim=analysis.y_limits_m,
-                time_annotation=plotting_api.format_dataset_time(dataset),
+    paths = _paths(context)
+    styles = {
+        field: _field_contour_style(context, analysis, field)
+        for field in sorted(output_fields)
+    }
+    shared_ranges = _shared_contour_ranges(context, analysis, paths, requested, styles)
+    with visualization.presentation_context(presentation):
+        for plotfile in paths:
+            dataset = _load(context, plotfile, requested, _region(analysis))
+            label = dataset["plot_label"]
+            time_text = plotting_api.format_dataset_time(
+                dataset, precision=presentation.time_annotation.precision,
             )
-            context.register(
-                artifact_id=f"field.contours.{label}.{field}", path=path, kind="figure",
-                variable=field, units="SI; see field label", coordinate_metadata={"x": "m", "y": "m"},
-                interpretation="Descriptive two-dimensional field view at one registered plotfile time.",
-                provenance={"plotfile": plotfile, "freestream_reference": dataset.get("freestream_reference")},
-            )
-        for station in analysis.line_stations_x_m:
-            profiles = []
             for field in sorted(output_fields):
-                if field in dataset["fields"]:
-                    profile = fields_api.extract_line(dataset, station, field)
+                style = styles[field]
+                limits = _contour_limits(
+                    dataset["fields"][field], style, shared_ranges.get(field),
+                )
+                figure, contour_axis, colorbar_axis, _, time_artist, resolved_limits = (
+                    visualization.render_contour(
+                        dataset, field, presentation, style, limits,
+                        x_limits_m=analysis.x_limits_m, y_limits_m=analysis.y_limits_m,
+                        time_text=time_text,
+                    )
+                )
+                if time_artist is not None and visualization.artists_overlap(
+                    figure, time_artist, colorbar_axis,
+                ):
+                    plt.close(figure)
+                    raise RuntimeError("time annotation overlaps the contour colorbar")
+                if visualization.artists_overlap(figure, colorbar_axis, contour_axis):
+                    plt.close(figure)
+                    raise RuntimeError("contour colorbar or label overlaps the data axes")
+                figure_paths = visualization.save_figure_variants(
+                    figure, context.figure_dir / f"{label}_{field}", presentation.figure,
+                )
+                _register_figure_variants(
+                    context, artifact_id=f"field.contours.{label}.{field}",
+                    paths=figure_paths, variable=field, units="SI; see field label",
+                    coordinate_metadata={"x": "m", "y": "m"},
+                    interpretation="Descriptive two-dimensional field view at one registered plotfile time.",
+                    provenance={
+                        "plotfile": plotfile,
+                        "freestream_reference": dataset.get("freestream_reference"),
+                        "contour_style": style.model_dump(mode="json"),
+                        "resolved_color_range": list(resolved_limits),
+                    },
+                )
+            for station in analysis.line_stations_x_m:
+                profiles = []
+                for field in sorted(output_fields):
+                    if field not in dataset["fields"]:
+                        continue
+                    profile = _resample_cartesian_profile(
+                        fields_api.extract_line(dataset, station, field), analysis.line_profiles,
+                    )
                     profile["label"] = field
                     profiles.append(profile)
-            if profiles:
-                path = context.figure_dir / f"{label}_line_x_{station:.6g}.png"
-                plotting_api.plot_line_profiles(profiles, output_path=path)
-                context.register(
-                    artifact_id=f"field.lines.{label}.x-{station:.9g}", path=path,
-                    kind="figure", variable=None, units="SI", coordinate_metadata={"y": "m"},
-                    interpretation="Nearest-grid line samples for the configured streamwise station.",
+                    table_path = context.data_dir / f"{label}_line_x_{station:.6g}_{field}.csv"
+                    with table_path.open("w", newline="", encoding="utf-8") as stream:
+                        writer = csv.writer(stream)
+                        writer.writerow(("y_m", field))
+                        writer.writerows(zip(profile["y"], profile["values"]))
+                    context.register(
+                        artifact_id=f"field.lines.data.{label}.x-{station:.9g}.{field}",
+                        path=table_path, kind="table", variable=field,
+                        units=f"y: m; value: {plotting_api.field_label(field)}",
+                        coordinate_metadata={
+                            "coordinate": "y_m", "requested_x_m": float(station),
+                            "sampled_x_m": float(profile["x_sampled"]),
+                        },
+                        interpretation="Configured Cartesian line extraction with explicit sampled coordinate.",
+                        provenance={
+                            "plotfile": plotfile,
+                            "interpolation": analysis.line_profiles.interpolation,
+                        },
+                    )
+                if profiles:
+                    _render_cartesian_profiles(
+                        context, analysis, dataset, label, station, profiles, time_text,
+                    )
+            if analysis.streamlines:
+                streamline = fields_api.extract_streamline_field(
+                    dataset, color_key="velocity_magnitude",
                 )
-        if analysis.streamlines:
-            streamline = fields_api.extract_streamline_field(dataset, color_key="velocity_magnitude")
-            path = context.figure_dir / f"{label}_streamlines.png"
-            plotting_api.plot_streamlines([streamline], output_path=path)
-            context.register(
-                artifact_id=f"field.streamlines.{label}", path=path, kind="figure",
-                variable="velocity", units="m/s", coordinate_metadata={"x": "m", "y": "m"},
-                interpretation="Steady streamlines of one instantaneous velocity field.",
-            )
+                path = context.figure_dir / f"{label}_streamlines.png"
+                plotting_api.plot_streamlines([streamline], output_path=path)
+                context.register(
+                    artifact_id=f"field.streamlines.{label}", path=path, kind="figure",
+                    variable="velocity", units="m/s", coordinate_metadata={"x": "m", "y": "m"},
+                    interpretation="Steady streamlines of one instantaneous velocity field.",
+                )
 
 
 @executor("boundary_layer_reference")
@@ -372,14 +806,21 @@ def run_boundary_layer_reference(context: WorkflowContext) -> None:
 @executor("surface_diagnostics")
 def run_surface_diagnostics(context: WorkflowContext) -> None:
     analysis = cast(SurfaceDiagnosticsAnalysis, context.analysis)
+    presentation = _analysis_presentation(context, analysis)
     geometry = context.project.case_file.geometry
     requested = {"pressure", "temperature", "x_velocity", "y_velocity"}
+    if analysis.normal_profiles is not None:
+        requested.update(variable.value for variable in analysis.normal_profiles.fields)
     if geometry.type == "volume_fraction":
         requested.add(geometry.field)
     for plotfile in _paths(context):
         dataset = _load(context, plotfile, requested)
         label = Path(plotfile).name
-        for component, surface in enumerate(_surfaces(context, dataset)):
+        surfaces = _surfaces(context, dataset)
+        time_text = plotting_api.format_dataset_time(
+            dataset, precision=presentation.time_annotation.precision,
+        )
+        for component, surface in enumerate(surfaces):
             distance, pressure, velocity, temperature, fit = _sample_wall(
                 dataset, surface, analysis.normal_sample_distance_m,
                 analysis.normal_sample_points,
@@ -429,42 +870,131 @@ def run_surface_diagnostics(context: WorkflowContext) -> None:
                 kind="json", variable="wall_state", units=None, coordinate_metadata={},
                 interpretation="Geometry resolution, coverage, and wall-fit residual diagnostics.",
             )
-            figure_path = context.figure_dir / f"{stem}_geometry_normals.png"
-            figure, axis = plt.subplots(figsize=(9, 4.5))
-            axis.plot(
-                surface.coordinates_m[:, 0], surface.coordinates_m[:, 1],
-                color="black", linewidth=1.5, label="surface",
-            )
-            stride = max(1, len(surface.coordinates_m) // 40)
-            normal_scale = max(
-                analysis.normal_sample_distance_m,
-                0.02 * float(np.ptp(surface.coordinates_m[:, 0])),
-            )
-            points = surface.coordinates_m[::stride]
-            normals = surface.fluid_normal[::stride]
-            axis.quiver(
-                points[:, 0], points[:, 1], normals[:, 0], normals[:, 1],
-                angles="xy", scale_units="xy", scale=1.0 / normal_scale,
-                color="C1", width=0.003, label="fluid-facing normals",
-            )
-            axis.set_xlabel("x [m]")
-            axis.set_ylabel("y [m]")
-            axis.set_aspect("equal", adjustable="datalim")
-            axis.grid(True, alpha=0.25)
-            axis.legend()
-            axis.set_title(f"{label}: component {component} surface reconstruction")
-            figure.tight_layout()
-            figure.savefig(figure_path, dpi=180)
-            plt.close(figure)
-            context.register(
-                artifact_id=f"surface.figure.{label}.{component}", path=figure_path,
-                kind="figure", variable="geometry", units="m",
+            with visualization.presentation_context(presentation):
+                figure, axis, _, _ = visualization.line_figure(presentation, time_text)
+                axis.plot(
+                    surface.coordinates_m[:, 0], surface.coordinates_m[:, 1],
+                    color=analysis.geometry_figure.surface_color,
+                    linewidth=1.5, label="surface",
+                )
+                stride = max(1, int(np.ceil(
+                    len(surface.coordinates_m)
+                    / analysis.geometry_figure.maximum_normal_arrows
+                )))
+                configured_length = analysis.geometry_figure.normal_arrow_length
+                normal_scale = (
+                    analysis.normal_sample_distance_m
+                    if configured_length == "sample_distance" else float(configured_length)
+                )
+                points = surface.coordinates_m[::stride]
+                normals = surface.fluid_normal[::stride]
+                axis.quiver(
+                    points[:, 0], points[:, 1], normals[:, 0], normals[:, 1],
+                    angles="xy", scale_units="xy", scale=1.0 / normal_scale,
+                    color=analysis.geometry_figure.normal_color,
+                    width=0.003, label="fluid-facing normals",
+                )
+                axis.set_xlabel("x [m]")
+                axis.set_ylabel("y [m]")
+                axis.set_aspect("equal", adjustable="datalim")
+                axis.grid(True, alpha=0.25)
+                axis.legend()
+                axis.set_title(f"{label}: component {component} surface reconstruction")
+                figure_paths = visualization.save_figure_variants(
+                    figure, context.figure_dir / f"{stem}_geometry_normals",
+                    presentation.figure,
+                )
+            _register_figure_variants(
+                context, artifact_id=f"surface.figure.{label}.{component}",
+                paths=figure_paths, variable="geometry", units="m",
                 coordinate_metadata={"x": "m", "y": "m"},
                 interpretation=(
                     "Surface reconstruction and decimated fluid-facing normals; numerical "
                     "coordinates and quality gates are registered separately."
                 ),
+                provenance={
+                    "maximum_normal_arrows": analysis.geometry_figure.maximum_normal_arrows,
+                    "normal_arrow_length_m": normal_scale,
+                },
             )
+        if analysis.normal_profiles is not None:
+            for station in analysis.normal_profiles.stations:
+                surface, point, tangent, normal, arc_length = _resolve_normal_station(
+                    surfaces, station,
+                )
+                maximum_distance = station.distance_m or analysis.normal_sample_distance_m
+                sample_points = station.sample_points or analysis.normal_sample_points
+                distances, coordinates, sampled = _sample_selected_normal(
+                    dataset, point, normal, maximum_distance, sample_points,
+                    analysis.normal_profiles,
+                )
+                extrapolated = np.zeros(len(distances), dtype=bool)
+                output_distances, output_coordinates, output_values = distances, coordinates, sampled
+                if analysis.normal_profiles.include_wall_extrapolation:
+                    output_distances = np.concatenate(([0.0], distances))
+                    output_coordinates = np.vstack((point, coordinates))
+                    extrapolated = np.concatenate(([True], extrapolated))
+                    output_values = {
+                        field: np.concatenate(([_wall_extrapolation(distances, values)], values))
+                        for field, values in sampled.items()
+                    }
+                stem = f"{label}_normal_{station.id}"
+                array_path = context.data_dir / f"{stem}.npz"
+                np.savez_compressed(
+                    array_path, normal_distance_m=output_distances,
+                    sample_coordinates_m=output_coordinates,
+                    surface_point_m=np.asarray(point), tangent=np.asarray(tangent),
+                    fluid_normal=np.asarray(normal), arc_length_m=float(arc_length),
+                    is_wall_extrapolation=extrapolated,
+                    **{field: values for field, values in output_values.items()},
+                )
+                profile_provenance = {
+                    "plotfile": plotfile,
+                    "station": station.model_dump(mode="json", exclude_none=True),
+                    "surface_component": surface.component_id,
+                    "surface_side": surface.side_id,
+                    "interpolation": analysis.normal_profiles.interpolation,
+                    "spacing": analysis.normal_profiles.spacing,
+                }
+                context.register(
+                    artifact_id=f"surface.normal_profile.array.{label}.{station.id}",
+                    path=array_path, kind="array", variable="wall_normal_state", units="SI",
+                    coordinate_metadata={
+                        "normal_distance": "m", "sample_coordinates": "m", "arc_length": "m",
+                    },
+                    interpretation=(
+                        "Selected geometry-aware surface-normal samples; zero-distance values "
+                        "are explicitly flagged wall extrapolations when enabled."
+                    ),
+                    provenance=profile_provenance,
+                )
+                table_path = context.data_dir / f"{stem}.csv"
+                fields = list(output_values)
+                with table_path.open("w", newline="", encoding="utf-8") as stream:
+                    writer = csv.writer(stream)
+                    writer.writerow((
+                        "normal_distance_m", "x_m", "y_m", "is_wall_extrapolation", *fields,
+                    ))
+                    for index in range(len(output_distances)):
+                        writer.writerow((
+                            output_distances[index], output_coordinates[index, 0],
+                            output_coordinates[index, 1], bool(extrapolated[index]),
+                            *(output_values[field][index] for field in fields),
+                        ))
+                context.register(
+                    artifact_id=f"surface.normal_profile.table.{label}.{station.id}",
+                    path=table_path, kind="table", variable="wall_normal_state",
+                    units="SI in unit-bearing columns and artifact field metadata",
+                    coordinate_metadata={"normal_distance": "m", "x": "m", "y": "m"},
+                    interpretation="Tabular form of the selected surface-normal profile.",
+                    provenance=profile_provenance,
+                )
+                with visualization.presentation_context(presentation):
+                    _render_surface_profile_figures(
+                        context, label, station, output_distances, output_values,
+                        time_text, analysis.normal_profiles,
+                    )
+
 @executor("aerodynamic_forces")
 def run_aerodynamic_forces(context: WorkflowContext) -> None:
     analysis = cast(AerodynamicForcesAnalysis, context.analysis)
