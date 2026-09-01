@@ -301,6 +301,20 @@
             "default": null,
             "title": "Label"
           },
+          "length_fraction": {
+            "anyOf": [
+              {
+                "maximum": 0.75,
+                "minimum": 0.2,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Length Fraction"
+          },
           "position": {
             "anyOf": [
               {
@@ -342,6 +356,13 @@
             "default": "auto",
             "title": "Label",
             "type": "string"
+          },
+          "length_fraction": {
+            "default": 0.43,
+            "maximum": 0.75,
+            "minimum": 0.2,
+            "title": "Length Fraction",
+            "type": "number"
           },
           "position": {
             "default": "top",
@@ -520,6 +541,7 @@
             "$ref": "#/$defs/ColorbarPresentation",
             "default": {
               "label": "auto",
+              "length_fraction": 0.43,
               "position": "top",
               "tick_format": "auto"
             }
@@ -1781,6 +1803,7 @@
             "default": {
               "colorbar": {
                 "label": "auto",
+                "length_fraction": 0.43,
                 "position": "top",
                 "tick_format": "auto"
               },
@@ -2883,6 +2906,7 @@
           "contour_defaults": {
             "colorbar": {
               "label": "auto",
+              "length_fraction": 0.43,
               "position": "top",
               "tick_format": "auto"
             },

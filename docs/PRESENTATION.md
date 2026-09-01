@@ -27,8 +27,11 @@ The time annotation always occupies an external header or footer row. Its six
 positions are `top_left`, `top_center`, `top_right`, `bottom_left`,
 `bottom_center`, and `bottom_right`. Colorbars use separate top, bottom, left,
 or right axes. A top or bottom colorbar is horizontal; a left or right colorbar
-is vertical. This layout keeps the time box, colorbar, labels, and contour data
-from overlapping.
+is vertical. `colorbar.length_fraction` controls the long-axis length of the
+bar from `0.20` to `0.75`, without changing its tick or label typography. Use
+smaller values for very wide, shallow contours; `0.33` is a useful compact
+starting point. This layout keeps the time box, colorbar, labels, and contour
+data from overlapping.
 
 ## Cartesian line profiles
 

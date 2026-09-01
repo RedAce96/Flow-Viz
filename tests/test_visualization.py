@@ -79,6 +79,7 @@ class VisualizationTests(unittest.TestCase):
         figure, main, colorbar, time_axis, _ = contour_layout(
             config,
             "top",
+            0.43,
             r"$t=5.325$ ms",
         )
         figure.canvas.draw()
@@ -94,13 +95,34 @@ class VisualizationTests(unittest.TestCase):
         )
         plt.close(figure)
 
+    def test_colorbar_length_fraction_controls_horizontal_extent(self):
+        figure, main, colorbar, _, _ = contour_layout(
+            PresentationConfig(), "top", 0.33, r"$t=5.325$ ms"
+        )
+        figure.canvas.draw()
+        self.assertAlmostEqual(
+            colorbar.get_position().width / main.get_position().width,
+            0.33,
+            delta=0.02,
+        )
+        plt.close(figure)
+
+    def test_colorbar_length_fraction_is_bounded(self):
+        with self.assertRaisesRegex(ValueError, "greater than or equal to 0.2"):
+            ContourStyle(colorbar={"length_fraction": 0.19})
+
     def test_contour_override_merges_nested_colorbar_values(self):
-        default = ContourStyle(colorbar={"position": "right", "label": "auto"})
+        default = ContourStyle(
+            colorbar={"position": "right", "length_fraction": 0.43, "label": "auto"}
+        )
         resolved = resolve_contour_style(
             default,
-            ContourStyleOverride(colorbar={"label": "Temperature"}),
+            ContourStyleOverride(
+                colorbar={"length_fraction": 0.33, "label": "Temperature"}
+            ),
         )
         self.assertEqual(resolved.colorbar.position, "right")
+        self.assertEqual(resolved.colorbar.length_fraction, 0.33)
         self.assertEqual(resolved.colorbar.label, "Temperature")
 
     def test_fixed_log_contour_uses_requested_range(self):

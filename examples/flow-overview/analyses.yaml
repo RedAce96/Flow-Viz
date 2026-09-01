@@ -15,6 +15,7 @@ presentation:
     normalization: linear
     colorbar:
       position: top
+      length_fraction: 0.43
   line_defaults:
     linewidth: 2.0
     grid: true

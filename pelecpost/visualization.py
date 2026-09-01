@@ -135,18 +135,24 @@ def _time_axis(figure, grid_cell, config: TimeAnnotationPresentation, text: str)
     return axis, artist
 
 
-def _horizontal_colorbar_axis(figure, grid_cell, *, shrink_width: bool = True):
+def _horizontal_colorbar_axis(
+    figure,
+    grid_cell,
+    *,
+    length_fraction: float,
+    shrink_width: bool = True,
+):
     """Create a compact horizontal colorbar without changing its typography.
 
-    A two-thirds-length bar is easier to read above a very wide, shallow
-    contour.  Its axes are also slightly shorter, while the tick and label
-    font sizes continue to come from the presentation style.
+    ``length_fraction`` controls the long dimension of the bar without
+    changing tick or label font sizes.  Its axes are also slightly shorter.
     """
     if shrink_width:
+        margin = (1.0 - length_fraction) / 2.0
         subgrid = grid_cell.subgridspec(
             3,
             3,
-            width_ratios=(0.22, 0.56, 0.22),
+            width_ratios=(margin, length_fraction, margin),
             height_ratios=(0.17, 0.66, 0.17),
         )
         return figure.add_subplot(subgrid[1, 1])
@@ -154,14 +160,18 @@ def _horizontal_colorbar_axis(figure, grid_cell, *, shrink_width: bool = True):
     return figure.add_subplot(subgrid[1, 0])
 
 
-def _vertical_colorbar_axis(figure, grid_cell):
-    subgrid = grid_cell.subgridspec(3, 1, height_ratios=(0.08, 0.84, 0.08))
+def _vertical_colorbar_axis(figure, grid_cell, *, length_fraction: float):
+    margin = (1.0 - length_fraction) / 2.0
+    subgrid = grid_cell.subgridspec(
+        3, 1, height_ratios=(margin, length_fraction, margin)
+    )
     return figure.add_subplot(subgrid[1, 0])
 
 
 def contour_layout(
     presentation: PresentationConfig,
     colorbar_position: str,
+    colorbar_length_fraction: float,
     time_text: str,
 ):
     """Create non-overlapping axes for time metadata, colorbar, and contour."""
@@ -196,12 +206,9 @@ def contour_layout(
         header = grid[0, 0].subgridspec(
             1,
             3,
-            # The bar is 0.43 / 0.56 = 0.77 of its already compact header
-            # slot.  Relative to the previous 0.84-wide default bar this is
-            # approximately a two-thirds visible-length colorbar.
-            width_ratios=(0.18, 0.43, 0.39)
+            width_ratios=(0.18, colorbar_length_fraction, 0.82 - colorbar_length_fraction)
             if time_config.position == "top_left"
-            else (0.39, 0.43, 0.18),
+            else (0.82 - colorbar_length_fraction, colorbar_length_fraction, 0.18),
             wspace=0.04,
         )
         if time_config.position == "top_left":
@@ -213,7 +220,10 @@ def contour_layout(
         )
         contour_axis = figure.add_subplot(grid[1, 0])
         colorbar_axis = _horizontal_colorbar_axis(
-            figure, colorbar_cell, shrink_width=False
+            figure,
+            colorbar_cell,
+            length_fraction=colorbar_length_fraction,
+            shrink_width=False,
         )
     elif horizontal:
         rows: list[str] = []
@@ -236,7 +246,11 @@ def contour_layout(
             if item == "main":
                 axes["main"] = figure.add_subplot(grid[index, 0])
             elif item == "colorbar":
-                axes["colorbar"] = _horizontal_colorbar_axis(figure, grid[index, 0])
+                axes["colorbar"] = _horizontal_colorbar_axis(
+                    figure,
+                    grid[index, 0],
+                    length_fraction=colorbar_length_fraction,
+                )
             else:
                 time_axis, time_artist = _time_axis(
                     figure, grid[index, 0], time_config, time_text
@@ -271,7 +285,9 @@ def contour_layout(
         )
         contour_axis = figure.add_subplot(inner[0, columns.index("main")])
         colorbar_axis = _vertical_colorbar_axis(
-            figure, inner[0, columns.index("colorbar")]
+            figure,
+            inner[0, columns.index("colorbar")],
+            length_fraction=colorbar_length_fraction,
         )
     return figure, contour_axis, colorbar_axis, time_axis, time_artist
 
@@ -305,6 +321,7 @@ def render_contour(
     figure, axis, colorbar_axis, time_axis, time_artist = contour_layout(
         presentation,
         style.colorbar.position,
+        style.colorbar.length_fraction,
         time_text,
     )
     values = np.asarray(dataset["fields"][field], dtype=float)

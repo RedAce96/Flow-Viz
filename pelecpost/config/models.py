@@ -97,12 +97,14 @@ class ContourRange(StrictModel):
 
 class ColorbarPresentation(StrictModel):
     position: Literal["top", "bottom", "left", "right"] = "top"
+    length_fraction: float = Field(default=0.43, ge=0.20, le=0.75)
     tick_format: str = "auto"
     label: str = "auto"
 
 
 class ColorbarOverride(StrictModel):
     position: Literal["top", "bottom", "left", "right"] | None = None
+    length_fraction: float | None = Field(default=None, ge=0.20, le=0.75)
     tick_format: str | None = None
     label: str | None = None
 
