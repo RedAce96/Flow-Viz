@@ -140,38 +140,56 @@ def _horizontal_colorbar_axis(
     grid_cell,
     *,
     length_fraction: float,
+    thickness_fraction: float,
     shrink_width: bool = True,
 ):
     """Create a compact horizontal colorbar without changing its typography.
 
-    ``length_fraction`` controls the long dimension of the bar without
-    changing tick or label font sizes.  Its axes are also slightly shorter.
+    The fractions control the colored strip dimensions without changing tick
+    or label font sizes.
     """
     if shrink_width:
-        margin = (1.0 - length_fraction) / 2.0
+        length_margin = (1.0 - length_fraction) / 2.0
+        thickness_margin = (1.0 - thickness_fraction) / 2.0
         subgrid = grid_cell.subgridspec(
             3,
             3,
-            width_ratios=(margin, length_fraction, margin),
-            height_ratios=(0.17, 0.66, 0.17),
+            width_ratios=(length_margin, length_fraction, length_margin),
+            height_ratios=(thickness_margin, thickness_fraction, thickness_margin),
         )
         return figure.add_subplot(subgrid[1, 1])
-    subgrid = grid_cell.subgridspec(3, 1, height_ratios=(0.17, 0.66, 0.17))
-    return figure.add_subplot(subgrid[1, 0])
-
-
-def _vertical_colorbar_axis(figure, grid_cell, *, length_fraction: float):
-    margin = (1.0 - length_fraction) / 2.0
+    thickness_margin = (1.0 - thickness_fraction) / 2.0
     subgrid = grid_cell.subgridspec(
-        3, 1, height_ratios=(margin, length_fraction, margin)
+        3,
+        1,
+        height_ratios=(thickness_margin, thickness_fraction, thickness_margin),
     )
     return figure.add_subplot(subgrid[1, 0])
+
+
+def _vertical_colorbar_axis(
+    figure,
+    grid_cell,
+    *,
+    length_fraction: float,
+    thickness_fraction: float,
+):
+    length_margin = (1.0 - length_fraction) / 2.0
+    thickness_margin = (1.0 - thickness_fraction) / 2.0
+    subgrid = grid_cell.subgridspec(
+        3,
+        3,
+        width_ratios=(thickness_margin, thickness_fraction, thickness_margin),
+        height_ratios=(length_margin, length_fraction, length_margin),
+    )
+    return figure.add_subplot(subgrid[1, 1])
 
 
 def contour_layout(
     presentation: PresentationConfig,
     colorbar_position: str,
     colorbar_length_fraction: float,
+    colorbar_thickness_fraction: float,
     time_text: str,
 ):
     """Create non-overlapping axes for time metadata, colorbar, and contour."""
@@ -223,6 +241,7 @@ def contour_layout(
             figure,
             colorbar_cell,
             length_fraction=colorbar_length_fraction,
+            thickness_fraction=colorbar_thickness_fraction,
             shrink_width=False,
         )
     elif horizontal:
@@ -250,6 +269,7 @@ def contour_layout(
                     figure,
                     grid[index, 0],
                     length_fraction=colorbar_length_fraction,
+                    thickness_fraction=colorbar_thickness_fraction,
                 )
             else:
                 time_axis, time_artist = _time_axis(
@@ -288,6 +308,7 @@ def contour_layout(
             figure,
             inner[0, columns.index("colorbar")],
             length_fraction=colorbar_length_fraction,
+            thickness_fraction=colorbar_thickness_fraction,
         )
     return figure, contour_axis, colorbar_axis, time_axis, time_artist
 
@@ -322,6 +343,7 @@ def render_contour(
         presentation,
         style.colorbar.position,
         style.colorbar.length_fraction,
+        style.colorbar.thickness_fraction or style.colorbar.length_fraction,
         time_text,
     )
     values = np.asarray(dataset["fields"][field], dtype=float)

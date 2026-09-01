@@ -333,6 +333,20 @@
             "default": null,
             "title": "Position"
           },
+          "thickness_fraction": {
+            "anyOf": [
+              {
+                "maximum": 0.75,
+                "minimum": 0.2,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Thickness Fraction"
+          },
           "tick_format": {
             "anyOf": [
               {
@@ -374,6 +388,20 @@
             ],
             "title": "Position",
             "type": "string"
+          },
+          "thickness_fraction": {
+            "anyOf": [
+              {
+                "maximum": 0.75,
+                "minimum": 0.2,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Thickness Fraction"
           },
           "tick_format": {
             "default": "auto",
@@ -543,6 +571,7 @@
               "label": "auto",
               "length_fraction": 0.43,
               "position": "top",
+              "thickness_fraction": null,
               "tick_format": "auto"
             }
           },
@@ -1805,6 +1834,7 @@
                 "label": "auto",
                 "length_fraction": 0.43,
                 "position": "top",
+                "thickness_fraction": null,
                 "tick_format": "auto"
               },
               "colormap": "viridis",
@@ -2908,6 +2938,7 @@
               "label": "auto",
               "length_fraction": 0.43,
               "position": "top",
+              "thickness_fraction": null,
               "tick_format": "auto"
             },
             "colormap": "viridis",

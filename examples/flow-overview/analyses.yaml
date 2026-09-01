@@ -16,6 +16,7 @@ presentation:
     colorbar:
       position: top
       length_fraction: 0.43
+      # thickness_fraction: 0.30  # Optional: decouple strip thickness.
   line_defaults:
     linewidth: 2.0
     grid: true

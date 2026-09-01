@@ -121,7 +121,7 @@ after each workflow and are not run artifacts.
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
 | `schema_version` | no | `1` | `1` | — |
-| `presentation` | no | `PresentationConfig` | `{"contour_defaults": {"colorbar": {"label": "auto", "length_fraction": 0.43, "position": "top", "tick_format": "auto"}, "colormap": "viridis", "normalization": "linear", "range": {"lower_percentile": 1.0, "maximum": null, "minimum": null, "mode": "per_snapshot_percentile", "upper_percentile": 99.0}, "rendering": {"levels": null, "mode": "continuous"}, "symlog_linear_threshold": null, "symmetric_about_zero": false}, "figure": {"dpi": 300, "formats": ["png"], "height_in": 4.5, "transparent": false, "width_in": 14.0}, "line_defaults": {"color": null, "coordinate_scale": "linear", "grid": true, "legend_position": "best", "linestyle": "solid", "linewidth": 2.0, "marker": "none", "value_scale": "linear"}, "preset": "publication", "time_annotation": {"boxed": true, "enabled": true, "position": "top_left", "precision": 4}, "typography": {"axes_label_size": 16.0, "base_size": 14.0, "font_family": "DejaVu Sans", "legend_size": 13.0, "tick_label_size": 14.0}}` | — |
+| `presentation` | no | `PresentationConfig` | `{"contour_defaults": {"colorbar": {"label": "auto", "length_fraction": 0.43, "position": "top", "thickness_fraction": null, "tick_format": "auto"}, "colormap": "viridis", "normalization": "linear", "range": {"lower_percentile": 1.0, "maximum": null, "minimum": null, "mode": "per_snapshot_percentile", "upper_percentile": 99.0}, "rendering": {"levels": null, "mode": "continuous"}, "symlog_linear_threshold": null, "symmetric_about_zero": false}, "figure": {"dpi": 300, "formats": ["png"], "height_in": 4.5, "transparent": false, "width_in": 14.0}, "line_defaults": {"color": null, "coordinate_scale": "linear", "grid": true, "legend_position": "best", "linestyle": "solid", "linewidth": 2.0, "marker": "none", "value_scale": "linear"}, "preset": "publication", "time_annotation": {"boxed": true, "enabled": true, "position": "top_left", "precision": 4}, "typography": {"axes_label_size": 16.0, "base_size": 14.0, "font_family": "DejaVu Sans", "legend_size": 13.0, "tick_label_size": 14.0}}` | — |
 | `analyses` | no | `array[FlowOverviewAnalysis \| BoundaryLayerAnalysis \| SurfaceDiagnosticsAnalysis \| AerodynamicForcesAnalysis \| ProbeSpectrumAnalysis \| SinglePulseAnalysis \| DirectionalWaveAnalysis \| TransientWavepacketAnalysis \| NonlinearCouplingAnalysis \| ModalScreeningAnalysis \| CaseComparisonAnalysis]` | `[]` | — |
 
 ### `AerodynamicForcesAnalysis`
@@ -179,6 +179,7 @@ after each workflow and are not run artifacts.
 | --- | --- | --- | --- | --- |
 | `position` | no | `'top' \| 'bottom' \| 'left' \| 'right' \| null` | `null` | — |
 | `length_fraction` | no | `number \| null` | `null` | — |
+| `thickness_fraction` | no | `number \| null` | `null` | — |
 | `tick_format` | no | `string \| null` | `null` | — |
 | `label` | no | `string \| null` | `null` | — |
 
@@ -188,6 +189,7 @@ after each workflow and are not run artifacts.
 | --- | --- | --- | --- | --- |
 | `position` | no | `'top' \| 'bottom' \| 'left' \| 'right'` | `"top"` | — |
 | `length_fraction` | no | `number` | `0.43` | minimum: `0.2`; maximum: `0.75` |
+| `thickness_fraction` | no | `number \| null` | `null` | — |
 | `tick_format` | no | `string` | `"auto"` | — |
 | `label` | no | `string` | `"auto"` | — |
 
@@ -228,7 +230,7 @@ after each workflow and are not run artifacts.
 | `colormap` | no | `string` | `"viridis"` | — |
 | `normalization` | no | `'linear' \| 'log' \| 'symlog'` | `"linear"` | — |
 | `range` | no | `ContourRange` | `{"lower_percentile": 1.0, "maximum": null, "minimum": null, "mode": "per_snapshot_percentile", "upper_percentile": 99.0}` | — |
-| `colorbar` | no | `ColorbarPresentation` | `{"label": "auto", "length_fraction": 0.43, "position": "top", "tick_format": "auto"}` | — |
+| `colorbar` | no | `ColorbarPresentation` | `{"label": "auto", "length_fraction": 0.43, "position": "top", "thickness_fraction": null, "tick_format": "auto"}` | — |
 | `rendering` | no | `ContourRendering` | `{"levels": null, "mode": "continuous"}` | — |
 | `symmetric_about_zero` | no | `boolean` | `false` | — |
 | `symlog_linear_threshold` | no | `number \| null` | `null` | — |
@@ -408,7 +410,7 @@ after each workflow and are not run artifacts.
 | `figure` | no | `FigurePresentation` | `{"dpi": 300, "formats": ["png"], "height_in": 4.5, "transparent": false, "width_in": 14.0}` | — |
 | `typography` | no | `TypographyPresentation` | `{"axes_label_size": 16.0, "base_size": 14.0, "font_family": "DejaVu Sans", "legend_size": 13.0, "tick_label_size": 14.0}` | — |
 | `time_annotation` | no | `TimeAnnotationPresentation` | `{"boxed": true, "enabled": true, "position": "top_left", "precision": 4}` | — |
-| `contour_defaults` | no | `ContourStyle` | `{"colorbar": {"label": "auto", "length_fraction": 0.43, "position": "top", "tick_format": "auto"}, "colormap": "viridis", "normalization": "linear", "range": {"lower_percentile": 1.0, "maximum": null, "minimum": null, "mode": "per_snapshot_percentile", "upper_percentile": 99.0}, "rendering": {"levels": null, "mode": "continuous"}, "symlog_linear_threshold": null, "symmetric_about_zero": false}` | — |
+| `contour_defaults` | no | `ContourStyle` | `{"colorbar": {"label": "auto", "length_fraction": 0.43, "position": "top", "thickness_fraction": null, "tick_format": "auto"}, "colormap": "viridis", "normalization": "linear", "range": {"lower_percentile": 1.0, "maximum": null, "minimum": null, "mode": "per_snapshot_percentile", "upper_percentile": 99.0}, "rendering": {"levels": null, "mode": "continuous"}, "symlog_linear_threshold": null, "symmetric_about_zero": false}` | — |
 | `line_defaults` | no | `LineStyle` | `{"color": null, "coordinate_scale": "linear", "grid": true, "legend_position": "best", "linestyle": "solid", "linewidth": 2.0, "marker": "none", "value_scale": "linear"}` | — |
 
 ### `PresentationOverride`

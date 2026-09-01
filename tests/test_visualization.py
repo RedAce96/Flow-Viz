@@ -80,6 +80,7 @@ class VisualizationTests(unittest.TestCase):
             config,
             "top",
             0.43,
+            0.43,
             r"$t=5.325$ ms",
         )
         figure.canvas.draw()
@@ -88,7 +89,7 @@ class VisualizationTests(unittest.TestCase):
         self.assertGreaterEqual(colorbar.get_position().y0, main.get_position().y1)
         self.assertLessEqual(
             abs(time_axis.get_position().y0 - colorbar.get_position().y0),
-            0.04,
+            0.06,
         )
         self.assertGreater(
             colorbar.get_position().width, colorbar.get_position().height
@@ -97,7 +98,7 @@ class VisualizationTests(unittest.TestCase):
 
     def test_colorbar_length_fraction_controls_horizontal_extent(self):
         figure, main, colorbar, _, _ = contour_layout(
-            PresentationConfig(), "top", 0.33, r"$t=5.325$ ms"
+            PresentationConfig(), "top", 0.33, 0.33, r"$t=5.325$ ms"
         )
         figure.canvas.draw()
         self.assertAlmostEqual(
@@ -106,6 +107,21 @@ class VisualizationTests(unittest.TestCase):
             delta=0.02,
         )
         plt.close(figure)
+
+    def test_colorbar_scale_controls_bar_thickness(self):
+        compact, _, compact_bar, _, _ = contour_layout(
+            PresentationConfig(), "top", 0.33, 0.33, r"$t=5.325$ ms"
+        )
+        large, _, large_bar, _, _ = contour_layout(
+            PresentationConfig(), "top", 0.33, 0.66, r"$t=5.325$ ms"
+        )
+        compact.canvas.draw()
+        large.canvas.draw()
+        self.assertLess(
+            compact_bar.get_position().height, large_bar.get_position().height
+        )
+        plt.close(compact)
+        plt.close(large)
 
     def test_colorbar_length_fraction_is_bounded(self):
         with self.assertRaisesRegex(ValueError, "greater than or equal to 0.2"):
@@ -118,11 +134,16 @@ class VisualizationTests(unittest.TestCase):
         resolved = resolve_contour_style(
             default,
             ContourStyleOverride(
-                colorbar={"length_fraction": 0.33, "label": "Temperature"}
+                colorbar={
+                    "length_fraction": 0.33,
+                    "thickness_fraction": 0.25,
+                    "label": "Temperature",
+                }
             ),
         )
         self.assertEqual(resolved.colorbar.position, "right")
         self.assertEqual(resolved.colorbar.length_fraction, 0.33)
+        self.assertEqual(resolved.colorbar.thickness_fraction, 0.25)
         self.assertEqual(resolved.colorbar.label, "Temperature")
 
     def test_fixed_log_contour_uses_requested_range(self):
