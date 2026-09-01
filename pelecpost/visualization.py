@@ -135,9 +135,23 @@ def _time_axis(figure, grid_cell, config: TimeAnnotationPresentation, text: str)
     return axis, artist
 
 
-def _horizontal_colorbar_axis(figure, grid_cell):
-    subgrid = grid_cell.subgridspec(1, 3, width_ratios=(0.08, 0.84, 0.08))
-    return figure.add_subplot(subgrid[0, 1])
+def _horizontal_colorbar_axis(figure, grid_cell, *, shrink_width: bool = True):
+    """Create a compact horizontal colorbar without changing its typography.
+
+    A two-thirds-length bar is easier to read above a very wide, shallow
+    contour.  Its axes are also slightly shorter, while the tick and label
+    font sizes continue to come from the presentation style.
+    """
+    if shrink_width:
+        subgrid = grid_cell.subgridspec(
+            3,
+            3,
+            width_ratios=(0.22, 0.56, 0.22),
+            height_ratios=(0.17, 0.66, 0.17),
+        )
+        return figure.add_subplot(subgrid[1, 1])
+    subgrid = grid_cell.subgridspec(3, 1, height_ratios=(0.17, 0.66, 0.17))
+    return figure.add_subplot(subgrid[1, 0])
 
 
 def _vertical_colorbar_axis(figure, grid_cell):
@@ -156,7 +170,7 @@ def contour_layout(
         figsize=(figure_config.width_in, figure_config.height_in),
     )
     figure.subplots_adjust(
-        left=0.08, right=0.98, bottom=0.12, top=0.96, hspace=1.0, wspace=0.5
+        left=0.08, right=0.98, bottom=0.12, top=0.96, hspace=0.50, wspace=0.5
     )
     time_config = presentation.time_annotation
     show_time = bool(time_config.enabled and time_text)
@@ -164,7 +178,44 @@ def contour_layout(
     horizontal = colorbar_position in {"top", "bottom"}
 
     time_axis = time_artist = None
-    if horizontal:
+    # A top-left or top-right timestamp can share the colorbar header.  This
+    # keeps both immediately above the data axes while reserving independent
+    # cells so the annotation can never cover the colorbar or its label.
+    inline_header = (
+        horizontal
+        and colorbar_position == "top"
+        and show_time
+        and time_config.position in {"top_left", "top_right"}
+    )
+
+    if inline_header:
+        # 0.30 is the smallest verified separation that clears the horizontal
+        # colorbar label and the top contour ticks; it keeps the header close
+        # to a shallow, equal-aspect contour.
+        grid = figure.add_gridspec(2, 1, height_ratios=(0.24, 1.0), hspace=0.30)
+        header = grid[0, 0].subgridspec(
+            1,
+            3,
+            # The bar is 0.43 / 0.56 = 0.77 of its already compact header
+            # slot.  Relative to the previous 0.84-wide default bar this is
+            # approximately a two-thirds visible-length colorbar.
+            width_ratios=(0.18, 0.43, 0.39)
+            if time_config.position == "top_left"
+            else (0.39, 0.43, 0.18),
+            wspace=0.04,
+        )
+        if time_config.position == "top_left":
+            time_cell, colorbar_cell = header[0, 0], header[0, 1]
+        else:
+            colorbar_cell, time_cell = header[0, 1], header[0, 2]
+        time_axis, time_artist = _time_axis(
+            figure, time_cell, time_config, time_text
+        )
+        contour_axis = figure.add_subplot(grid[1, 0])
+        colorbar_axis = _horizontal_colorbar_axis(
+            figure, colorbar_cell, shrink_width=False
+        )
+    elif horizontal:
         rows: list[str] = []
         if show_time and time_top:
             rows.append("time")
@@ -176,10 +227,10 @@ def contour_layout(
         if show_time and not time_top:
             rows.append("time")
         ratios = [
-            0.13 if item == "time" else 0.18 if item == "colorbar" else 1.0
+            0.16 if item == "time" else 0.24 if item == "colorbar" else 1.0
             for item in rows
         ]
-        grid = figure.add_gridspec(len(rows), 1, height_ratios=ratios)
+        grid = figure.add_gridspec(len(rows), 1, height_ratios=ratios, hspace=1.0)
         axes = {}
         for index, item in enumerate(rows):
             if item == "main":
@@ -196,7 +247,9 @@ def contour_layout(
         if show_time:
             row_names = ["time", "main"] if time_top else ["main", "time"]
         row_ratios = [0.13 if item == "time" else 1.0 for item in row_names]
-        outer = figure.add_gridspec(len(row_names), 1, height_ratios=row_ratios)
+        outer = figure.add_gridspec(
+            len(row_names), 1, height_ratios=row_ratios, hspace=1.0
+        )
         main_cell = None
         for index, item in enumerate(row_names):
             if item == "time":

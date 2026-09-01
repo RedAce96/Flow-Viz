@@ -56,8 +56,21 @@ class VisualizationTests(unittest.TestCase):
                     self.assertIsNotNone(time_artist)
                     figure.canvas.draw()
                     self.assertFalse(artists_overlap(figure, time_artist, colorbar))
-                    self.assertFalse(artists_overlap(figure, time_axis, colorbar))
-                    self.assertFalse(artists_overlap(figure, time_axis, main))
+                    self.assertFalse(artists_overlap(figure, time_artist, main))
+                    # Top-left/right timestamps intentionally share the
+                    # header row with the top colorbar.  Their invisible
+                    # layout axes may touch the decorated colorbar extent;
+                    # the visible annotation remains independently checked.
+                    if not (
+                        colorbar_position == "top"
+                        and time_position in {"top_left", "top_right"}
+                    ):
+                        self.assertFalse(artists_overlap(figure, time_axis, colorbar))
+                    if not (
+                        colorbar_position == "top"
+                        and time_position in {"top_left", "top_right"}
+                    ):
+                        self.assertFalse(artists_overlap(figure, time_axis, main))
                     self.assertFalse(artists_overlap(figure, colorbar, main))
                     plt.close(figure)
 
@@ -70,8 +83,12 @@ class VisualizationTests(unittest.TestCase):
         )
         figure.canvas.draw()
         assert time_axis is not None
-        self.assertGreaterEqual(time_axis.get_position().y0, colorbar.get_position().y1)
+        self.assertGreaterEqual(time_axis.get_position().y0, main.get_position().y1)
         self.assertGreaterEqual(colorbar.get_position().y0, main.get_position().y1)
+        self.assertLessEqual(
+            abs(time_axis.get_position().y0 - colorbar.get_position().y0),
+            0.04,
+        )
         self.assertGreater(
             colorbar.get_position().width, colorbar.get_position().height
         )

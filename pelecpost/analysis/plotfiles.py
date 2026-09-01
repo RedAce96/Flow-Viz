@@ -617,6 +617,11 @@ def run_flow_overview(context: WorkflowContext) -> None:
                 ):
                     plt.close(figure)
                     raise RuntimeError("time annotation overlaps the contour colorbar")
+                if time_artist is not None and visualization.artists_overlap(
+                    figure, time_artist, contour_axis,
+                ):
+                    plt.close(figure)
+                    raise RuntimeError("time annotation overlaps the contour data axes")
                 if visualization.artists_overlap(figure, colorbar_axis, contour_axis):
                     plt.close(figure)
                     raise RuntimeError("contour colorbar or label overlaps the data axes")
