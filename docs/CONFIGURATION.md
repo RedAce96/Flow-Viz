@@ -121,7 +121,7 @@ after each workflow and are not run artifacts.
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
 | `schema_version` | no | `1` | `1` | — |
-| `presentation` | no | `PresentationConfig` | `{"contour_defaults": {"colorbar": {"label": "auto", "length_fraction": 0.43, "position": "top", "thickness_fraction": null, "tick_format": "auto"}, "colormap": "viridis", "normalization": "linear", "range": {"lower_percentile": 1.0, "maximum": null, "minimum": null, "mode": "per_snapshot_percentile", "upper_percentile": 99.0}, "rendering": {"levels": null, "mode": "continuous"}, "symlog_linear_threshold": null, "symmetric_about_zero": false}, "figure": {"dpi": 300, "formats": ["png"], "height_in": 4.5, "transparent": false, "width_in": 14.0}, "line_defaults": {"color": null, "coordinate_scale": "linear", "grid": true, "legend_position": "best", "linestyle": "solid", "linewidth": 2.0, "marker": "none", "value_scale": "linear"}, "preset": "publication", "time_annotation": {"boxed": true, "enabled": true, "position": "top_left", "precision": 4}, "typography": {"axes_label_size": 16.0, "base_size": 14.0, "font_family": "DejaVu Sans", "legend_size": 13.0, "tick_label_size": 14.0}}` | — |
+| `presentation` | no | `PresentationConfig` | `{"contour_axes": {"x_tick_format": "auto", "y_tick_format": "auto"}, "contour_defaults": {"colorbar": {"include_endpoints": false, "label": "auto", "length_fraction": 0.43, "position": "top", "thickness_fraction": null, "tick_count": 4, "tick_format": "auto"}, "colormap": "viridis", "normalization": "linear", "range": {"lower_percentile": 1.0, "maximum": null, "minimum": null, "mode": "per_snapshot_percentile", "upper_percentile": 99.0}, "rendering": {"levels": null, "mode": "continuous"}, "symlog_linear_threshold": null, "symmetric_about_zero": false}, "figure": {"dpi": 300, "formats": ["png"], "height_in": 4.5, "transparent": false, "width_in": 14.0}, "line_defaults": {"color": null, "coordinate_scale": "linear", "grid": true, "legend_position": "best", "linestyle": "solid", "linewidth": 2.0, "marker": "none", "value_scale": "linear"}, "preset": "publication", "time_annotation": {"boxed": true, "enabled": true, "position": "top_left", "precision": 4}, "typography": {"axes_label_size": 16.0, "base_size": 14.0, "colorbar_label_pad": 2.0, "colorbar_label_size": 13.0, "colorbar_tick_label_size": 11.0, "colorbar_tick_pad": 2.0, "font_family": "DejaVu Sans", "legend_size": 13.0, "tick_label_size": 14.0}}` | — |
 | `analyses` | no | `array[FlowOverviewAnalysis \| BoundaryLayerAnalysis \| SurfaceDiagnosticsAnalysis \| AerodynamicForcesAnalysis \| ProbeSpectrumAnalysis \| SinglePulseAnalysis \| DirectionalWaveAnalysis \| TransientWavepacketAnalysis \| NonlinearCouplingAnalysis \| ModalScreeningAnalysis \| CaseComparisonAnalysis]` | `[]` | — |
 
 ### `AerodynamicForcesAnalysis`
@@ -180,6 +180,8 @@ after each workflow and are not run artifacts.
 | `position` | no | `'top' \| 'bottom' \| 'left' \| 'right' \| null` | `null` | — |
 | `length_fraction` | no | `number \| null` | `null` | — |
 | `thickness_fraction` | no | `number \| null` | `null` | — |
+| `include_endpoints` | no | `boolean \| null` | `null` | — |
+| `tick_count` | no | `integer \| null` | `null` | — |
 | `tick_format` | no | `string \| null` | `null` | — |
 | `label` | no | `string \| null` | `null` | — |
 
@@ -190,8 +192,24 @@ after each workflow and are not run artifacts.
 | `position` | no | `'top' \| 'bottom' \| 'left' \| 'right'` | `"top"` | — |
 | `length_fraction` | no | `number` | `0.43` | minimum: `0.2`; maximum: `0.75` |
 | `thickness_fraction` | no | `number \| null` | `null` | — |
+| `include_endpoints` | no | `boolean` | `false` | — |
+| `tick_count` | no | `integer` | `4` | minimum: `2`; maximum: `12` |
 | `tick_format` | no | `string` | `"auto"` | — |
 | `label` | no | `string` | `"auto"` | — |
+
+### `ContourAxesPresentation`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `x_tick_format` | no | `string` | `"auto"` | — |
+| `y_tick_format` | no | `string` | `"auto"` | — |
+
+### `ContourAxesPresentationOverride`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `x_tick_format` | no | `string \| null` | `null` | — |
+| `y_tick_format` | no | `string \| null` | `null` | — |
 
 ### `ContourConfig`
 
@@ -230,7 +248,7 @@ after each workflow and are not run artifacts.
 | `colormap` | no | `string` | `"viridis"` | — |
 | `normalization` | no | `'linear' \| 'log' \| 'symlog'` | `"linear"` | — |
 | `range` | no | `ContourRange` | `{"lower_percentile": 1.0, "maximum": null, "minimum": null, "mode": "per_snapshot_percentile", "upper_percentile": 99.0}` | — |
-| `colorbar` | no | `ColorbarPresentation` | `{"label": "auto", "length_fraction": 0.43, "position": "top", "thickness_fraction": null, "tick_format": "auto"}` | — |
+| `colorbar` | no | `ColorbarPresentation` | `{"include_endpoints": false, "label": "auto", "length_fraction": 0.43, "position": "top", "thickness_fraction": null, "tick_count": 4, "tick_format": "auto"}` | — |
 | `rendering` | no | `ContourRendering` | `{"levels": null, "mode": "continuous"}` | — |
 | `symmetric_about_zero` | no | `boolean` | `false` | — |
 | `symlog_linear_threshold` | no | `number \| null` | `null` | — |
@@ -408,9 +426,10 @@ after each workflow and are not run artifacts.
 | --- | --- | --- | --- | --- |
 | `preset` | no | `'publication'` | `"publication"` | — |
 | `figure` | no | `FigurePresentation` | `{"dpi": 300, "formats": ["png"], "height_in": 4.5, "transparent": false, "width_in": 14.0}` | — |
-| `typography` | no | `TypographyPresentation` | `{"axes_label_size": 16.0, "base_size": 14.0, "font_family": "DejaVu Sans", "legend_size": 13.0, "tick_label_size": 14.0}` | — |
+| `typography` | no | `TypographyPresentation` | `{"axes_label_size": 16.0, "base_size": 14.0, "colorbar_label_pad": 2.0, "colorbar_label_size": 13.0, "colorbar_tick_label_size": 11.0, "colorbar_tick_pad": 2.0, "font_family": "DejaVu Sans", "legend_size": 13.0, "tick_label_size": 14.0}` | — |
+| `contour_axes` | no | `ContourAxesPresentation` | `{"x_tick_format": "auto", "y_tick_format": "auto"}` | — |
 | `time_annotation` | no | `TimeAnnotationPresentation` | `{"boxed": true, "enabled": true, "position": "top_left", "precision": 4}` | — |
-| `contour_defaults` | no | `ContourStyle` | `{"colorbar": {"label": "auto", "length_fraction": 0.43, "position": "top", "thickness_fraction": null, "tick_format": "auto"}, "colormap": "viridis", "normalization": "linear", "range": {"lower_percentile": 1.0, "maximum": null, "minimum": null, "mode": "per_snapshot_percentile", "upper_percentile": 99.0}, "rendering": {"levels": null, "mode": "continuous"}, "symlog_linear_threshold": null, "symmetric_about_zero": false}` | — |
+| `contour_defaults` | no | `ContourStyle` | `{"colorbar": {"include_endpoints": false, "label": "auto", "length_fraction": 0.43, "position": "top", "thickness_fraction": null, "tick_count": 4, "tick_format": "auto"}, "colormap": "viridis", "normalization": "linear", "range": {"lower_percentile": 1.0, "maximum": null, "minimum": null, "mode": "per_snapshot_percentile", "upper_percentile": 99.0}, "rendering": {"levels": null, "mode": "continuous"}, "symlog_linear_threshold": null, "symmetric_about_zero": false}` | — |
 | `line_defaults` | no | `LineStyle` | `{"color": null, "coordinate_scale": "linear", "grid": true, "legend_position": "best", "linestyle": "solid", "linewidth": 2.0, "marker": "none", "value_scale": "linear"}` | — |
 
 ### `PresentationOverride`
@@ -419,6 +438,7 @@ after each workflow and are not run artifacts.
 | --- | --- | --- | --- | --- |
 | `figure` | no | `FigurePresentationOverride \| null` | `null` | — |
 | `typography` | no | `TypographyPresentationOverride \| null` | `null` | — |
+| `contour_axes` | no | `ContourAxesPresentationOverride \| null` | `null` | — |
 | `time_annotation` | no | `TimeAnnotationOverride \| null` | `null` | — |
 | `contour_defaults` | no | `ContourStyleOverride \| null` | `null` | — |
 | `line_defaults` | no | `LineStyleOverride \| null` | `null` | — |
@@ -573,6 +593,10 @@ after each workflow and are not run artifacts.
 | `axes_label_size` | no | `number` | `16.0` | greater than: `0.0` |
 | `tick_label_size` | no | `number` | `14.0` | greater than: `0.0` |
 | `legend_size` | no | `number` | `13.0` | greater than: `0.0` |
+| `colorbar_label_size` | no | `number` | `13.0` | greater than: `0.0` |
+| `colorbar_tick_label_size` | no | `number` | `11.0` | greater than: `0.0` |
+| `colorbar_label_pad` | no | `number` | `2.0` | minimum: `0.0`; maximum: `24.0` |
+| `colorbar_tick_pad` | no | `number` | `2.0` | minimum: `0.0`; maximum: `24.0` |
 
 ### `TypographyPresentationOverride`
 
@@ -583,6 +607,10 @@ after each workflow and are not run artifacts.
 | `axes_label_size` | no | `number \| null` | `null` | — |
 | `tick_label_size` | no | `number \| null` | `null` | — |
 | `legend_size` | no | `number \| null` | `null` | — |
+| `colorbar_label_size` | no | `number \| null` | `null` | — |
+| `colorbar_tick_label_size` | no | `number \| null` | `null` | — |
+| `colorbar_label_pad` | no | `number \| null` | `null` | — |
+| `colorbar_tick_pad` | no | `number \| null` | `null` | — |
 
 ### `Variable`
 

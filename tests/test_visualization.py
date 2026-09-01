@@ -123,6 +123,36 @@ class VisualizationTests(unittest.TestCase):
         plt.close(compact)
         plt.close(large)
 
+    def test_colorbar_endpoint_ticks_are_evenly_spaced(self):
+        figure, _, colorbar_axis, _, _, _ = render_contour(
+            self.dataset(),
+            "temperature",
+            PresentationConfig(),
+            ContourStyle(
+                colorbar={"include_endpoints": True, "tick_count": 4}
+            ),
+            (300.0, 302.0),
+            time_text=r"$t=5.325$ ms",
+        )
+        np.testing.assert_allclose(
+            colorbar_axis.get_xticks(), np.linspace(300.0, 302.0, 4)
+        )
+        plt.close(figure)
+
+    def test_contour_axis_tick_format_is_applied(self):
+        figure, axis, _, _, _, _ = render_contour(
+            self.dataset(),
+            "temperature",
+            PresentationConfig(contour_axes={"y_tick_format": ".3g"}),
+            ContourStyle(),
+            (300.0, 302.0),
+        )
+        figure.canvas.draw()
+        labels = [label.get_text() for label in axis.get_yticklabels()]
+        self.assertIn("0", labels)
+        self.assertNotIn("0.000", labels)
+        plt.close(figure)
+
     def test_colorbar_length_fraction_is_bounded(self):
         with self.assertRaisesRegex(ValueError, "greater than or equal to 0.2"):
             ContourStyle(colorbar={"length_fraction": 0.19})
@@ -137,6 +167,7 @@ class VisualizationTests(unittest.TestCase):
                 colorbar={
                     "length_fraction": 0.33,
                     "thickness_fraction": 0.25,
+                    "tick_count": 5,
                     "label": "Temperature",
                 }
             ),
@@ -144,6 +175,7 @@ class VisualizationTests(unittest.TestCase):
         self.assertEqual(resolved.colorbar.position, "right")
         self.assertEqual(resolved.colorbar.length_fraction, 0.33)
         self.assertEqual(resolved.colorbar.thickness_fraction, 0.25)
+        self.assertEqual(resolved.colorbar.tick_count, 5)
         self.assertEqual(resolved.colorbar.label, "Temperature")
 
     def test_fixed_log_contour_uses_requested_range(self):

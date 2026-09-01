@@ -10,6 +10,16 @@ presentation:
   time_annotation:
     position: top_left
     boxed: true
+  typography:
+    base_size: 12
+    axes_label_size: 14
+    tick_label_size: 12
+    colorbar_label_size: 12
+    colorbar_tick_label_size: 10
+    colorbar_label_pad: 1.0
+    colorbar_tick_pad: 1.0
+  contour_axes:
+    y_tick_format: ".3g"
   contour_defaults:
     colormap: viridis
     normalization: linear
@@ -17,6 +27,8 @@ presentation:
       position: top
       length_fraction: 0.43
       # thickness_fraction: 0.30  # Optional: decouple strip thickness.
+      include_endpoints: true
+      tick_count: 4
   line_defaults:
     linewidth: 2.0
     grid: true

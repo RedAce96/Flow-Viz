@@ -59,6 +59,15 @@ class TypographyPresentation(StrictModel):
     axes_label_size: PositiveFloat = 16.0
     tick_label_size: PositiveFloat = 14.0
     legend_size: PositiveFloat = 13.0
+    colorbar_label_size: PositiveFloat = 13.0
+    colorbar_tick_label_size: PositiveFloat = 11.0
+    colorbar_label_pad: float = Field(default=2.0, ge=0.0, le=24.0)
+    colorbar_tick_pad: float = Field(default=2.0, ge=0.0, le=24.0)
+
+
+class ContourAxesPresentation(StrictModel):
+    x_tick_format: str = "auto"
+    y_tick_format: str = "auto"
 
 
 class TimeAnnotationPresentation(StrictModel):
@@ -99,6 +108,8 @@ class ColorbarPresentation(StrictModel):
     position: Literal["top", "bottom", "left", "right"] = "top"
     length_fraction: float = Field(default=0.43, ge=0.20, le=0.75)
     thickness_fraction: float | None = Field(default=None, ge=0.20, le=0.75)
+    include_endpoints: bool = False
+    tick_count: int = Field(default=4, ge=2, le=12)
     tick_format: str = "auto"
     label: str = "auto"
 
@@ -107,6 +118,8 @@ class ColorbarOverride(StrictModel):
     position: Literal["top", "bottom", "left", "right"] | None = None
     length_fraction: float | None = Field(default=None, ge=0.20, le=0.75)
     thickness_fraction: float | None = Field(default=None, ge=0.20, le=0.75)
+    include_endpoints: bool | None = None
+    tick_count: int | None = Field(default=None, ge=2, le=12)
     tick_format: str | None = None
     label: str | None = None
 
@@ -206,6 +219,7 @@ class PresentationConfig(StrictModel):
     preset: Literal["publication"] = "publication"
     figure: FigurePresentation = FigurePresentation()
     typography: TypographyPresentation = TypographyPresentation()
+    contour_axes: ContourAxesPresentation = ContourAxesPresentation()
     time_annotation: TimeAnnotationPresentation = TimeAnnotationPresentation()
     contour_defaults: ContourStyle = ContourStyle()
     line_defaults: LineStyle = LineStyle()
@@ -225,6 +239,15 @@ class TypographyPresentationOverride(StrictModel):
     axes_label_size: PositiveFloat | None = None
     tick_label_size: PositiveFloat | None = None
     legend_size: PositiveFloat | None = None
+    colorbar_label_size: PositiveFloat | None = None
+    colorbar_tick_label_size: PositiveFloat | None = None
+    colorbar_label_pad: float | None = Field(default=None, ge=0.0, le=24.0)
+    colorbar_tick_pad: float | None = Field(default=None, ge=0.0, le=24.0)
+
+
+class ContourAxesPresentationOverride(StrictModel):
+    x_tick_format: str | None = None
+    y_tick_format: str | None = None
 
 
 class TimeAnnotationOverride(StrictModel):
@@ -240,6 +263,7 @@ class TimeAnnotationOverride(StrictModel):
 class PresentationOverride(StrictModel):
     figure: FigurePresentationOverride | None = None
     typography: TypographyPresentationOverride | None = None
+    contour_axes: ContourAxesPresentationOverride | None = None
     time_annotation: TimeAnnotationOverride | None = None
     contour_defaults: ContourStyleOverride | None = None
     line_defaults: LineStyleOverride | None = None

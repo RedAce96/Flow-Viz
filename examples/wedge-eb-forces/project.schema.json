@@ -289,6 +289,18 @@
       "ColorbarOverride": {
         "additionalProperties": false,
         "properties": {
+          "include_endpoints": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Include Endpoints"
+          },
           "label": {
             "anyOf": [
               {
@@ -347,6 +359,20 @@
             "default": null,
             "title": "Thickness Fraction"
           },
+          "tick_count": {
+            "anyOf": [
+              {
+                "maximum": 12,
+                "minimum": 2,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tick Count"
+          },
           "tick_format": {
             "anyOf": [
               {
@@ -366,6 +392,11 @@
       "ColorbarPresentation": {
         "additionalProperties": false,
         "properties": {
+          "include_endpoints": {
+            "default": false,
+            "title": "Include Endpoints",
+            "type": "boolean"
+          },
           "label": {
             "default": "auto",
             "title": "Label",
@@ -403,6 +434,13 @@
             "default": null,
             "title": "Thickness Fraction"
           },
+          "tick_count": {
+            "default": 4,
+            "maximum": 12,
+            "minimum": 2,
+            "title": "Tick Count",
+            "type": "integer"
+          },
           "tick_format": {
             "default": "auto",
             "title": "Tick Format",
@@ -410,6 +448,54 @@
           }
         },
         "title": "ColorbarPresentation",
+        "type": "object"
+      },
+      "ContourAxesPresentation": {
+        "additionalProperties": false,
+        "properties": {
+          "x_tick_format": {
+            "default": "auto",
+            "title": "X Tick Format",
+            "type": "string"
+          },
+          "y_tick_format": {
+            "default": "auto",
+            "title": "Y Tick Format",
+            "type": "string"
+          }
+        },
+        "title": "ContourAxesPresentation",
+        "type": "object"
+      },
+      "ContourAxesPresentationOverride": {
+        "additionalProperties": false,
+        "properties": {
+          "x_tick_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "X Tick Format"
+          },
+          "y_tick_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Y Tick Format"
+          }
+        },
+        "title": "ContourAxesPresentationOverride",
         "type": "object"
       },
       "ContourConfig": {
@@ -568,10 +654,12 @@
           "colorbar": {
             "$ref": "#/$defs/ColorbarPresentation",
             "default": {
+              "include_endpoints": false,
               "label": "auto",
               "length_fraction": 0.43,
               "position": "top",
               "thickness_fraction": null,
+              "tick_count": 4,
               "tick_format": "auto"
             }
           },
@@ -1827,14 +1915,23 @@
       "PresentationConfig": {
         "additionalProperties": false,
         "properties": {
+          "contour_axes": {
+            "$ref": "#/$defs/ContourAxesPresentation",
+            "default": {
+              "x_tick_format": "auto",
+              "y_tick_format": "auto"
+            }
+          },
           "contour_defaults": {
             "$ref": "#/$defs/ContourStyle",
             "default": {
               "colorbar": {
+                "include_endpoints": false,
                 "label": "auto",
                 "length_fraction": 0.43,
                 "position": "top",
                 "thickness_fraction": null,
+                "tick_count": 4,
                 "tick_format": "auto"
               },
               "colormap": "viridis",
@@ -1899,6 +1996,10 @@
             "default": {
               "axes_label_size": 16.0,
               "base_size": 14.0,
+              "colorbar_label_pad": 2.0,
+              "colorbar_label_size": 13.0,
+              "colorbar_tick_label_size": 11.0,
+              "colorbar_tick_pad": 2.0,
               "font_family": "DejaVu Sans",
               "legend_size": 13.0,
               "tick_label_size": 14.0
@@ -1911,6 +2012,17 @@
       "PresentationOverride": {
         "additionalProperties": false,
         "properties": {
+          "contour_axes": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ContourAxesPresentationOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "contour_defaults": {
             "anyOf": [
               {
@@ -2762,6 +2874,32 @@
             "title": "Base Size",
             "type": "number"
           },
+          "colorbar_label_pad": {
+            "default": 2.0,
+            "maximum": 24.0,
+            "minimum": 0.0,
+            "title": "Colorbar Label Pad",
+            "type": "number"
+          },
+          "colorbar_label_size": {
+            "default": 13.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Colorbar Label Size",
+            "type": "number"
+          },
+          "colorbar_tick_label_size": {
+            "default": 11.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Colorbar Tick Label Size",
+            "type": "number"
+          },
+          "colorbar_tick_pad": {
+            "default": 2.0,
+            "maximum": 24.0,
+            "minimum": 0.0,
+            "title": "Colorbar Tick Pad",
+            "type": "number"
+          },
           "font_family": {
             "default": "DejaVu Sans",
             "title": "Font Family",
@@ -2811,6 +2949,60 @@
             ],
             "default": null,
             "title": "Base Size"
+          },
+          "colorbar_label_pad": {
+            "anyOf": [
+              {
+                "maximum": 24.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Colorbar Label Pad"
+          },
+          "colorbar_label_size": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Colorbar Label Size"
+          },
+          "colorbar_tick_label_size": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Colorbar Tick Label Size"
+          },
+          "colorbar_tick_pad": {
+            "anyOf": [
+              {
+                "maximum": 24.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Colorbar Tick Pad"
           },
           "font_family": {
             "anyOf": [
@@ -2933,12 +3125,18 @@
       "presentation": {
         "$ref": "#/$defs/PresentationConfig",
         "default": {
+          "contour_axes": {
+            "x_tick_format": "auto",
+            "y_tick_format": "auto"
+          },
           "contour_defaults": {
             "colorbar": {
+              "include_endpoints": false,
               "label": "auto",
               "length_fraction": 0.43,
               "position": "top",
               "thickness_fraction": null,
+              "tick_count": 4,
               "tick_format": "auto"
             },
             "colormap": "viridis",
@@ -2986,6 +3184,10 @@
           "typography": {
             "axes_label_size": 16.0,
             "base_size": 14.0,
+            "colorbar_label_pad": 2.0,
+            "colorbar_label_size": 13.0,
+            "colorbar_tick_label_size": 11.0,
+            "colorbar_tick_pad": 2.0,
             "font_family": "DejaVu Sans",
             "legend_size": 13.0,
             "tick_label_size": 14.0

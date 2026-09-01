@@ -217,22 +217,55 @@ def contour_layout(
     )
 
     if inline_header:
-        # 0.30 is the smallest verified separation that clears the horizontal
-        # colorbar label and the top contour ticks; it keeps the header close
-        # to a shallow, equal-aspect contour.
-        grid = figure.add_gridspec(2, 1, height_ratios=(0.24, 1.0), hspace=0.30)
+        # Compact styling and a short colorbar permit a smaller verified
+        # separation than the legacy header.  This gives shallow contours
+        # more of the exported image without risking label/tick collisions.
+        grid = figure.add_gridspec(2, 1, height_ratios=(0.24, 1.0), hspace=0.18)
+        time_width = 0.18
+        centered_margin = (1.0 - colorbar_length_fraction) / 2.0
+        if centered_margin >= time_width:
+            # Keep the colorbar centered over the contour axes even though
+            # the time annotation occupies one side of the same header row.
+            if time_config.position == "top_left":
+                header_widths = (
+                    time_width,
+                    centered_margin - time_width,
+                    colorbar_length_fraction,
+                    centered_margin,
+                )
+                time_index, colorbar_index = 0, 2
+            else:
+                header_widths = (
+                    centered_margin,
+                    colorbar_length_fraction,
+                    centered_margin - time_width,
+                    time_width,
+                )
+                time_index, colorbar_index = 3, 1
+        else:
+            # Very long bars cannot remain centered and leave room for the
+            # time box, so retain the safe side-by-side header arrangement.
+            if time_config.position == "top_left":
+                header_widths = (
+                    time_width,
+                    colorbar_length_fraction,
+                    1.0 - time_width - colorbar_length_fraction,
+                )
+                time_index, colorbar_index = 0, 1
+            else:
+                header_widths = (
+                    1.0 - time_width - colorbar_length_fraction,
+                    colorbar_length_fraction,
+                    time_width,
+                )
+                time_index, colorbar_index = 2, 1
         header = grid[0, 0].subgridspec(
-            1,
-            3,
-            width_ratios=(0.18, colorbar_length_fraction, 0.82 - colorbar_length_fraction)
-            if time_config.position == "top_left"
-            else (0.82 - colorbar_length_fraction, colorbar_length_fraction, 0.18),
-            wspace=0.04,
+            1, len(header_widths), width_ratios=header_widths, wspace=0.0
         )
         if time_config.position == "top_left":
-            time_cell, colorbar_cell = header[0, 0], header[0, 1]
+            time_cell, colorbar_cell = header[0, time_index], header[0, colorbar_index]
         else:
-            colorbar_cell, time_cell = header[0, 1], header[0, 2]
+            colorbar_cell, time_cell = header[0, colorbar_index], header[0, time_index]
         time_axis, time_artist = _time_axis(
             figure, time_cell, time_config, time_text
         )
@@ -378,12 +411,22 @@ def render_contour(
         "horizontal" if style.colorbar.position in {"top", "bottom"} else "vertical"
     )
     colorbar = figure.colorbar(artist, cax=colorbar_axis, orientation=orientation)
+    typography = presentation.typography
     label = (
         plotting_api.field_label(field)
         if style.colorbar.label == "auto"
         else style.colorbar.label
     )
-    colorbar.set_label(label)
+    colorbar.set_label(label, fontsize=typography.colorbar_label_size,
+                       labelpad=typography.colorbar_label_pad)
+    colorbar.ax.tick_params(
+        labelsize=typography.colorbar_tick_label_size,
+        pad=typography.colorbar_tick_pad,
+    )
+    if style.colorbar.include_endpoints:
+        colorbar.set_ticks(
+            np.linspace(minimum, maximum, style.colorbar.tick_count)
+        )
     if style.colorbar.tick_format != "auto":
         from matplotlib.ticker import FormatStrFormatter
 
@@ -399,6 +442,18 @@ def render_contour(
         axis.set_xlim(x_limits_m)
     if y_limits_m is not None:
         axis.set_ylim(y_limits_m)
+    if presentation.contour_axes.x_tick_format != "auto":
+        from matplotlib.ticker import StrMethodFormatter
+
+        axis.xaxis.set_major_formatter(
+            StrMethodFormatter("{x:" + presentation.contour_axes.x_tick_format + "}")
+        )
+    if presentation.contour_axes.y_tick_format != "auto":
+        from matplotlib.ticker import StrMethodFormatter
+
+        axis.yaxis.set_major_formatter(
+            StrMethodFormatter("{x:" + presentation.contour_axes.y_tick_format + "}")
+        )
     axis.set_aspect("equal", adjustable="box")
     axis.set_anchor("N")
     return figure, axis, colorbar_axis, time_axis, time_artist, (minimum, maximum)

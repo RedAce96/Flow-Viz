@@ -33,7 +33,13 @@ without changing tick or label typography. Use smaller values for very wide,
 shallow contours; `0.33` is a useful compact starting point. Set optional
 `colorbar.thickness_fraction` only when you deliberately want to decouple the
 two dimensions. This layout keeps the time box, colorbar, labels, and contour
-data from overlapping.
+data from overlapping. Set `include_endpoints: true` with `tick_count: 4` to
+show a compact, evenly spaced tick set that retains the resolved minimum and
+maximum rather than letting a short bar display only interior values.
+
+`presentation.contour_axes.x_tick_format` and `y_tick_format` accept standard
+Matplotlib numeric format strings. For example, `".3g"` writes the wall as
+`0` rather than `0.000` while retaining `0.005` m where that precision matters.
 
 ## Cartesian line profiles
 
