@@ -7,3 +7,4 @@
 Delta*
 *.txt
 configs/local/*.json
+*.egg-info/
