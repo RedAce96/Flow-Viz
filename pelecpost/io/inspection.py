@@ -57,7 +57,9 @@ class ProbeInventory:
     time_max_s: float | None
     median_timestep_s: float | None
     timestep_std_s: float | None
+    timestep_max_deviation_s: float | None
     nonfinite_time_count: int
+    nonpositive_timestep_count: int
     missing_value_count: dict[str, int]
     restart_overlap_count: int
     mapping_epoch_count: int
@@ -76,6 +78,8 @@ class InputInventory:
     comparison_products: dict[str, tuple[str, ...]]
     comparison_metadata: dict[str, dict[str, dict[str, Any]]]
     comparison_errors: dict[str, str]
+    comparison_probe_sets: dict[str, ProbeInventory]
+    comparison_probe_errors: dict[str, str]
     baselines: dict[str, tuple[str, ...]]
 
     def as_dict(self) -> dict[str, Any]:
@@ -191,6 +195,7 @@ def _inspect_hdf5(path: Path) -> ProbeInventory:
         x_cm = np.asarray(archive["probes/requested_x_cm"], dtype=float)
         y_cm = np.asarray(archive["probes/requested_y_cm"], dtype=float)
         dt = np.diff(time)
+        median_dt = float(np.median(dt)) if dt.size else None
         fields = tuple(archive["fields"].keys())
         units = {
             name: str(archive[f"fields/{name}"].attrs.get("unit", "unknown"))
@@ -223,9 +228,16 @@ def _inspect_hdf5(path: Path) -> ProbeInventory:
             y_max_m=float(np.max(y_cm) * 0.01) if y_cm.size else None,
             time_min_s=float(np.min(time)) if time.size else None,
             time_max_s=float(np.max(time)) if time.size else None,
-            median_timestep_s=float(np.median(dt)) if dt.size else None,
+            median_timestep_s=median_dt,
             timestep_std_s=float(np.std(dt)) if dt.size else None,
+            timestep_max_deviation_s=(
+                float(np.max(np.abs(dt - median_dt)))
+                if dt.size and median_dt is not None and np.all(np.isfinite(dt)) else None
+            ),
             nonfinite_time_count=int(np.count_nonzero(~np.isfinite(time))),
+            nonpositive_timestep_count=int(
+                np.count_nonzero(~np.isfinite(dt) | (dt <= 0.0))
+            ),
             missing_value_count=missing,
             restart_overlap_count=overlaps,
             mapping_epoch_count=int(epochs.shape[0]) if epochs is not None else 0,
@@ -248,6 +260,7 @@ def _inspect_binary(project: ResolvedProject, patterns: tuple[str, ...]) -> Prob
     with ProbeV2Collection(resolved) as collection:
         time = np.asarray(collection.time, dtype=float)
         dt = np.diff(time)
+        median_dt = float(np.median(dt)) if dt.size else None
         x_cm = np.asarray(collection.header["requested_x"], dtype=float)
         y_cm = np.asarray(collection.header["requested_y"], dtype=float)
         epochs = collection.mapping_epochs(0, len(time))
@@ -272,9 +285,16 @@ def _inspect_binary(project: ResolvedProject, patterns: tuple[str, ...]) -> Prob
             x_min_m=float(np.min(x_cm) * 0.01), x_max_m=float(np.max(x_cm) * 0.01),
             y_min_m=float(np.min(y_cm) * 0.01), y_max_m=float(np.max(y_cm) * 0.01),
             time_min_s=float(time[0]), time_max_s=float(time[-1]),
-            median_timestep_s=float(np.median(dt)) if dt.size else None,
+            median_timestep_s=median_dt,
             timestep_std_s=float(np.std(dt)) if dt.size else None,
+            timestep_max_deviation_s=(
+                float(np.max(np.abs(dt - median_dt)))
+                if dt.size and median_dt is not None and np.all(np.isfinite(dt)) else None
+            ),
             nonfinite_time_count=int(np.count_nonzero(~np.isfinite(time))),
+            nonpositive_timestep_count=int(
+                np.count_nonzero(~np.isfinite(dt) | (dt <= 0.0))
+            ),
             missing_value_count=missing,
             restart_overlap_count=int(overlap.get("duplicate_sample_count", 0)),
             mapping_epoch_count=len(epochs), quality_approved=None,
@@ -297,7 +317,8 @@ def _inspect_probes(project: ResolvedProject) -> ProbeInventory | None:
             source="", format="unconfigured", sample_count=0, probe_count=0,
             fields=(), field_units={}, x_min_m=None, x_max_m=None,
             y_min_m=None, y_max_m=None, time_min_s=None, time_max_s=None,
-            median_timestep_s=None, timestep_std_s=None, nonfinite_time_count=0,
+            median_timestep_s=None, timestep_std_s=None, timestep_max_deviation_s=None,
+            nonfinite_time_count=0, nonpositive_timestep_count=0,
             missing_value_count={},
             restart_overlap_count=0, mapping_epoch_count=0, quality_approved=None,
             provenance_present=False, errors=("probe source is empty",),
@@ -308,11 +329,23 @@ def _inspect_probes(project: ResolvedProject) -> ProbeInventory | None:
             sample_count=0, probe_count=0, fields=(), field_units={},
             x_min_m=None, x_max_m=None, y_min_m=None, y_max_m=None,
             time_min_s=None, time_max_s=None, median_timestep_s=None,
-            timestep_std_s=None, nonfinite_time_count=0, missing_value_count={},
+            timestep_std_s=None, timestep_max_deviation_s=None,
+            nonfinite_time_count=0, nonpositive_timestep_count=0, missing_value_count={},
             restart_overlap_count=0,
             mapping_epoch_count=0, quality_approved=None, provenance_present=False,
             errors=(str(exc),),
         )
+
+
+def _inspect_probe_config(
+    project: ResolvedProject, config: Any
+) -> ProbeInventory:
+    """Inspect one ProbeInput (comparison_probe_sets entry)."""
+    if getattr(config, "compact_file", None) is not None:
+        return _inspect_hdf5(_resolve(project, config.compact_file))
+    if getattr(config, "binary_files", ()):
+        return _inspect_binary(project, config.binary_files)
+    raise ValueError("comparison probe set is empty")
 
 
 def inspect_project(project: ResolvedProject) -> InputInventory:
@@ -348,6 +381,13 @@ def inspect_project(project: ResolvedProject) -> InputInventory:
             comparison_products[archive_id] = ()
             comparison_metadata[archive_id] = {}
             comparison_errors[archive_id] = str(exc)
+    comparison_probe_sets: dict[str, ProbeInventory] = {}
+    comparison_probe_errors: dict[str, str] = {}
+    for archive_id, config in project.machine_file.inputs.comparison_probe_sets.items():
+        try:
+            comparison_probe_sets[archive_id] = _inspect_probe_config(project, config)
+        except (OSError, ValueError, KeyError, EOFError) as exc:
+            comparison_probe_errors[archive_id] = str(exc)
     return InputInventory(
         plotfiles=_inspect_plotfiles(project),
         probes=_inspect_probes(project),
@@ -355,5 +395,7 @@ def inspect_project(project: ResolvedProject) -> InputInventory:
         comparison_products=comparison_products,
         comparison_metadata=comparison_metadata,
         comparison_errors=comparison_errors,
+        comparison_probe_sets=comparison_probe_sets,
+        comparison_probe_errors=comparison_probe_errors,
         baselines=baselines,
     )

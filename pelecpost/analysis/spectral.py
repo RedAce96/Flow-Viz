@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
-from scipy.signal import coherence, csd, welch
+from scipy.signal import coherence, csd, detrend as signal_detrend, get_window, welch
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/pelecpost-matplotlib")
 os.environ.setdefault("XDG_CACHE_HOME", "/tmp/pelecpost-cache")
@@ -49,6 +51,7 @@ SI = {
     "pressure": (0.1, "Pa"),
     "temperature": (1.0, "K"),
 }
+MAX_PROBES_PER_FIGURE = 8
 
 
 def _field(variable: str, fields: tuple[str, ...]) -> str:
@@ -75,15 +78,19 @@ def load_compact_variable(
     context: WorkflowContext,
     variable: str,
     probe_indices: tuple[int, ...] = (),
+    *,
+    probe_input: Any | None = None,
+    probe_inventory: Any | None = None,
 ) -> tuple[str, str, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Read an explicitly selected compact-probe variable through the SI boundary."""
     analysis = context.analysis
-    probe_input = context.project.machine_file.inputs.probes
+    if probe_input is None:
+        probe_input = context.project.machine_file.inputs.probes
     if probe_input is None:
         raise UnsupportedCapabilityError(
             f"The {analysis.recipe} executor requires a configured probe source"
         )
-    inventory = context.plan.inventory.probes
+    inventory = probe_inventory if probe_inventory is not None else context.plan.inventory.probes
     assert inventory is not None
     storage_field = _field(variable, inventory.fields)
     selected = np.asarray(
@@ -137,24 +144,275 @@ def load_compact_variable(
     )
 
 
+def _prepare_fft_grid(
+    time: np.ndarray,
+    values: np.ndarray,
+    time_grid_policy: str,
+    scratch_directory: Path | None = None,
+) -> tuple[np.ndarray, np.ndarray, float, bool, Callable[[], None] | None]:
+    """Return a uniform FFT grid or enforce that the native grid is uniform."""
+    if len(time) < 2:
+        raise ValueError("probe signal requires at least two time samples")
+    differences = np.diff(time)
+    if not np.all(np.isfinite(differences)) or np.any(differences <= 0.0):
+        raise ValueError("probe time must be finite and strictly increasing")
+    dt = float(np.median(differences))
+    uniform = np.allclose(
+        differences, dt, rtol=1.0e-9, atol=max(abs(dt) * 1.0e-9, 1.0e-15)
+    )
+    if uniform:
+        return time, values, dt, False, None
+    if time_grid_policy == "require_uniform":
+        raise ValueError(
+            "probe sampling is nonuniform; choose time_grid_policy=resample_uniform "
+            "or provide uniformly sampled probes"
+        )
+    sample_count = int(np.floor((time[-1] - time[0]) / dt)) + 1
+    uniform_time = time[0] + np.arange(sample_count, dtype=float) * dt
+    spill_path: Path | None = None
+    if scratch_directory is None:
+        uniform_values: np.ndarray = np.empty(
+            (sample_count, values.shape[1]), dtype=np.float64
+        )
+        cleanup: Callable[[], None] | None = None
+    else:
+        scratch = Path(scratch_directory)
+        scratch.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix="pelec-post-fft-grid-", suffix=".mmap", dir=str(scratch)
+        )
+        os.close(descriptor)
+        spill_path = Path(temporary_name)
+        uniform_values = np.memmap(
+            spill_path, mode="w+", dtype=np.float64,
+            shape=(sample_count, values.shape[1]),
+        )
+
+        def cleanup() -> None:
+            uniform_values.flush()
+            mmap = getattr(uniform_values, "_mmap", None)
+            if mmap is not None:
+                mmap.close()
+            if spill_path is not None:
+                try:
+                    spill_path.unlink()
+                except FileNotFoundError:
+                    pass
+
+    try:
+        for column in range(values.shape[1]):
+            uniform_values[:, column] = np.interp(
+                uniform_time, time, np.asarray(values[:, column], dtype=float)
+            )
+    except BaseException:
+        if cleanup is not None:
+            cleanup()
+        raise
+    return uniform_time, uniform_values, dt, True, cleanup
+
+
+def _processed_probe_signal(
+    values: np.ndarray,
+    detrend: str,
+    window: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Apply configured detrending and the FFT window to each probe."""
+    if detrend == "mean":
+        centered = values - np.mean(values, axis=0, keepdims=True)
+    elif detrend == "linear":
+        centered = signal_detrend(values, axis=0, type="linear")
+    else:
+        centered = np.asarray(values, dtype=float)
+    window_name = "boxcar" if window == "rectangular" else window
+    weights = get_window(window_name, len(values), fftbins=True)
+    return centered * weights[:, None], weights
+
+
+def _single_sided_amplitude(
+    values: np.ndarray,
+    dt: float,
+    weights: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute coherent-gain-corrected single-sided FFT amplitudes."""
+    frequency = np.fft.rfftfreq(len(values), d=dt)
+    amplitude = np.abs(np.fft.rfft(values, axis=0)) / np.sum(weights)
+    if len(values) % 2 == 0:
+        amplitude[1:-1] *= 2.0
+    else:
+        amplitude[1:] *= 2.0
+    return frequency, amplitude
+
+
+def spectrum_from_signal(
+    time: np.ndarray,
+    values: np.ndarray,
+    *,
+    end_time_s: float | None,
+    window: str,
+    detrend: str,
+    welch_segment_samples: int | None,
+    overlap_fraction: float,
+    time_grid_policy: str,
+    frequency_max_hz: float | None,
+    scratch_directory: Path | None,
+) -> dict[str, Any]:
+    """Compute the probe_spectrum pipeline products for an in-memory signal.
+
+    Shared by run_probe_spectrum and the direct-probe comparison executor so
+    both sides use identical preprocessing and grids.
+    """
+    if end_time_s is not None:
+        if len(time) == 0:
+            raise ValueError("probe signal requires at least two time samples")
+        raw_mask = time <= float(end_time_s)
+        raw_indices = np.flatnonzero(raw_mask)
+        if len(raw_indices) < 2:
+            raise ValueError("end_time_s leaves fewer than two time samples")
+        if np.max(np.diff(raw_indices)) > 1:
+            raise ValueError("end_time_s window must be contiguous from the first sample")
+        time = time[raw_indices]
+        values = values[raw_indices, :]
+    fft_time, fft_values, dt, resampled, fft_cleanup = _prepare_fft_grid(
+        time, values, time_grid_policy, scratch_directory
+    )
+    segment = welch_segment_samples or min(4096, len(fft_time))
+    segment = min(segment, len(fft_time))
+    overlap = round(segment * overlap_fraction)
+    overlap = min(overlap, segment - 1)
+    window_name = "boxcar" if window == "rectangular" else window
+    scipy_detrend = {"mean": "constant", "linear": "linear", "none": False}[detrend]
+    frequency, psd = welch(
+        fft_values, fs=1.0 / dt, window=window_name, nperseg=segment,
+        noverlap=overlap, detrend=scipy_detrend, axis=0, scaling="density",
+        return_onesided=True,
+    )
+    if frequency_max_hz is not None:
+        mask = frequency <= frequency_max_hz
+        frequency, psd = frequency[mask], psd[mask]
+    processed_values, weights = _processed_probe_signal(fft_values, detrend, window)
+    fft_frequency, fft_amplitude = _single_sided_amplitude(processed_values, dt, weights)
+    fft_keep = np.ones_like(fft_frequency, dtype=bool)
+    if frequency_max_hz is not None:
+        fft_keep &= fft_frequency <= frequency_max_hz
+    return {
+        "raw_time": time,
+        "raw_values": values,
+        "fft_time": fft_time,
+        "fft_values": fft_values,
+        "processed_values": processed_values,
+        "fft_frequency": fft_frequency[fft_keep],
+        "fft_amplitude": fft_amplitude[fft_keep],
+        "welch_frequency": frequency,
+        "psd": psd,
+        "dt": dt,
+        "resampled": resampled,
+        "segment": segment,
+        "overlap": overlap,
+        "cleanup": fft_cleanup,
+    }
+
+
+def _plot_probe_time_fft(
+    path: Path,
+    raw_time: np.ndarray,
+    raw_values: np.ndarray,
+    time: np.ndarray,
+    processed_values: np.ndarray,
+    frequency: np.ndarray,
+    amplitude: np.ndarray,
+    x_m: np.ndarray,
+    selected: np.ndarray,
+    unit: str,
+    detrend: str,
+    window: str,
+) -> tuple[Path, ...]:
+    """Write one row of raw history, processed history, and FFT per probe."""
+    paths: list[Path] = []
+    page_count = (len(selected) + MAX_PROBES_PER_FIGURE - 1) // MAX_PROBES_PER_FIGURE
+    for page, start in enumerate(range(0, len(selected), MAX_PROBES_PER_FIGURE), start=1):
+        stop = min(start + MAX_PROBES_PER_FIGURE, len(selected))
+        rows = stop - start
+        page_path = (
+            path if page_count == 1
+            else path.with_name(f"{path.stem}_{page:03d}{path.suffix}")
+        )
+        fig, axes = plt.subplots(
+            rows, 3, figsize=(15.0, max(3.2, 3.0 * rows)), squeeze=False
+        )
+        for row, (probe_index, coordinate) in enumerate(
+            zip(selected[start:stop], x_m[start:stop])
+        ):
+            raw_axis, processed_axis, fft_axis = axes[row]
+            column = start + row
+            label = f"Probe {probe_index} - x={coordinate * 100.0:.3f} cm"
+            raw_axis.plot(raw_time, raw_values[:, column], color="tab:blue", linewidth=1.0)
+            raw_axis.set_title(f"{label} - Raw")
+            raw_axis.set_xlabel("Time [s]")
+            raw_axis.set_ylabel(f"Signal [{unit}]")
+            raw_axis.grid(True, alpha=0.25)
+
+            processed_axis.plot(
+                time, processed_values[:, column], color="tab:orange", linewidth=1.0
+            )
+            processed_axis.set_title(f"{label} - Processed ({detrend}, {window})")
+            processed_axis.set_xlabel("Time [s]")
+            processed_axis.set_ylabel(f"Signal [{unit}]")
+            processed_axis.grid(True, alpha=0.25)
+
+            keep = (frequency > 0.0) & (amplitude[:, column] > 0.0)
+            if np.any(keep):
+                fft_axis.loglog(
+                    frequency[keep], amplitude[keep, column],
+                    color="tab:green", linewidth=1.0,
+                )
+            else:
+                fft_axis.text(
+                    0.5, 0.5, "No positive spectral amplitude",
+                    transform=fft_axis.transAxes, ha="center", va="center",
+                )
+            fft_axis.set_title(f"{label} - FFT")
+            fft_axis.set_xlabel("Frequency [Hz]")
+            fft_axis.set_ylabel(f"|Amplitude| [{unit}]")
+            fft_axis.grid(True, which="both", alpha=0.25)
+        fig.tight_layout()
+        fig.savefig(page_path, dpi=180)
+        plt.close(fig)
+        paths.append(page_path)
+    return tuple(paths)
+
+
 @executor("probe_spectrum")
 def run_probe_spectrum(context: WorkflowContext) -> None:
     analysis = cast(ProbeSpectrumAnalysis, context.analysis)
     variable, unit, time, x_m, values, selected = load_compact_signal(context)
-    dt = float(np.median(np.diff(time)))
-    segment = analysis.welch_segment_samples or min(4096, len(time))
-    segment = min(segment, len(time))
-    overlap = int(round(segment * analysis.overlap_fraction))
-    window = "boxcar" if analysis.window == "rectangular" else analysis.window
-    detrend = {"mean": "constant", "linear": "linear", "none": False}[analysis.detrend]
-    frequency, psd = welch(
-        values, fs=1.0 / dt, window=window, nperseg=segment,
-        noverlap=overlap, detrend=detrend, axis=0, scaling="density",
-        return_onesided=True,
+    scratch = context.project.machine_file.compute.scratch_directory
+    if scratch is not None and not scratch.is_absolute():
+        scratch = (context.project.root / scratch).resolve()
+    products = spectrum_from_signal(
+        time, values,
+        end_time_s=analysis.end_time_s,
+        window=analysis.window, detrend=analysis.detrend,
+        welch_segment_samples=analysis.welch_segment_samples,
+        overlap_fraction=analysis.overlap_fraction,
+        time_grid_policy=analysis.time_grid_policy,
+        frequency_max_hz=analysis.frequency_max_hz,
+        scratch_directory=scratch,
     )
-    if analysis.frequency_max_hz is not None:
-        mask = frequency <= analysis.frequency_max_hz
-        frequency, psd = frequency[mask], psd[mask]
+    if products["cleanup"] is not None:
+        context.add_cleanup(products["cleanup"])
+    time = products["raw_time"]
+    values = products["raw_values"]
+    fft_time = products["fft_time"]
+    processed_preview = products["processed_values"]
+    fft_frequency = products["fft_frequency"]
+    fft_amplitude = products["fft_amplitude"]
+    frequency = products["welch_frequency"]
+    psd = products["psd"]
+    dt = products["dt"]
+    resampled = products["resampled"]
+    segment = products["segment"]
+    overlap = products["overlap"]
+    _ = processed_preview
     data_path = context.data_dir / "stationary_spectrum.npz"
     np.savez_compressed(
         data_path,
@@ -162,9 +420,12 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
         psd=psd,
         probe_indices=selected,
         x_m=x_m,
+        time_s=fft_time,
         signal_unit=np.array(unit),
         psd_unit=np.array(f"({unit})^2/Hz"),
         convention=np.array("one-sided Welch density"),
+        time_grid_policy=np.array(analysis.time_grid_policy),
+        resampled=np.array(resampled),
     )
     context.register(
         artifact_id="spectral.psd", path=data_path, kind="array", variable=variable,
@@ -176,17 +437,19 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
             "window": analysis.window,
             "detrend": analysis.detrend, "segment_samples": segment,
             "overlap_samples": overlap,
+            "time_grid_policy": analysis.time_grid_policy,
+            "resampled": resampled,
             "signal_workspace": (context.resource_metadata or {})["compact_signal"],
         },
     )
     step = max(1, segment - overlap)
-    segment_count = 1 + max(0, (len(time) - segment) // step)
+    segment_count = 1 + max(0, (len(fft_time) - segment) // step)
     confidence = {
         "schema_version": 1,
         "segment_count": segment_count,
         "approximate_degrees_of_freedom": 2 * segment_count,
         "frequency_resolution_hz": float(1.0 / (segment * dt)),
-        "record_duration_s": float(time[-1] - time[0]),
+        "record_duration_s": float(fft_time[-1] - fft_time[0]),
         "interpretation": "Degrees of freedom are approximate because overlapped windowed segments are correlated.",
     }
     confidence_path = context.data_dir / "spectral_confidence.json"
@@ -200,15 +463,17 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
     pair_columns = np.column_stack((order[:-1], order[1:])) if len(order) > 1 else np.empty((0, 2), dtype=int)
     coherence_values = []
     phase_values = []
+    window_name = "boxcar" if analysis.window == "rectangular" else analysis.window
+    scipy_detrend = {"mean": "constant", "linear": "linear", "none": False}[analysis.detrend]
     coherence_frequency = np.fft.rfftfreq(segment, dt)
     for first, second in pair_columns:
         pair_frequency, pair_coherence = coherence(
-            values[:, first], values[:, second], fs=1.0 / dt, window=window,
-            nperseg=segment, noverlap=overlap, detrend=detrend,
+            products["fft_values"][:, first], products["fft_values"][:, second], fs=1.0 / dt, window=window_name,
+            nperseg=segment, noverlap=overlap, detrend=scipy_detrend,
         )
         _, pair_cross = csd(
-            values[:, first], values[:, second], fs=1.0 / dt, window=window,
-            nperseg=segment, noverlap=overlap, detrend=detrend, scaling="density",
+            products["fft_values"][:, first], products["fft_values"][:, second], fs=1.0 / dt, window=window_name,
+            nperseg=segment, noverlap=overlap, detrend=scipy_detrend, scaling="density",
         )
         coherence_frequency = pair_frequency
         coherence_values.append(pair_coherence)
@@ -244,8 +509,61 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
             "adjacent probes ordered by physical x coordinate."
         ),
         provenance={"segment_samples": segment, "overlap_samples": overlap,
-                    "pair_count": len(pair_columns)},
+                    "pair_count": len(pair_columns),
+                    "time_grid_policy": analysis.time_grid_policy,
+                    "resampled": resampled},
     )
+    processed_values = products["processed_values"]
+    fft_frequency = products["fft_frequency"]
+    fft_amplitude = products["fft_amplitude"]
+    signal_path = context.data_dir / "probe_time_fft.npz"
+    np.savez_compressed(
+        signal_path,
+        raw_time_s=time,
+        raw_values=values,
+        time_s=fft_time,
+        processed_values=processed_values,
+        frequency_hz=fft_frequency,
+        amplitude=fft_amplitude,
+        probe_indices=selected,
+        x_m=x_m,
+        signal_unit=np.array(unit),
+        time_grid_policy=np.array(analysis.time_grid_policy),
+        resampled=np.array(resampled),
+        convention=np.array("single-sided coherent-gain-corrected FFT amplitude"),
+    )
+    context.register(
+        artifact_id="spectral.probe_signals", path=signal_path, kind="array",
+        variable=variable, units=unit,
+        coordinate_metadata={"time": "s", "frequency": "Hz", "probe_x": "m"},
+        interpretation=(
+            "Selected probe histories and configured-detrend/window single-sided FFT amplitudes."
+        ),
+        provenance={"time_grid_policy": analysis.time_grid_policy, "resampled": resampled,
+                    "window": analysis.window, "detrend": analysis.detrend},
+    )
+    probe_figure_path = context.figure_dir / "probe_time_fft.png"
+    probe_figure_paths = _plot_probe_time_fft(
+        probe_figure_path, time, values, fft_time, processed_values,
+        fft_frequency, fft_amplitude, x_m, selected, unit,
+        analysis.detrend, analysis.window,
+    )
+    for page, path in enumerate(probe_figure_paths, start=1):
+        context.register(
+            artifact_id=(
+                "spectral.probe_figure"
+                if len(probe_figure_paths) == 1
+                else f"spectral.probe_figure.{page:03d}"
+            ),
+            path=path, kind="figure", variable=variable, units=unit,
+            coordinate_metadata={"time": "s", "frequency": "Hz", "probe_x": "m"},
+            interpretation=(
+                "Per-probe raw history, processed history, and single-sided FFT amplitude."
+            ),
+            provenance={"time_grid_policy": analysis.time_grid_policy, "resampled": resampled,
+                        "window": analysis.window, "detrend": analysis.detrend,
+                        "page": page, "page_count": len(probe_figure_paths)},
+        )
     figure_path = context.figure_dir / "stationary_spectrum.png"
     fig, axis = plt.subplots(figsize=(9, 5))
     positive = frequency > 0

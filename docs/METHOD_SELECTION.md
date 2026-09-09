@@ -6,7 +6,10 @@ Use `pelec-post recipes list` to list questions and `pelec-post recipes show NAM
 - Use `boundary_layer_reference` only for a laminar, zero-pressure-gradient flat plate.
 - Use `surface_diagnostics` before trusting reconstructed wall loads.
 - Use `aerodynamic_forces` for pressure, shear, heat flux, force, and moment. Flat-plate output retains its reviewed certified contract; general geometry is `validated_2d_eb_v1`.
-- Use `probe_spectrum` for approximately stationary records.
+- Use `probe_spectrum` for approximately stationary records. Its default
+	`time_grid_policy: resample_uniform` makes FFT output well-defined for
+	adaptive-time-step probe records; use `require_uniform` only when that
+	resampling is not acceptable.
 - Use `single_pulse_response` for the quiescent pre-event box and one finite source pulse; do not substitute Welch transfer estimates.
 - Use `directional_wave` when spacing, aperture, coherence, and expected wavelength pass preflight.
 - Use `transient_wavepacket` for localized arrivals rather than stationary PSD interpretation.

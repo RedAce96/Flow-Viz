@@ -41,10 +41,10 @@ after each workflow and are not run artifacts.
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
 | `source` | no | `'explicit'` | `"explicit"` | — |
-| `density_kg_m3` | yes | `number` | — | greater than: `0.0` |
-| `velocity_m_s` | yes | `number` | — | greater than: `0.0` |
-| `pressure_pa` | yes | `number` | — | greater than: `0.0` |
-| `temperature_k` | yes | `number` | — | greater than: `0.0` |
+| `density_kg_m3` | yes | `number` | — | greater than: `0` |
+| `velocity_m_s` | yes | `number` | — | greater than: `0` |
+| `pressure_pa` | yes | `number` | — | greater than: `0` |
+| `temperature_k` | yes | `number` | — | greater than: `0` |
 
 ### `FlatPlateGeometry`
 
@@ -61,7 +61,7 @@ after each workflow and are not run artifacts.
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
 | `gamma` | no | `number` | `1.4` | greater than: `1.0` |
-| `gas_constant_j_kg_k` | no | `number` | `287.05` | greater than: `0.0` |
+| `gas_constant_j_kg_k` | no | `number` | `287.05` | greater than: `0` |
 
 ### `PolylineGeometry`
 
@@ -110,7 +110,7 @@ after each workflow and are not run artifacts.
 | `type` | no | `'wedge'` | `"wedge"` | — |
 | `leading_edge_x_m` | yes | `number` | — | — |
 | `leading_edge_y_m` | yes | `number` | — | — |
-| `length_m` | yes | `number` | — | greater than: `0.0` |
+| `length_m` | yes | `number` | — | greater than: `0` |
 | `half_angle_deg` | yes | `number` | — | greater than: `0.0`; less than: `90.0` |
 | `fluid_side` | no | `'outside' \| 'inside'` | `"outside"` | — |
 
@@ -132,13 +132,13 @@ after each workflow and are not run artifacts.
 | `enabled` | no | `boolean` | `true` | — |
 | `presentation` | no | `PresentationOverride \| null` | `null` | — |
 | `recipe` | yes | `'aerodynamic_forces'` | — | — |
-| `reference_chord_m` | yes | `number` | — | greater than: `0.0` |
-| `reference_span_m` | no | `number` | `1.0` | greater than: `0.0` |
+| `reference_chord_m` | yes | `number` | — | greater than: `0` |
+| `reference_span_m` | no | `number` | `1.0` | greater than: `0` |
 | `moment_origin_m` | no | `tuple[number, number]` | `[0.0, 0.0]` | minimum items: `2`; maximum items: `2` |
-| `dynamic_viscosity_pa_s` | yes | `number` | — | greater than: `0.0` |
-| `conductivity_w_m_k` | yes | `number` | — | greater than: `0.0` |
+| `dynamic_viscosity_pa_s` | yes | `number` | — | greater than: `0` |
+| `conductivity_w_m_k` | yes | `number` | — | greater than: `0` |
 | `wall_temperature_k` | no | `number \| null` | `null` | — |
-| `normal_sample_distance_m` | no | `number` | `0.001` | greater than: `0.0` |
+| `normal_sample_distance_m` | no | `number` | `0.001` | greater than: `0` |
 | `normal_sample_points` | no | `integer` | `8` | greater than: `0` |
 | `baseline` | no | `'none' \| 'static' \| 'paired'` | `"none"` | — |
 | `baseline_id` | no | `string \| null` | `null` | — |
@@ -154,10 +154,10 @@ after each workflow and are not run artifacts.
 | `presentation` | no | `PresentationOverride \| null` | `null` | — |
 | `recipe` | yes | `'boundary_layer_reference'` | — | — |
 | `stations_x_m` | yes | `array[number]` | — | — |
-| `maximum_height_m` | yes | `number` | — | greater than: `0.0` |
-| `wall_temperature_k` | yes | `number` | — | greater than: `0.0` |
-| `dynamic_viscosity_pa_s` | yes | `number` | — | greater than: `0.0` |
-| `conductivity_w_m_k` | yes | `number` | — | greater than: `0.0` |
+| `maximum_height_m` | yes | `number` | — | greater than: `0` |
+| `wall_temperature_k` | yes | `number` | — | greater than: `0` |
+| `dynamic_viscosity_pa_s` | yes | `number` | — | greater than: `0` |
+| `conductivity_w_m_k` | yes | `number` | — | greater than: `0` |
 | `zero_pressure_gradient` | no | `True` | `true` | — |
 | `laminar_reference` | no | `True` | `true` | — |
 
@@ -171,7 +171,17 @@ after each workflow and are not run artifacts.
 | `recipe` | yes | `'case_comparison'` | — | — |
 | `baseline_id` | yes | `string` | — | — |
 | `comparison_id` | yes | `string` | — | — |
-| `artifact_ids` | yes | `array[string]` | — | minimum items: `1` |
+| `artifact_ids` | no | `array[string]` | — | — |
+| `variable` | no | `Variable \| null` | `null` | — |
+| `probe_indices` | no | `array[integer]` | `[]` | — |
+| `end_time_s` | no | `number \| null` | `null` | — |
+| `window` | no | `'hann' \| 'hamming' \| 'blackman' \| 'rectangular' \| null` | `null` | — |
+| `detrend` | no | `'mean' \| 'linear' \| 'none' \| null` | `null` | — |
+| `welch_segment_samples` | no | `integer \| null` | `null` | — |
+| `overlap_fraction` | no | `number \| null` | `null` | — |
+| `time_grid_policy` | no | `'resample_uniform' \| 'require_uniform' \| null` | `null` | — |
+| `frequency_max_hz` | no | `number \| null` | `null` | — |
+| `overlay_probes` | no | `array[integer]` | `[]` | — |
 
 ### `ColorbarOverride`
 
@@ -270,7 +280,7 @@ after each workflow and are not run artifacts.
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
 | `x_range_m` | yes | `tuple[number, number]` | — | minimum items: `2`; maximum items: `2` |
-| `y_top_m` | yes | `number` | — | greater than: `0.0` |
+| `y_top_m` | yes | `number` | — | greater than: `0` |
 | `bulk_viscosity_pa_s` | no | `number` | `0.0` | minimum: `0.0` |
 
 ### `DirectionalWaveAnalysis`
@@ -284,7 +294,7 @@ after each workflow and are not run artifacts.
 | `recipe` | yes | `'directional_wave'` | — | — |
 | `variable` | yes | `Variable` | — | — |
 | `frequency_min_hz` | no | `number` | `0.0` | minimum: `0.0` |
-| `frequency_max_hz` | yes | `number` | — | greater than: `0.0` |
+| `frequency_max_hz` | yes | `number` | — | greater than: `0` |
 | `expected_speed_min_m_s` | no | `number \| null` | `null` | — |
 | `expected_speed_max_m_s` | no | `number \| null` | `null` | — |
 | `minimum_coherence` | no | `number` | `0.8` | minimum: `0.0`; maximum: `1.0` |
@@ -297,8 +307,8 @@ after each workflow and are not run artifacts.
 | --- | --- | --- | --- | --- |
 | `formats` | no | `array['png' \| 'pdf' \| 'svg']` | `["png"]` | — |
 | `dpi` | no | `integer` | `300` | greater than: `0` |
-| `width_in` | no | `number` | `14.0` | greater than: `0.0` |
-| `height_in` | no | `number` | `4.5` | greater than: `0.0` |
+| `width_in` | no | `number` | `14.0` | greater than: `0` |
+| `height_in` | no | `number` | `4.5` | greater than: `0` |
 | `transparent` | no | `boolean` | `false` | — |
 
 ### `FigurePresentationOverride`
@@ -336,8 +346,8 @@ after each workflow and are not run artifacts.
 | --- | --- | --- | --- | --- |
 | `variable` | no | `Variable` | `"pressure"` | — |
 | `force_component` | no | `'x' \| 'y' \| 'moment'` | `"y"` | — |
-| `forcing_frequency_hz` | yes | `number` | — | greater than: `0.0` |
-| `minimum_forcing_periods` | no | `number` | `10.0` | greater than: `0.0` |
+| `forcing_frequency_hz` | yes | `number` | — | greater than: `0` |
+| `minimum_forcing_periods` | no | `number` | `10.0` | greater than: `0` |
 | `welch_segment_samples` | no | `integer` | `16384` | greater than: `0` |
 | `overlap_fraction` | no | `number` | `0.5` | minimum: `0.0`; less than: `1.0` |
 | `minimum_segments` | no | `integer` | `8` | greater than: `0` |
@@ -364,7 +374,7 @@ after each workflow and are not run artifacts.
 
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
-| `linewidth` | no | `number` | `2.0` | greater than: `0.0` |
+| `linewidth` | no | `number` | `2.0` | greater than: `0` |
 | `linestyle` | no | `'solid' \| 'dashed' \| 'dashdot' \| 'dotted'` | `"solid"` | — |
 | `marker` | no | `'none' \| 'circle' \| 'square' \| 'triangle' \| 'diamond'` | `"none"` | — |
 | `color` | no | `string \| null` | `null` | — |
@@ -416,7 +426,7 @@ after each workflow and are not run artifacts.
 | `overlap_fraction` | no | `number` | `0.5` | minimum: `0.0`; less than: `1.0` |
 | `surrogate_count` | no | `integer` | `499` | minimum: `19` |
 | `fdr_alpha` | no | `number` | `0.05` | greater than: `0.0`; less than: `1.0` |
-| `frequency_max_hz` | yes | `number` | — | greater than: `0.0` |
+| `frequency_max_hz` | yes | `number` | — | greater than: `0` |
 | `target_frequencies_hz` | no | `array[number]` | `[]` | — |
 | `automatic_frequency_selection` | no | `boolean` | `false` | — |
 
@@ -454,10 +464,12 @@ after each workflow and are not run artifacts.
 | `recipe` | yes | `'probe_spectrum'` | — | — |
 | `variable` | yes | `Variable` | — | — |
 | `frequency_max_hz` | no | `number \| null` | `null` | — |
+| `end_time_s` | no | `number \| null` | `null` | — |
 | `window` | no | `'hann' \| 'hamming' \| 'blackman' \| 'rectangular'` | `"hann"` | — |
 | `detrend` | no | `'mean' \| 'linear' \| 'none'` | `"mean"` | — |
 | `welch_segment_samples` | no | `integer \| null` | `null` | — |
 | `overlap_fraction` | no | `number` | `0.5` | minimum: `0.0`; less than: `1.0` |
+| `time_grid_policy` | no | `'resample_uniform' \| 'require_uniform'` | `"resample_uniform"` | — |
 
 ### `SinglePulseAnalysis`
 
@@ -469,11 +481,11 @@ after each workflow and are not run artifacts.
 | `probe_indices` | no | `array[integer]` | `[]` | — |
 | `recipe` | yes | `'single_pulse_response'` | — | — |
 | `variable` | yes | `Variable` | — | — |
-| `energy_per_pulse_j_m` | yes | `number` | — | greater than: `0.0` |
-| `pulse_fwhm_s` | yes | `number` | — | greater than: `0.0` |
-| `pulse_period_s` | yes | `number` | — | greater than: `0.0` |
+| `energy_per_pulse_j_m` | yes | `number` | — | greater than: `0` |
+| `pulse_fwhm_s` | yes | `number` | — | greater than: `0` |
+| `pulse_period_s` | yes | `number` | — | greater than: `0` |
 | `start_time_s` | no | `number` | `0.0` | — |
-| `cutoff_sigma` | no | `number` | `4.0` | greater than: `0.0` |
+| `cutoff_sigma` | no | `number` | `4.0` | greater than: `0` |
 | `baseline_end_time_s` | no | `number \| null` | `null` | — |
 | `minimum_baseline_samples` | no | `integer` | `8` | greater than: `0` |
 | `minimum_relative_source_amplitude` | no | `number` | `0.001` | greater than: `0.0`; less than: `1.0` |
@@ -496,7 +508,7 @@ after each workflow and are not run artifacts.
 | `recipe` | yes | `'surface_diagnostics'` | — | — |
 | `snapshot_start` | no | `integer \| null` | `null` | — |
 | `snapshot_end` | no | `integer \| null` | `null` | — |
-| `normal_sample_distance_m` | no | `number` | `0.001` | greater than: `0.0` |
+| `normal_sample_distance_m` | no | `number` | `0.001` | greater than: `0` |
 | `normal_sample_points` | no | `integer` | `8` | greater than: `0` |
 | `normal_profiles` | no | `SurfaceNormalProfiles \| null` | `null` | — |
 | `geometry_figure` | no | `SurfaceGeometryFigure` | `{"maximum_normal_arrows": 40, "normal_arrow_length": "sample_distance", "normal_color": "tab:orange", "surface_color": "black"}` | — |
@@ -517,7 +529,7 @@ after each workflow and are not run artifacts.
 | `fields` | yes | `array[Variable]` | — | minimum items: `1` |
 | `interpolation` | no | `'linear' \| 'nearest'` | `"linear"` | — |
 | `spacing` | no | `'uniform' \| 'wall_clustered'` | `"uniform"` | — |
-| `clustering_exponent` | no | `number` | `2.0` | greater than: `0.0` |
+| `clustering_exponent` | no | `number` | `2.0` | greater than: `0` |
 | `include_wall_extrapolation` | no | `boolean` | `true` | — |
 | `stations` | yes | `array[SurfaceNormalStation]` | — | minimum items: `1` |
 | `figure` | no | `SurfaceProfileFigure` | `{"coordinate_scale": "linear", "grid": true, "layout": "separate_fields", "normalize_values": false, "value_scale": "linear"}` | — |
@@ -579,7 +591,7 @@ after each workflow and are not run artifacts.
 | `recipe` | yes | `'transient_wavepacket'` | — | — |
 | `variable` | yes | `Variable` | — | — |
 | `band_min_hz` | yes | `number` | — | minimum: `0.0` |
-| `band_max_hz` | yes | `number` | — | greater than: `0.0` |
+| `band_max_hz` | yes | `number` | — | greater than: `0` |
 | `baseline_end_time_s` | no | `number \| null` | `null` | — |
 | `stft_segment_samples` | no | `integer` | `2048` | greater than: `0` |
 | `overlap_fraction` | no | `number` | `0.75` | minimum: `0.0`; less than: `1.0` |
@@ -589,12 +601,12 @@ after each workflow and are not run artifacts.
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
 | `font_family` | no | `string` | `"DejaVu Sans"` | — |
-| `base_size` | no | `number` | `14.0` | greater than: `0.0` |
-| `axes_label_size` | no | `number` | `16.0` | greater than: `0.0` |
-| `tick_label_size` | no | `number` | `14.0` | greater than: `0.0` |
-| `legend_size` | no | `number` | `13.0` | greater than: `0.0` |
-| `colorbar_label_size` | no | `number` | `13.0` | greater than: `0.0` |
-| `colorbar_tick_label_size` | no | `number` | `11.0` | greater than: `0.0` |
+| `base_size` | no | `number` | `14.0` | greater than: `0` |
+| `axes_label_size` | no | `number` | `16.0` | greater than: `0` |
+| `tick_label_size` | no | `number` | `14.0` | greater than: `0` |
+| `legend_size` | no | `number` | `13.0` | greater than: `0` |
+| `colorbar_label_size` | no | `number` | `13.0` | greater than: `0` |
+| `colorbar_tick_label_size` | no | `number` | `11.0` | greater than: `0` |
 | `colorbar_label_pad` | no | `number` | `2.0` | minimum: `0.0`; maximum: `24.0` |
 | `colorbar_tick_pad` | no | `number` | `2.0` | minimum: `0.0`; maximum: `24.0` |
 
@@ -624,7 +636,7 @@ after each workflow and are not run artifacts.
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
 | `schema_version` | no | `1` | `1` | — |
-| `inputs` | no | `InputConfig` | `{"baselines": {}, "comparison_archives": {}, "plotfiles": null, "probes": null}` | — |
+| `inputs` | no | `InputConfig` | `{"baselines": {}, "comparison_archives": {}, "comparison_probe_sets": {}, "plotfiles": null, "probes": null}` | — |
 | `outputs` | yes | `OutputConfig` | — | — |
 | `compute` | no | `ComputeConfig` | `{"fft_batch_size": 32, "memory_limit_gb": 8.0, "scratch_directory": null, "workers": 1}` | — |
 
@@ -633,7 +645,7 @@ after each workflow and are not run artifacts.
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
 | `workers` | no | `integer` | `1` | greater than: `0` |
-| `memory_limit_gb` | no | `number` | `8.0` | greater than: `0.0` |
+| `memory_limit_gb` | no | `number` | `8.0` | greater than: `0` |
 | `fft_batch_size` | no | `integer` | `32` | greater than: `0` |
 | `scratch_directory` | no | `string \| null` | `null` | — |
 
@@ -644,6 +656,7 @@ after each workflow and are not run artifacts.
 | `plotfiles` | no | `PlotfileInput \| null` | `null` | — |
 | `probes` | no | `ProbeInput \| null` | `null` | — |
 | `comparison_archives` | no | `mapping[string, string]` | — | — |
+| `comparison_probe_sets` | no | `mapping[string, ProbeInput]` | — | — |
 | `baselines` | no | `mapping[string, PlotfileInput]` | — | — |
 
 ### `OutputConfig`

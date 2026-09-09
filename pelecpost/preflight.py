@@ -135,12 +135,24 @@ def _sampling_summary(project: ResolvedProject, inventory: InputInventory) -> di
         result.update(_spatial_sampling(probes))
     segments: dict[str, Any] = {}
     for analysis in project.enabled_analyses:
-        segment = _segment_samples(analysis, probes.sample_count)
+        sample_count = probes.sample_count
+        if (
+            analysis.recipe == "probe_spectrum"
+            and getattr(analysis, "time_grid_policy", "resample_uniform") == "resample_uniform"
+            and probes.time_min_s is not None
+            and probes.time_max_s is not None
+        ):
+            resampled_count = int(
+                np.floor((probes.time_max_s - probes.time_min_s) / dt)
+            ) + 1
+            sample_count = max(sample_count, resampled_count)
+        segment = _segment_samples(analysis, sample_count)
         if segment:
             overlap = float(getattr(analysis, "overlap_fraction", 0.5))
             step = max(1, int(round(segment * (1.0 - overlap))))
-            count = 1 + max(0, (probes.sample_count - segment) // step)
+            count = 1 + max(0, (sample_count - segment) // step)
             segments[analysis.id] = {
+                "sample_count": sample_count,
                 "segment_samples": segment,
                 "segment_count": count,
                 "effective_frequency_resolution_hz": 1.0 / (segment * dt),
@@ -232,57 +244,112 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
             ))
         if analysis.recipe == "case_comparison":
             selected_archives = (analysis.baseline_id, analysis.comparison_id)
-            for archive_id in selected_archives:
-                if archive_id not in inventory.comparison_archives:
-                    findings.append(Finding(
-                        Severity.BLOCKER, "UNKNOWN_COMPARISON_ARCHIVE",
-                        f"Comparison archive {archive_id!r} is not defined in machine.yaml.",
-                        analysis.id,
-                    ))
-                elif archive_id in inventory.comparison_errors:
-                    findings.append(Finding(
-                        Severity.BLOCKER, "COMPARISON_INSPECTION",
-                        f"Comparison archive {archive_id!r} is unreadable: "
-                        f"{inventory.comparison_errors[archive_id]}", analysis.id,
-                    ))
-            for artifact_id in analysis.artifact_ids:
-                if not all(
-                    archive_id in inventory.comparison_archives
-                    for archive_id in selected_archives
-                ):
-                    continue
-                missing = [
-                    archive_id for archive_id in selected_archives
-                    if archive_id in inventory.comparison_archives
-                    and artifact_id not in inventory.comparison_products.get(archive_id, ())
+            # Direct probe mode: probe binaries in comparison_probe_sets.
+            if getattr(analysis, "variable", None) is not None:
+                for archive_id in selected_archives:
+                    if archive_id not in inventory.comparison_probe_sets:
+                        findings.append(Finding(
+                            Severity.BLOCKER, "UNKNOWN_COMPARISON_ARCHIVE",
+                            f"Comparison probe set {archive_id!r} is not defined "
+                            f"in machine.yaml:comparison_probe_sets.",
+                            analysis.id,
+                        ))
+                    elif archive_id in inventory.comparison_probe_errors:
+                        findings.append(Finding(
+                            Severity.BLOCKER, "COMPARISON_INSPECTION",
+                            f"Comparison probe set {archive_id!r} is unreadable: "
+                            f"{inventory.comparison_probe_errors[archive_id]}", analysis.id,
+                        ))
+                    else:
+                        inv = inventory.comparison_probe_sets[archive_id]
+                        val = getattr(analysis, "variable")
+                        vname = val.value if hasattr(val, "value") else str(val)
+                        if not _has_probe_field(vname, inv.fields):
+                            findings.append(Finding(
+                                Severity.BLOCKER, "MISSING_PROBE_FIELD",
+                                f"Probe variable {vname!r} absent in comparison set "
+                                f"{archive_id!r}; available: {inv.fields}.",
+                                analysis.id,
+                            ))
+                        probes = tuple(getattr(analysis, "probe_indices", ())) or tuple(getattr(analysis, "overlay_probes", ()))
+                        if probes and max(probes) >= inv.probe_count:
+                            findings.append(Finding(
+                                Severity.BLOCKER, "INVALID_PROBE_SELECTION",
+                                f"probe indices exceed probe_count {inv.probe_count} "
+                                f"in comparison set {archive_id!r}.", analysis.id,
+                            ))
+                probe_sets = [
+                    inv for key, inv in inventory.comparison_probe_sets.items()
+                    if key in selected_archives
                 ]
-                if missing:
-                    findings.append(Finding(
-                        Severity.BLOCKER, "MISSING_COMPARISON_ARTIFACT",
-                        f"Artifact {artifact_id!r} is not registered in comparison archive(s): "
-                        f"{', '.join(missing)}.", analysis.id,
-                    ))
-                    continue
-                first = inventory.comparison_metadata[analysis.baseline_id][artifact_id]
-                second = inventory.comparison_metadata[analysis.comparison_id][artifact_id]
-                differences = [
-                    key for key in (
-                        "schema_version", "variable", "units", "coordinate_metadata", "kind"
-                    )
-                    if first.get(key) != second.get(key)
-                ]
-                first_preprocessing = first.get("provenance", {}).get("preprocessing")
-                second_preprocessing = second.get("provenance", {}).get("preprocessing")
-                if first_preprocessing is None or second_preprocessing is None:
-                    differences.append("preprocessing provenance (missing)")
-                elif first_preprocessing != second_preprocessing:
-                    differences.append("preprocessing provenance")
-                if differences:
-                    findings.append(Finding(
-                        Severity.BLOCKER, "INCOMPATIBLE_COMPARISON_ARTIFACT",
-                        f"Artifact {artifact_id!r} differs between the selected runs in: "
-                        f"{', '.join(differences)}.", analysis.id,
-                    ))
+                if probe_sets:
+                    dt_values = [
+                        inv.median_timestep_s for inv in probe_sets
+                        if inv.median_timestep_s
+                    ]
+                    dt = min(dt_values) if dt_values else None
+                    if dt and dt > 0:
+                        record = analysis.end_time_s or max(
+                            (inv.time_max_s or 0) for inv in probe_sets
+                        )
+                        if record and analysis.frequency_max_hz and analysis.frequency_max_hz > 0.5 / dt:
+                            findings.append(Finding(
+                                Severity.BLOCKER, "ABOVE_NYQUIST",
+                                f"Requested frequency_max {analysis.frequency_max_hz:.6g} exceeds "
+                                f"Nyquist {0.5/dt:.6g}.", analysis.id,
+                            ))
+            else:
+                for archive_id in selected_archives:
+                    if archive_id not in inventory.comparison_archives:
+                        findings.append(Finding(
+                            Severity.BLOCKER, "UNKNOWN_COMPARISON_ARCHIVE",
+                            f"Comparison archive {archive_id!r} is not defined in machine.yaml.",
+                            analysis.id,
+                        ))
+                    elif archive_id in inventory.comparison_errors:
+                        findings.append(Finding(
+                            Severity.BLOCKER, "COMPARISON_INSPECTION",
+                            f"Comparison archive {archive_id!r} is unreadable: "
+                            f"{inventory.comparison_errors[archive_id]}", analysis.id,
+                        ))
+                for artifact_id in analysis.artifact_ids:
+                    if not all(
+                        archive_id in inventory.comparison_archives
+                        for archive_id in selected_archives
+                    ):
+                        continue
+                    missing = [
+                        archive_id for archive_id in selected_archives
+                        if archive_id in inventory.comparison_archives
+                        and artifact_id not in inventory.comparison_products.get(archive_id, ())
+                    ]
+                    if missing:
+                        findings.append(Finding(
+                            Severity.BLOCKER, "MISSING_COMPARISON_ARTIFACT",
+                            f"Artifact {artifact_id!r} is not registered in comparison archive(s): "
+                            f"{', '.join(missing)}.", analysis.id,
+                        ))
+                        continue
+                    first = inventory.comparison_metadata[analysis.baseline_id][artifact_id]
+                    second = inventory.comparison_metadata[analysis.comparison_id][artifact_id]
+                    differences = [
+                        key for key in (
+                            "schema_version", "variable", "units", "coordinate_metadata", "kind"
+                        )
+                        if first.get(key) != second.get(key)
+                    ]
+                    first_preprocessing = first.get("provenance", {}).get("preprocessing")
+                    second_preprocessing = second.get("provenance", {}).get("preprocessing")
+                    if first_preprocessing is None or second_preprocessing is None:
+                        differences.append("preprocessing provenance (missing)")
+                    elif first_preprocessing != second_preprocessing:
+                        differences.append("preprocessing provenance")
+                    if differences:
+                        findings.append(Finding(
+                            Severity.BLOCKER, "INCOMPATIBLE_COMPARISON_ARTIFACT",
+                            f"Artifact {artifact_id!r} differs between the selected runs in: "
+                            f"{', '.join(differences)}.", analysis.id,
+                        ))
         variable = getattr(analysis, "variable", None)
         if variable is not None and inventory.probes is not None:
             value = str(variable.value if hasattr(variable, "value") else variable)
@@ -665,8 +732,18 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
             for message in item.errors:
                 findings.append(Finding(Severity.BLOCKER, f"{label.upper()}_INSPECTION", message))
     if inventory.probes is not None:
+        if inventory.probes.sample_count < 2:
+            findings.append(Finding(
+                Severity.BLOCKER, "INSUFFICIENT_PROBE_SAMPLES",
+                "Probe input must contain at least two time samples.",
+            ))
         if inventory.probes.nonfinite_time_count:
             findings.append(Finding(Severity.BLOCKER, "NONFINITE_TIME", "Probe time contains nonfinite values."))
+        if inventory.probes.nonpositive_timestep_count:
+            findings.append(Finding(
+                Severity.BLOCKER, "INVALID_TIME_ORDER",
+                "Probe time must be strictly increasing; nonpositive timestep(s) were found.",
+            ))
         missing_total = sum(inventory.probes.missing_value_count.values())
         if missing_total:
             details = ", ".join(
@@ -683,11 +760,45 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                 f"Probe inventory reports {inventory.probes.restart_overlap_count} restart overlap(s).",
             ))
         dt = inventory.probes.median_timestep_s
-        if dt and inventory.probes.timestep_std_s and inventory.probes.timestep_std_s / dt > 1e-3:
-            findings.append(Finding(
-                Severity.WARNING, "NONUNIFORM_TIME",
-                "Probe sampling is nonuniform; FFT recipes require an explicit coordinate policy.",
-            ))
+        timestep_deviation = inventory.probes.timestep_max_deviation_s
+        uniform_tolerance = (
+            abs(dt) * 1.0e-9 + max(abs(dt) * 1.0e-9, 1.0e-15)
+            if dt and dt > 0.0 else None
+        )
+        nonuniform = (
+            timestep_deviation is not None
+            and uniform_tolerance is not None
+            and timestep_deviation > uniform_tolerance
+        )
+        if not nonuniform and dt and inventory.probes.timestep_std_s:
+            nonuniform = inventory.probes.timestep_std_s / dt > 1e-3
+        if nonuniform:
+            spectrum_analyses = [
+                analysis for analysis in project.enabled_analyses
+                if analysis.recipe == "probe_spectrum"
+            ]
+            strict_spectrum = [
+                analysis for analysis in spectrum_analyses
+                if getattr(analysis, "time_grid_policy", None) == "require_uniform"
+            ]
+            if strict_spectrum:
+                findings.append(Finding(
+                    Severity.BLOCKER, "NONUNIFORM_TIME",
+                    "Probe sampling is nonuniform; probe_spectrum analysis configured "
+                    "time_grid_policy=require_uniform.", strict_spectrum[0].id,
+                ))
+            elif spectrum_analyses:
+                findings.append(Finding(
+                    Severity.WARNING, "NONUNIFORM_TIME",
+                    "Probe sampling is nonuniform; probe_spectrum will resample to a "
+                    "uniform grid using the median timestep.",
+                ))
+            else:
+                findings.append(Finding(
+                    Severity.WARNING, "NONUNIFORM_TIME",
+                    "Probe sampling is nonuniform; FFT recipes require an explicit "
+                    "coordinate policy.",
+                ))
 
     estimate_items = []
     for analysis in project.enabled_analyses:

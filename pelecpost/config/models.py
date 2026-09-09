@@ -622,10 +622,12 @@ class ProbeSpectrumAnalysis(ProbeAnalysis):
     recipe: Literal["probe_spectrum"]
     variable: Variable
     frequency_max_hz: PositiveFloat | None = None
+    end_time_s: PositiveFloat | None = None
     window: Literal["hann", "hamming", "blackman", "rectangular"] = "hann"
     detrend: Literal["mean", "linear", "none"] = "mean"
     welch_segment_samples: PositiveInt | None = None
     overlap_fraction: float = Field(default=0.5, ge=0.0, lt=1.0)
+    time_grid_policy: Literal["resample_uniform", "require_uniform"] = "resample_uniform"
 
 
 class SinglePulseAnalysis(ProbeAnalysis):
@@ -716,7 +718,19 @@ class CaseComparisonAnalysis(BaseAnalysis):
     recipe: Literal["case_comparison"]
     baseline_id: str
     comparison_id: str
-    artifact_ids: tuple[str, ...] = Field(min_length=1)
+    artifact_ids: tuple[str, ...] = Field(default_factory=tuple)
+    # Direct-probe overlay mode: compare probe binaries in one run instead of
+    # archived runs. Requires comparison_probe_sets in machine.yaml.
+    variable: Variable | None = None
+    probe_indices: tuple[int, ...] = ()
+    end_time_s: PositiveFloat | None = None
+    window: Literal["hann", "hamming", "blackman", "rectangular"] | None = None
+    detrend: Literal["mean", "linear", "none"] | None = None
+    welch_segment_samples: PositiveInt | None = None
+    overlap_fraction: float | None = Field(default=None, ge=0.0, lt=1.0)
+    time_grid_policy: Literal["resample_uniform", "require_uniform"] | None = None
+    frequency_max_hz: PositiveFloat | None = None
+    overlay_probes: tuple[int, ...] = ()
 
     @model_validator(mode="after")
     def distinct_runs_and_products(self) -> "CaseComparisonAnalysis":
@@ -724,6 +738,25 @@ class CaseComparisonAnalysis(BaseAnalysis):
             raise ValueError("baseline_id and comparison_id must be different")
         if len(self.artifact_ids) != len(set(self.artifact_ids)):
             raise ValueError("artifact_ids must be unique")
+        probe_mode = any(
+            getattr(self, name) is not None
+            for name in ("variable", "end_time_s", "window", "detrend",
+                         "welch_segment_samples", "overlap_fraction",
+                         "time_grid_policy", "frequency_max_hz")
+        ) or bool(self.probe_indices)
+        archive_mode = bool(self.artifact_ids)
+        if probe_mode and archive_mode:
+            raise ValueError(
+                "case_comparison: choose artifact_ids (archive mode) or "
+                "variable/probe_indices (direct probe mode), not both"
+            )
+        if not archive_mode and not probe_mode:
+            raise ValueError(
+                "case_comparison requires artifact_ids or direct probe "
+                "comparison fields (variable + probe comparison mode)"
+            )
+        if probe_mode and self.variable is None:
+            raise ValueError("direct probe comparison requires variable")
         return self
 
 
@@ -776,7 +809,17 @@ class InputConfig(StrictModel):
     plotfiles: PlotfileInput | None = None
     probes: ProbeInput | None = None
     comparison_archives: dict[str, Path] = Field(default_factory=dict)
+    comparison_probe_sets: dict[str, ProbeInput] = Field(default_factory=dict)
     baselines: dict[str, PlotfileInput] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def comparison_requires_mode(self) -> "InputConfig":
+        if self.comparison_archives and self.comparison_probe_sets:
+            raise ValueError(
+                "choose comparison_archives (run dirs with artifacts.json) or "
+                "comparison_probe_sets (direct probe binaries), not both"
+            )
+        return self
 
 
 class OutputConfig(StrictModel):

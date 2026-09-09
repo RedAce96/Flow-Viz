@@ -27,7 +27,7 @@
             "title": "Baseline Id"
           },
           "conductivity_w_m_k": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Conductivity W M K",
             "type": "number"
           },
@@ -43,7 +43,7 @@
             "default": null
           },
           "dynamic_viscosity_pa_s": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Dynamic Viscosity Pa S",
             "type": "number"
           },
@@ -77,7 +77,7 @@
           },
           "normal_sample_distance_m": {
             "default": 0.001,
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Normal Sample Distance M",
             "type": "number"
           },
@@ -115,20 +115,20 @@
             "type": "string"
           },
           "reference_chord_m": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Reference Chord M",
             "type": "number"
           },
           "reference_span_m": {
             "default": 1.0,
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Reference Span M",
             "type": "number"
           },
           "wall_temperature_k": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
+                "exclusiveMinimum": 0,
                 "type": "number"
               },
               {
@@ -153,12 +153,12 @@
         "additionalProperties": false,
         "properties": {
           "conductivity_w_m_k": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Conductivity W M K",
             "type": "number"
           },
           "dynamic_viscosity_pa_s": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Dynamic Viscosity Pa S",
             "type": "number"
           },
@@ -179,7 +179,7 @@
             "type": "boolean"
           },
           "maximum_height_m": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Maximum Height M",
             "type": "number"
           },
@@ -207,7 +207,7 @@
             "type": "array"
           },
           "wall_temperature_k": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Wall Temperature K",
             "type": "number"
           },
@@ -237,7 +237,6 @@
             "items": {
               "type": "string"
             },
-            "minItems": 1,
             "title": "Artifact Ids",
             "type": "array"
           },
@@ -249,15 +248,80 @@
             "title": "Comparison Id",
             "type": "string"
           },
+          "detrend": {
+            "anyOf": [
+              {
+                "enum": [
+                  "mean",
+                  "linear",
+                  "none"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detrend"
+          },
           "enabled": {
             "default": true,
             "title": "Enabled",
             "type": "boolean"
           },
+          "end_time_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Time S"
+          },
+          "frequency_max_hz": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Frequency Max Hz"
+          },
           "id": {
             "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
             "title": "Id",
             "type": "string"
+          },
+          "overlap_fraction": {
+            "anyOf": [
+              {
+                "exclusiveMaximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Overlap Fraction"
+          },
+          "overlay_probes": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Overlay Probes",
+            "type": "array"
           },
           "presentation": {
             "anyOf": [
@@ -270,18 +334,83 @@
             ],
             "default": null
           },
+          "probe_indices": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Probe Indices",
+            "type": "array"
+          },
           "recipe": {
             "const": "case_comparison",
             "title": "Recipe",
             "type": "string"
+          },
+          "time_grid_policy": {
+            "anyOf": [
+              {
+                "enum": [
+                  "resample_uniform",
+                  "require_uniform"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Time Grid Policy"
+          },
+          "variable": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Variable"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "welch_segment_samples": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Welch Segment Samples"
+          },
+          "window": {
+            "anyOf": [
+              {
+                "enum": [
+                  "hann",
+                  "hamming",
+                  "blackman",
+                  "rectangular"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Window"
           }
         },
         "required": [
           "id",
           "recipe",
           "baseline_id",
-          "comparison_id",
-          "artifact_ids"
+          "comparison_id"
         ],
         "title": "CaseComparisonAnalysis",
         "type": "object"
@@ -698,7 +827,7 @@
           "symlog_linear_threshold": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
+                "exclusiveMinimum": 0,
                 "type": "number"
               },
               {
@@ -785,7 +914,7 @@
           "symlog_linear_threshold": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
+                "exclusiveMinimum": 0,
                 "type": "number"
               },
               {
@@ -835,7 +964,7 @@
             "type": "array"
           },
           "y_top_m": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Y Top M",
             "type": "number"
           }
@@ -858,7 +987,7 @@
           "expected_speed_max_m_s": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
+                "exclusiveMinimum": 0,
                 "type": "number"
               },
               {
@@ -871,7 +1000,7 @@
           "expected_speed_min_m_s": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
+                "exclusiveMinimum": 0,
                 "type": "number"
               },
               {
@@ -882,7 +1011,7 @@
             "title": "Expected Speed Min M S"
           },
           "frequency_max_hz": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Frequency Max Hz",
             "type": "number"
           },
@@ -989,7 +1118,7 @@
           },
           "height_in": {
             "default": 4.5,
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Height In",
             "type": "number"
           },
@@ -1000,7 +1129,7 @@
           },
           "width_in": {
             "default": 14.0,
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Width In",
             "type": "number"
           }
@@ -1047,7 +1176,7 @@
           "height_in": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
+                "exclusiveMinimum": 0,
                 "type": "number"
               },
               {
@@ -1072,7 +1201,7 @@
           "width_in": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
+                "exclusiveMinimum": 0,
                 "type": "number"
               },
               {
@@ -1259,13 +1388,13 @@
             "type": "string"
           },
           "forcing_frequency_hz": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Forcing Frequency Hz",
             "type": "number"
           },
           "minimum_forcing_periods": {
             "default": 10.0,
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Minimum Forcing Periods",
             "type": "number"
           },
@@ -1546,7 +1675,7 @@
           },
           "linewidth": {
             "default": 2.0,
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Linewidth",
             "type": "number"
           },
@@ -1660,7 +1789,7 @@
           "linewidth": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
+                "exclusiveMinimum": 0,
                 "type": "number"
               },
               {
@@ -1838,7 +1967,7 @@
             "type": "number"
           },
           "frequency_max_hz": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Frequency Max Hz",
             "type": "number"
           },
@@ -1893,7 +2022,7 @@
           "target_frequencies_hz": {
             "default": [],
             "items": {
-              "exclusiveMinimum": 0.0,
+              "exclusiveMinimum": 0,
               "type": "number"
             },
             "title": "Target Frequencies Hz",
@@ -2100,10 +2229,23 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "end_time_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Time S"
+          },
           "frequency_max_hz": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
+                "exclusiveMinimum": 0,
                 "type": "number"
               },
               {
@@ -2147,6 +2289,15 @@
           "recipe": {
             "const": "probe_spectrum",
             "title": "Recipe",
+            "type": "string"
+          },
+          "time_grid_policy": {
+            "default": "resample_uniform",
+            "enum": [
+              "resample_uniform",
+              "require_uniform"
+            ],
+            "title": "Time Grid Policy",
             "type": "string"
           },
           "variable": {
@@ -2202,7 +2353,7 @@
           },
           "cutoff_sigma": {
             "default": 4.0,
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Cutoff Sigma",
             "type": "number"
           },
@@ -2212,14 +2363,14 @@
             "type": "boolean"
           },
           "energy_per_pulse_j_m": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Energy Per Pulse J M",
             "type": "number"
           },
           "frequency_max_hz": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
+                "exclusiveMinimum": 0,
                 "type": "number"
               },
               {
@@ -2267,12 +2418,12 @@
             "type": "array"
           },
           "pulse_fwhm_s": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Pulse Fwhm S",
             "type": "number"
           },
           "pulse_period_s": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Pulse Period S",
             "type": "number"
           },
@@ -2357,7 +2508,7 @@
           },
           "normal_sample_distance_m": {
             "default": 0.001,
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Normal Sample Distance M",
             "type": "number"
           },
@@ -2431,7 +2582,7 @@
                 "type": "string"
               },
               {
-                "exclusiveMinimum": 0.0,
+                "exclusiveMinimum": 0,
                 "type": "number"
               }
             ],
@@ -2457,7 +2608,7 @@
         "properties": {
           "clustering_exponent": {
             "default": 2.0,
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Clustering Exponent",
             "type": "number"
           },
@@ -2539,7 +2690,7 @@
           "distance_m": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
+                "exclusiveMinimum": 0,
                 "type": "number"
               },
               {
@@ -2777,7 +2928,7 @@
         "additionalProperties": false,
         "properties": {
           "band_max_hz": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Band Max Hz",
             "type": "number"
           },
@@ -2864,13 +3015,13 @@
         "properties": {
           "axes_label_size": {
             "default": 16.0,
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Axes Label Size",
             "type": "number"
           },
           "base_size": {
             "default": 14.0,
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Base Size",
             "type": "number"
           },
@@ -2883,13 +3034,13 @@
           },
           "colorbar_label_size": {
             "default": 13.0,
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Colorbar Label Size",
             "type": "number"
           },
           "colorbar_tick_label_size": {
             "default": 11.0,
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Colorbar Tick Label Size",
             "type": "number"
           },
@@ -2907,13 +3058,13 @@
           },
           "legend_size": {
             "default": 13.0,
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Legend Size",
             "type": "number"
           },
           "tick_label_size": {
             "default": 14.0,
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Tick Label Size",
             "type": "number"
           }
@@ -2927,7 +3078,7 @@
           "axes_label_size": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
+                "exclusiveMinimum": 0,
                 "type": "number"
               },
               {
@@ -2940,7 +3091,7 @@
           "base_size": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
+                "exclusiveMinimum": 0,
                 "type": "number"
               },
               {
@@ -2967,7 +3118,7 @@
           "colorbar_label_size": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
+                "exclusiveMinimum": 0,
                 "type": "number"
               },
               {
@@ -2980,7 +3131,7 @@
           "colorbar_tick_label_size": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
+                "exclusiveMinimum": 0,
                 "type": "number"
               },
               {
@@ -3019,7 +3170,7 @@
           "legend_size": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
+                "exclusiveMinimum": 0,
                 "type": "number"
               },
               {
@@ -3032,7 +3183,7 @@
           "tick_label_size": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
+                "exclusiveMinimum": 0,
                 "type": "number"
               },
               {
@@ -3256,12 +3407,12 @@
         "additionalProperties": false,
         "properties": {
           "density_kg_m3": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Density Kg M3",
             "type": "number"
           },
           "pressure_pa": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Pressure Pa",
             "type": "number"
           },
@@ -3272,12 +3423,12 @@
             "type": "string"
           },
           "temperature_k": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Temperature K",
             "type": "number"
           },
           "velocity_m_s": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Velocity M S",
             "type": "number"
           }
@@ -3311,7 +3462,7 @@
           "trailing_edge_x_m": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
+                "exclusiveMinimum": 0,
                 "type": "number"
               },
               {
@@ -3347,7 +3498,7 @@
           },
           "gas_constant_j_kg_k": {
             "default": 287.05,
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Gas Constant J Kg K",
             "type": "number"
           }
@@ -3552,7 +3703,7 @@
             "type": "number"
           },
           "length_m": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Length M",
             "type": "number"
           },
@@ -3664,7 +3815,7 @@
           },
           "memory_limit_gb": {
             "default": 8.0,
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Memory Limit Gb",
             "type": "number"
           },
@@ -3707,6 +3858,13 @@
               "type": "string"
             },
             "title": "Comparison Archives",
+            "type": "object"
+          },
+          "comparison_probe_sets": {
+            "additionalProperties": {
+              "$ref": "#/$defs/ProbeInput"
+            },
+            "title": "Comparison Probe Sets",
             "type": "object"
           },
           "plotfiles": {
@@ -3815,6 +3973,7 @@
         "default": {
           "baselines": {},
           "comparison_archives": {},
+          "comparison_probe_sets": {},
           "plotfiles": null,
           "probes": null
         }

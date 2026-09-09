@@ -58,10 +58,15 @@ class WorkflowProtocol(Protocol):
 
 
 def _input_available(name: str, inventory: "InputInventory") -> bool:
+    # comparison_archives remains the required-input key for backward compat,
+    # but it is satisfied by either run-dir archives or direct probe sets.
+    has_comparison = bool(inventory.comparison_archives) or bool(
+        getattr(inventory, "comparison_probe_sets", {})
+    )
     available = {
         "plotfiles": inventory.plotfiles is not None and inventory.plotfiles.count > 0,
         "probes": inventory.probes is not None and inventory.probes.sample_count > 0,
-        "comparison_archives": bool(inventory.comparison_archives),
+        "comparison_archives": has_comparison,
     }
     return available[name]
 
@@ -204,7 +209,19 @@ class RegisteredWorkflow:
             )
             selected = getattr(selection_source, "probe_indices", ())
             probe_count = len(selected) if selected else probes.probe_count
-            matrix = probes.sample_count * probe_count * 8
+            sample_count = probes.sample_count
+            if (
+                self.metadata.name == "probe_spectrum"
+                and getattr(analysis, "time_grid_policy", "resample_uniform") == "resample_uniform"
+                and probes.median_timestep_s
+                and probes.time_min_s is not None
+                and probes.time_max_s is not None
+            ):
+                resampled_count = int(
+                    (probes.time_max_s - probes.time_min_s) / probes.median_timestep_s
+                ) + 1
+                sample_count = max(sample_count, resampled_count)
+            matrix = sample_count * probe_count * 8
             if force_linkage:
                 return {
                     "field_slab": 1.5,
@@ -225,6 +242,8 @@ class RegisteredWorkflow:
                 "probe_spectrum", "single_pulse_response", "nonlinear_coupling",
             }:
                 components["fft_workspace"] = matrix * (multiplier - 1.0) / 1024**3
+                if self.metadata.name == "probe_spectrum":
+                    components["plotting_workspace"] = 0.1
             elif self.metadata.name == "directional_wave":
                 components["wavenumber_and_komega"] = matrix * (multiplier - 1.0) / 1024**3
             elif self.metadata.name == "transient_wavepacket":

@@ -41,8 +41,12 @@ class RuntimeTests(unittest.TestCase):
             self.assertIn("temperature-spectrum.spectral.psd", ids)
             self.assertIn("temperature-spectrum.spectral.coherence", ids)
             self.assertIn("temperature-spectrum.spectral.figure", ids)
+            self.assertIn("temperature-spectrum.spectral.probe_signals", ids)
+            self.assertIn("temperature-spectrum.spectral.probe_figure", ids)
             self.assertIn("run.measurement-evidence", ids)
             self.assertTrue((first.run_dir / "report/index.html").is_file())
+            self.assertTrue((first.run_dir / "figures/temperature-spectrum/probe_time_fft.png").is_file())
+            self.assertTrue((first.run_dir / "data/temperature-spectrum/probe_time_fft.npz").is_file())
             created = {
                 str(path.relative_to(first.run_dir))
                 for path in first.run_dir.rglob("*") if path.is_file()

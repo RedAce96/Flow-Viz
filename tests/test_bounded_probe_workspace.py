@@ -11,6 +11,7 @@ import numpy as np
 import yaml
 
 from pelecpost.config.loader import load_project
+from pelecpost.analysis.spectral import _prepare_fft_grid
 from pelecpost.io.signals import (
     open_compact_signal_workspace,
     open_probe_v2_signal_workspace,
@@ -20,6 +21,20 @@ from tests.test_preflight import PreflightTests
 
 
 class BoundedProbeWorkspaceTests(unittest.TestCase):
+    def test_nonuniform_fft_grid_resamples_or_rejects_explicitly(self):
+        time = np.array([0.0, 1.0, 2.1, 3.1]) * 1.0e-6
+        values = np.column_stack((time, 2.0 * time))
+        uniform_time, uniform_values, dt, resampled, cleanup = _prepare_fft_grid(
+            time, values, "resample_uniform"
+        )
+        self.assertIsNone(cleanup)
+        self.assertTrue(resampled)
+        self.assertEqual(len(uniform_time), 4)
+        self.assertAlmostEqual(dt, 1.0e-6)
+        np.testing.assert_allclose(uniform_values[-1], [3.0e-6, 6.0e-6])
+        with self.assertRaisesRegex(ValueError, "time_grid_policy=resample_uniform"):
+            _prepare_fft_grid(time, values, "require_uniform")
+
     def write_archive(self, path: Path, samples: int = 257, probes: int = 9) -> np.ndarray:
         source = np.arange(samples * probes, dtype=np.float64).reshape(samples, probes)
         with h5py.File(path, "w") as archive:

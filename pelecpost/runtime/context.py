@@ -80,6 +80,10 @@ class WorkflowContext:
             sources.append(self.plan.inventory.probes.source)
         if "comparison_archives" in required_inputs:
             sources.extend(self.plan.inventory.comparison_archives.values())
+            for probe_set in getattr(
+                self.plan.inventory, "comparison_probe_sets", {}
+            ).values():
+                sources.append(probe_set.source)
         baseline_id = (
             getattr(self.analysis, "baseline_id", None)
             if self.analysis.recipe == "aerodynamic_forces" else None

@@ -103,7 +103,7 @@ One-sided FFT/Welch spectra, coherence, and confidence summaries.
 - Required plotfile fields: none
 - Dependencies: none
 - Conflicts: none
-- Artifact IDs: spectral.psd, spectral.coherence, spectral.confidence, spectral.figure
+- Artifact IDs: spectral.psd, spectral.coherence, spectral.confidence, spectral.figure, spectral.probe_signals, spectral.probe_figure
 
 Assumptions:
 
@@ -235,7 +235,7 @@ Schema- and provenance-checked comparison of existing artifacts.
 - Required plotfile fields: none
 - Dependencies: none
 - Conflicts: none
-- Artifact IDs: comparison.metrics, comparison.figures
+- Artifact IDs: comparison.metrics, comparison.figures, comparison.overlay_figure
 
 Assumptions:
 

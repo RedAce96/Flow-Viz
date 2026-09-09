@@ -123,7 +123,7 @@ RECIPES: dict[str, RecipeDefinition] = {
             assumptions=("The selected record is approximately stationary.",),
             outputs=(
                 "spectral.psd", "spectral.coherence", "spectral.confidence",
-                "spectral.figure",
+                "spectral.figure", "spectral.probe_signals", "spectral.probe_figure",
             ),
             limitations=("Finite records and windowing limit frequency discrimination.",),
         ),
@@ -187,7 +187,7 @@ RECIPES: dict[str, RecipeDefinition] = {
             inputs=("comparison_archives",),
             fields=(),
             assumptions=("Compared artifacts use compatible coordinates and preprocessing.",),
-            outputs=("comparison.metrics", "comparison.figures"),
+            outputs=("comparison.metrics", "comparison.figures", "comparison.overlay_figure"),
             limitations=("Incompatible artifacts are rejected rather than interpolated silently.",),
         ),
     )
