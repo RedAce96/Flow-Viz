@@ -143,6 +143,12 @@ def render_recipe_reference() -> str:
         "",
     ]
     for recipe in RECIPES.values():
+        required_inputs = ", ".join(recipe.required_inputs)
+        if not required_inputs:
+            required_inputs = (
+                "local analysis dependencies and/or archived_runs"
+                if recipe.name == "case_comparison" else "none"
+            )
         lines.extend((
             f"## `{recipe.name}`",
             "",
@@ -152,7 +158,7 @@ def render_recipe_reference() -> str:
             "",
             f"- Dimensions: {', '.join(str(item) + '-D' for item in recipe.supported_dimensions)}",
             f"- Geometries: {', '.join(recipe.supported_geometries)}",
-            f"- Required inputs: {', '.join(recipe.required_inputs)}",
+            f"- Required inputs: {required_inputs}",
             f"- Required plotfile fields: {', '.join(recipe.required_fields) or 'none'}",
             f"- Dependencies: {', '.join(recipe.dependencies) or 'none'}",
             f"- Conflicts: {', '.join(recipe.conflicts) or 'none'}",

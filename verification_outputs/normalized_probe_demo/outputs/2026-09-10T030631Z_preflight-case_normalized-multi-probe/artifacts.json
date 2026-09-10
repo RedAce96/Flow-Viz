@@ -1,0 +1,2760 @@
+{
+  "artifacts": [
+    {
+      "coordinate_metadata": {},
+      "id": "run.resolved-case",
+      "interpretation": "Resolved portable case configuration.",
+      "kind": "run-metadata",
+      "path": "resolved-case.yaml",
+      "provenance": {},
+      "recipe_instance": "__run__",
+      "schema_version": 1,
+      "source_inputs": [],
+      "units": null,
+      "variable": null
+    },
+    {
+      "coordinate_metadata": {},
+      "id": "run.resolved-analyses",
+      "interpretation": "Resolved recipe configuration.",
+      "kind": "run-metadata",
+      "path": "resolved-analyses.yaml",
+      "provenance": {},
+      "recipe_instance": "__run__",
+      "schema_version": 1,
+      "source_inputs": [],
+      "units": null,
+      "variable": null
+    },
+    {
+      "coordinate_metadata": {},
+      "id": "run.resolved-machine",
+      "interpretation": "Resolved machine-local configuration.",
+      "kind": "run-metadata",
+      "path": "resolved-machine.yaml",
+      "provenance": {},
+      "recipe_instance": "__run__",
+      "schema_version": 1,
+      "source_inputs": [],
+      "units": null,
+      "variable": null
+    },
+    {
+      "coordinate_metadata": {},
+      "id": "run.plan",
+      "interpretation": "Scientific and resource preflight record.",
+      "kind": "run-metadata",
+      "path": "plan.json",
+      "provenance": {},
+      "recipe_instance": "__run__",
+      "schema_version": 1,
+      "source_inputs": [],
+      "units": null,
+      "variable": null
+    },
+    {
+      "coordinate_metadata": {},
+      "id": "run.manifest",
+      "interpretation": "Atomic workflow state and provenance manifest.",
+      "kind": "run-metadata",
+      "path": "manifest.json",
+      "provenance": {},
+      "recipe_instance": "__run__",
+      "schema_version": 1,
+      "source_inputs": [],
+      "units": null,
+      "variable": null
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "modes.probe.raw_history.figure",
+      "interpretation": "Overlay of the selected probe histories before recipe preprocessing.",
+      "kind": "figure",
+      "path": "figures/modes/raw_history_overlay.png",
+      "provenance": {
+        "figure_format": "png",
+        "normalization": "per_probe_peak",
+        "normalization_scales": [
+          0.1,
+          0.09990790624235975,
+          0.09974635826644469,
+          0.0999599057204375
+        ],
+        "preprocessing": {
+          "resampled": false,
+          "time_grid_policy": "resample_uniform"
+        },
+        "probe_labels": [
+          "x=0 m, y=0 m",
+          "x=0.01 m, y=0 m",
+          "x=0.02 m, y=0 m",
+          "x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "stage": "raw"
+      },
+      "recipe_instance": "modes",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "dimensionless",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "modes.probe.method_ready.figure",
+      "interpretation": "Overlay of the selected probe signals supplied to the recipe method.",
+      "kind": "figure",
+      "path": "figures/modes/method_ready_overlay.png",
+      "provenance": {
+        "figure_format": "png",
+        "normalization": "per_probe_peak",
+        "normalization_scales": [
+          0.1,
+          0.09990790624235975,
+          0.09974635826644469,
+          0.0999599057204375
+        ],
+        "preprocessing": {
+          "resampled": false,
+          "time_grid_policy": "resample_uniform"
+        },
+        "probe_labels": [
+          "x=0 m, y=0 m",
+          "x=0.01 m, y=0 m",
+          "x=0.02 m, y=0 m",
+          "x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "stage": "method_ready"
+      },
+      "recipe_instance": "modes",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "dimensionless",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "modes.modal.pod.figure",
+      "interpretation": "Weighted POD mode profiles over the selected probe coordinates.",
+      "kind": "figure",
+      "path": "figures/modes/pod_modes.png",
+      "provenance": {
+        "figure_format": "png",
+        "mode_count": 3,
+        "preprocessing": {
+          "dmd_ranks": [
+            2,
+            3
+          ],
+          "mode_count": 3,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "probe_stride": 1,
+          "recipe": "modal_screening",
+          "sensitivity_windows": [
+            [
+              0.0,
+              0.5
+            ],
+            [
+              0.5,
+              1.0
+            ]
+          ],
+          "spod_segment_samples": 256,
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "series_labels": [
+          "POD mode 1",
+          "POD mode 2",
+          "POD mode 3"
+        ]
+      },
+      "recipe_instance": "modes",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "probe_x": "m",
+        "time": "s"
+      },
+      "id": "modes.modal.pod",
+      "interpretation": "Weighted descriptive POD of the probe measure; not a stability eigenmode.",
+      "kind": "array",
+      "path": "data/modes/pod.npz",
+      "provenance": {
+        "preprocessing": {
+          "dmd_ranks": [
+            2,
+            3
+          ],
+          "mode_count": 3,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "probe_stride": 1,
+          "recipe": "modal_screening",
+          "sensitivity_windows": [
+            [
+              0.0,
+              0.5
+            ],
+            [
+              0.5,
+              1.0
+            ]
+          ],
+          "spod_segment_samples": 256,
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "product_contract": {
+          "axes": {
+            "space": [
+              "coordinates_m"
+            ]
+          },
+          "complex_value_semantics": "real_difference",
+          "coordinate_arrays": {
+            "space": [
+              "coordinates_m"
+            ]
+          },
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [],
+          "mask_keys": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "plotting_value_keys": [],
+          "product_type": "modal.pod",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "modes",
+            "temporal_coefficients",
+            "singular_values",
+            "energy_fraction",
+            "mean"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "variable-dependent",
+          "validity_by_value": null,
+          "validity_fields": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "value_dimensions": {
+            "energy_fraction": [],
+            "mean": [
+              "space"
+            ],
+            "modes": [
+              "space"
+            ],
+            "singular_values": [],
+            "temporal_coefficients": []
+          },
+          "value_keys": [
+            "modes",
+            "temporal_coefficients",
+            "singular_values",
+            "energy_fraction",
+            "mean"
+          ]
+        }
+      },
+      "recipe_instance": "modes",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "variable-dependent",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "modes.modal.spod.figure",
+      "interpretation": "SPOD eigenvalue spectra for the selected probe aperture.",
+      "kind": "figure",
+      "path": "figures/modes/spod_eigenvalues.png",
+      "provenance": {
+        "figure_format": "png",
+        "mode_count": 3,
+        "preprocessing": {
+          "dmd_ranks": [
+            2,
+            3
+          ],
+          "mode_count": 3,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "probe_stride": 1,
+          "recipe": "modal_screening",
+          "sensitivity_windows": [
+            [
+              0.0,
+              0.5
+            ],
+            [
+              0.5,
+              1.0
+            ]
+          ],
+          "spod_segment_samples": 256,
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "series_labels": [
+          "SPOD mode 1",
+          "SPOD mode 2",
+          "SPOD mode 3"
+        ]
+      },
+      "recipe_instance": "modes",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "variable-dependent",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "probe_x": "m",
+        "time": "s"
+      },
+      "id": "modes.modal.spod",
+      "interpretation": "Welch-block SPOD with explicit block count and probe quadrature weights.",
+      "kind": "array",
+      "path": "data/modes/spod.npz",
+      "provenance": {
+        "preprocessing": {
+          "dmd_ranks": [
+            2,
+            3
+          ],
+          "mode_count": 3,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "probe_stride": 1,
+          "recipe": "modal_screening",
+          "sensitivity_windows": [
+            [
+              0.0,
+              0.5
+            ],
+            [
+              0.5,
+              1.0
+            ]
+          ],
+          "spod_segment_samples": 256,
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "product_contract": {
+          "axes": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "coordinates_m"
+            ]
+          },
+          "complex_value_semantics": "real_difference",
+          "coordinate_arrays": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "coordinates_m"
+            ]
+          },
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [],
+          "mask_keys": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "plotting_value_keys": [],
+          "product_type": "modal.spod",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "eigenvalues",
+            "modes"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "variable-dependent",
+          "validity_by_value": null,
+          "validity_fields": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "value_dimensions": {
+            "eigenvalues": [
+              "frequency"
+            ],
+            "modes": [
+              "frequency",
+              null,
+              "space"
+            ]
+          },
+          "value_keys": [
+            "eigenvalues",
+            "modes"
+          ]
+        }
+      },
+      "recipe_instance": "modes",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "variable-dependent",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "modes.modal.dmd.figure",
+      "interpretation": "DMD modal amplitudes indexed by descriptive frequency.",
+      "kind": "figure",
+      "path": "figures/modes/dmd_amplitudes.png",
+      "provenance": {
+        "figure_format": "png",
+        "preprocessing": {
+          "dmd_ranks": [
+            2,
+            3
+          ],
+          "mode_count": 3,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "probe_stride": 1,
+          "recipe": "modal_screening",
+          "sensitivity_windows": [
+            [
+              0.0,
+              0.5
+            ],
+            [
+              0.5,
+              1.0
+            ]
+          ],
+          "spod_segment_samples": 256,
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "rank": 3,
+        "series_labels": [
+          "DMD amplitude"
+        ]
+      },
+      "recipe_instance": "modes",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "variable-dependent",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "probe_x": "m",
+        "time": "s"
+      },
+      "id": "modes.modal.dmd",
+      "interpretation": "Exact DMD of mean-subtracted probe snapshots; growth is descriptive and conditioning-limited.",
+      "kind": "array",
+      "path": "data/modes/dmd.npz",
+      "provenance": {
+        "preprocessing": {
+          "dmd_ranks": [
+            2,
+            3
+          ],
+          "mode_count": 3,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "probe_stride": 1,
+          "recipe": "modal_screening",
+          "sensitivity_windows": [
+            [
+              0.0,
+              0.5
+            ],
+            [
+              0.5,
+              1.0
+            ]
+          ],
+          "spod_segment_samples": 256,
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "product_contract": {
+          "axes": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "coordinates_m"
+            ]
+          },
+          "complex_value_semantics": "real_difference",
+          "coordinate_arrays": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "coordinates_m"
+            ]
+          },
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [],
+          "mask_keys": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "plotting_value_keys": [],
+          "product_type": "modal.dmd",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "modes",
+            "eigenvalues",
+            "growth_rate_per_s",
+            "amplitudes",
+            "retained_condition_number"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "variable-dependent",
+          "validity_by_value": null,
+          "validity_fields": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "value_dimensions": {
+            "amplitudes": [
+              "frequency"
+            ],
+            "eigenvalues": [
+              "frequency"
+            ],
+            "growth_rate_per_s": [
+              "frequency"
+            ],
+            "modes": [
+              "space",
+              "frequency"
+            ],
+            "retained_condition_number": []
+          },
+          "value_keys": [
+            "modes",
+            "eigenvalues",
+            "growth_rate_per_s",
+            "amplitudes",
+            "retained_condition_number"
+          ]
+        }
+      },
+      "recipe_instance": "modes",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "variable-dependent",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "probe_x": "m",
+        "time": "s"
+      },
+      "id": "modes.modal.sensitivity",
+      "interpretation": "Descriptive window/rank sensitivity; no LST eigenmode attribution",
+      "kind": "array",
+      "path": "data/modes/sensitivity.npz",
+      "provenance": {
+        "preprocessing": {
+          "dmd_ranks": [
+            2,
+            3
+          ],
+          "mode_count": 3,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "probe_stride": 1,
+          "recipe": "modal_screening",
+          "sensitivity_windows": [
+            [
+              0.0,
+              0.5
+            ],
+            [
+              0.5,
+              1.0
+            ]
+          ],
+          "spod_segment_samples": 256,
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "product_contract": {
+          "axes": {},
+          "complex_value_semantics": "real_difference",
+          "coordinate_arrays": {},
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [],
+          "mask_keys": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "plotting_value_keys": [],
+          "product_type": "modal.sensitivity",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "pod_subspace_min_cosine_to_first_window",
+            "dmd_dominant_frequency_hz",
+            "dmd_dominant_growth_rate_per_s",
+            "dmd_retained_condition_number"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "variable-dependent",
+          "validity_by_value": null,
+          "validity_fields": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "value_dimensions": {},
+          "value_keys": [
+            "pod_subspace_min_cosine_to_first_window",
+            "dmd_dominant_frequency_hz",
+            "dmd_dominant_growth_rate_per_s",
+            "dmd_retained_condition_number"
+          ]
+        }
+      },
+      "recipe_instance": "modes",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "variable-dependent",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "spectrum.probe.raw_history.figure",
+      "interpretation": "Overlay of the selected probe histories before recipe preprocessing.",
+      "kind": "figure",
+      "path": "figures/spectrum/raw_history_overlay.png",
+      "provenance": {
+        "figure_format": "png",
+        "normalization": "per_probe_peak",
+        "normalization_scales": [
+          0.1,
+          0.09990790624235975,
+          0.09974635826644469,
+          0.0999599057204375
+        ],
+        "preprocessing": {
+          "detrend": "mean",
+          "resampled": false,
+          "time_grid_policy": "resample_uniform",
+          "window": "hann"
+        },
+        "probe_labels": [
+          "x=0 m, y=0 m",
+          "x=0.01 m, y=0 m",
+          "x=0.02 m, y=0 m",
+          "x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "stage": "raw"
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "dimensionless",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "spectrum.probe.method_ready.figure",
+      "interpretation": "Overlay of the selected probe signals supplied to the recipe method.",
+      "kind": "figure",
+      "path": "figures/spectrum/method_ready_overlay.png",
+      "provenance": {
+        "figure_format": "png",
+        "normalization": "per_probe_peak",
+        "normalization_scales": [
+          0.10114724280838694,
+          0.10108996226497034,
+          0.10091320964995132,
+          0.10106213905199302
+        ],
+        "preprocessing": {
+          "detrend": "mean",
+          "resampled": false,
+          "time_grid_policy": "resample_uniform",
+          "window": "hann"
+        },
+        "probe_labels": [
+          "x=0 m, y=0 m",
+          "x=0.01 m, y=0 m",
+          "x=0.02 m, y=0 m",
+          "x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "stage": "method_ready"
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "dimensionless",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "probe_x": "m"
+      },
+      "id": "spectrum.spectral.psd",
+      "interpretation": "One-sided Welch power spectral density; peaks are descriptive stationary content.",
+      "kind": "array",
+      "path": "data/spectrum/stationary_spectrum.npz",
+      "provenance": {
+        "detrend": "mean",
+        "overlap_samples": 128,
+        "preprocessing": {
+          "detrend": "mean",
+          "frequency_max_hz": 400000.0,
+          "overlap_fraction": 0.5,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "recipe": "probe_spectrum",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure",
+          "welch_segment_samples": 256,
+          "window": "hann"
+        },
+        "product_contract": {
+          "axes": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "x_m"
+            ]
+          },
+          "complex_value_semantics": "real_difference",
+          "coordinate_arrays": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "x_m"
+            ]
+          },
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [],
+          "mask_keys": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "plotting_value_keys": [],
+          "product_type": "spectral.psd",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "psd"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "(Pa)^2/Hz",
+          "validity_by_value": null,
+          "validity_fields": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "value_dimensions": {
+            "psd": [
+              "frequency",
+              "space"
+            ]
+          },
+          "value_keys": [
+            "psd"
+          ]
+        },
+        "resampled": false,
+        "segment_samples": 256,
+        "si_boundary": "inspected probe field units (cgs fallback) to public SI",
+        "signal_workspace": {
+          "read_block_rows": 524288,
+          "resident_bound_bytes": 268435456,
+          "source_matrix_bytes": 32768,
+          "storage": "memory"
+        },
+        "time_grid_policy": "resample_uniform",
+        "window": "hann"
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "(Pa)^2/Hz",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {},
+      "id": "spectrum.spectral.confidence",
+      "interpretation": "Degrees of freedom are approximate because overlapped windowed segments are correlated.",
+      "kind": "json",
+      "path": "data/spectrum/spectral_confidence.json",
+      "provenance": {
+        "preprocessing": {
+          "detrend": "mean",
+          "frequency_max_hz": 400000.0,
+          "overlap_fraction": 0.5,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "recipe": "probe_spectrum",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure",
+          "welch_segment_samples": 256,
+          "window": "hann"
+        }
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": null,
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "probe_x": "m"
+      },
+      "id": "spectrum.spectral.coherence",
+      "interpretation": "Magnitude-squared coherence and downstream-minus-upstream cross phase for adjacent probes ordered by physical x coordinate.",
+      "kind": "array",
+      "path": "data/spectrum/adjacent_probe_coherence.npz",
+      "provenance": {
+        "overlap_samples": 128,
+        "pair_count": 3,
+        "preprocessing": {
+          "detrend": "mean",
+          "frequency_max_hz": 400000.0,
+          "overlap_fraction": 0.5,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "recipe": "probe_spectrum",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure",
+          "welch_segment_samples": 256,
+          "window": "hann"
+        },
+        "product_contract": {
+          "axes": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "upstream_x_m"
+            ]
+          },
+          "complex_value_semantics": "real_difference",
+          "coordinate_arrays": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "upstream_x_m"
+            ]
+          },
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [],
+          "mask_keys": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "plotting_value_keys": [],
+          "product_type": "spectral.coherence",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "coherence_squared",
+            "cross_phase_rad"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "dimensionless",
+          "validity_by_value": null,
+          "validity_fields": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "value_dimensions": {
+            "coherence_squared": [
+              "frequency",
+              "space"
+            ],
+            "cross_phase_rad": [
+              "frequency",
+              "space"
+            ]
+          },
+          "value_keys": [
+            "coherence_squared",
+            "cross_phase_rad"
+          ]
+        },
+        "resampled": false,
+        "segment_samples": 256,
+        "time_grid_policy": "resample_uniform"
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "dimensionless",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "probe_x": "m",
+        "time": "s"
+      },
+      "id": "spectrum.spectral.probe_signals",
+      "interpretation": "Selected probe histories and configured-detrend/window single-sided FFT amplitudes.",
+      "kind": "array",
+      "path": "data/spectrum/probe_time_fft.npz",
+      "provenance": {
+        "detrend": "mean",
+        "preprocessing": {
+          "detrend": "mean",
+          "frequency_max_hz": 400000.0,
+          "overlap_fraction": 0.5,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "recipe": "probe_spectrum",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure",
+          "welch_segment_samples": 256,
+          "window": "hann"
+        },
+        "product_contract": {
+          "axes": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "x_m"
+            ],
+            "time": [
+              "raw_time_s",
+              "time_s"
+            ]
+          },
+          "complex_value_semantics": "real_difference",
+          "coordinate_arrays": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "x_m"
+            ],
+            "time": [
+              "raw_time_s",
+              "time_s"
+            ]
+          },
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [],
+          "mask_keys": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "plotting_value_keys": [],
+          "product_type": "spectral.probe_signals",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "raw_values",
+            "processed_values",
+            "amplitude"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "Pa",
+          "validity_by_value": null,
+          "validity_fields": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "value_dimensions": {
+            "amplitude": [
+              "frequency",
+              "space"
+            ],
+            "processed_values": [
+              "time",
+              "space"
+            ],
+            "raw_values": [
+              "time",
+              "space"
+            ]
+          },
+          "value_keys": [
+            "raw_values",
+            "processed_values",
+            "amplitude"
+          ]
+        },
+        "resampled": false,
+        "time_grid_policy": "resample_uniform",
+        "window": "hann"
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "spectrum.spectral.fft_overlay.figure",
+      "interpretation": "Single-sided FFT amplitude overlaid for every selected probe.",
+      "kind": "figure",
+      "path": "figures/spectrum/fft_overlay.png",
+      "provenance": {
+        "detrend": "mean",
+        "figure_format": "png",
+        "normalization": "per_probe_peak",
+        "normalization_scales": [
+          0.09009859840043914,
+          0.09009863477667039,
+          0.09009863725651572,
+          0.09009860544846525
+        ],
+        "preprocessing": {
+          "detrend": "mean",
+          "frequency_max_hz": 400000.0,
+          "overlap_fraction": 0.5,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "recipe": "probe_spectrum",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure",
+          "welch_segment_samples": 256,
+          "window": "hann"
+        },
+        "probe_labels": [
+          "x=0 m, y=0 m",
+          "x=0.01 m, y=0 m",
+          "x=0.02 m, y=0 m",
+          "x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "time_grid_policy": "resample_uniform",
+        "window": "hann"
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "dimensionless",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "spectrum.spectral.psd_overlay.figure",
+      "interpretation": "One-sided Welch PSD overlaid for every selected probe.",
+      "kind": "figure",
+      "path": "figures/spectrum/psd_overlay.png",
+      "provenance": {
+        "detrend": "mean",
+        "figure_format": "png",
+        "normalization": "per_probe_peak",
+        "normalization_scales": [
+          6.92695028188115e-07,
+          6.926914475843562e-07,
+          6.926912034868886e-07,
+          6.926943344333334e-07
+        ],
+        "preprocessing": {
+          "detrend": "mean",
+          "frequency_max_hz": 400000.0,
+          "overlap_fraction": 0.5,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "recipe": "probe_spectrum",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure",
+          "welch_segment_samples": 256,
+          "window": "hann"
+        },
+        "probe_labels": [
+          "x=0 m, y=0 m",
+          "x=0.01 m, y=0 m",
+          "x=0.02 m, y=0 m",
+          "x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "time_grid_policy": "resample_uniform",
+        "window": "hann"
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "dimensionless",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "probe_x": "m",
+        "time": "s"
+      },
+      "id": "spectrum.spectral.probe_figure",
+      "interpretation": "Per-probe raw history, processed history, and single-sided FFT amplitude.",
+      "kind": "figure",
+      "path": "figures/spectrum/probe_time_fft.png",
+      "provenance": {
+        "detrend": "mean",
+        "page": 1,
+        "page_count": 1,
+        "preprocessing": {
+          "detrend": "mean",
+          "frequency_max_hz": 400000.0,
+          "overlap_fraction": 0.5,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "recipe": "probe_spectrum",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure",
+          "welch_segment_samples": 256,
+          "window": "hann"
+        },
+        "resampled": false,
+        "time_grid_policy": "resample_uniform",
+        "window": "hann"
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz"
+      },
+      "id": "spectrum.spectral.figure",
+      "interpretation": "Median stationary spectrum with the 10th\u201390th percentile probe envelope.",
+      "kind": "figure",
+      "path": "figures/spectrum/stationary_spectrum.png",
+      "provenance": {
+        "preprocessing": {
+          "detrend": "mean",
+          "frequency_max_hz": 400000.0,
+          "overlap_fraction": 0.5,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "recipe": "probe_spectrum",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure",
+          "welch_segment_samples": 256,
+          "window": "hann"
+        }
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "(Pa)^2/Hz",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "triads.probe.raw_history.figure",
+      "interpretation": "Overlay of the selected probe histories before recipe preprocessing.",
+      "kind": "figure",
+      "path": "figures/triads/raw_history_overlay.png",
+      "provenance": {
+        "figure_format": "png",
+        "normalization": "per_probe_peak",
+        "normalization_scales": [
+          0.1,
+          0.09990790624235975,
+          0.09974635826644469,
+          0.0999599057204375
+        ],
+        "preprocessing": {
+          "method_aggregation": "probe median",
+          "resampled": false,
+          "time_grid_policy": "resample_uniform"
+        },
+        "probe_labels": [
+          "x=0 m, y=0 m",
+          "x=0.01 m, y=0 m",
+          "x=0.02 m, y=0 m",
+          "x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "stage": "raw"
+      },
+      "recipe_instance": "triads",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "dimensionless",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "triads.probe.method_ready.figure",
+      "interpretation": "Overlay of the selected probe signals supplied to the recipe method.",
+      "kind": "figure",
+      "path": "figures/triads/method_ready_overlay.png",
+      "provenance": {
+        "figure_format": "png",
+        "normalization": "per_probe_peak",
+        "normalization_scales": [
+          0.1,
+          0.09990790624235975,
+          0.09974635826644469,
+          0.0999599057204375
+        ],
+        "preprocessing": {
+          "method_aggregation": "probe median",
+          "resampled": false,
+          "time_grid_policy": "resample_uniform"
+        },
+        "probe_labels": [
+          "x=0 m, y=0 m",
+          "x=0.01 m, y=0 m",
+          "x=0.02 m, y=0 m",
+          "x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "stage": "method_ready"
+      },
+      "recipe_instance": "triads",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "dimensionless",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "triads.nonlinear.bicoherence.figure",
+      "interpretation": "Observed and surrogate-median bicoherence for the probe-median signal.",
+      "kind": "figure",
+      "path": "figures/triads/bicoherence.png",
+      "provenance": {
+        "figure_format": "png",
+        "preprocessing": {
+          "automatic_frequency_selection": false,
+          "fdr_alpha": 0.05,
+          "frequency_max_hz": 100000.0,
+          "overlap_fraction": 0.5,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "recipe": "nonlinear_coupling",
+          "segment_samples": 128,
+          "surrogate_count": 19,
+          "target_frequencies_hz": [
+            25000.0
+          ],
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "series_labels": [
+          "Observed",
+          "Surrogate median"
+        ],
+        "signal_scope": "probe median",
+        "triad_count": 1
+      },
+      "recipe_instance": "triads",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "dimensionless",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz"
+      },
+      "id": "triads.nonlinear.bicoherence",
+      "interpretation": "Surrogate-tested squared bicoherence; association does not prove causal transfer.",
+      "kind": "array",
+      "path": "data/triads/triad_significance.npz",
+      "provenance": {
+        "fdr_alpha": 0.05,
+        "preprocessing": {
+          "automatic_frequency_selection": false,
+          "fdr_alpha": 0.05,
+          "frequency_max_hz": 100000.0,
+          "overlap_fraction": 0.5,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "recipe": "nonlinear_coupling",
+          "segment_samples": 128,
+          "surrogate_count": 19,
+          "target_frequencies_hz": [
+            25000.0
+          ],
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "product_contract": {
+          "axes": {},
+          "complex_value_semantics": "real_difference",
+          "coordinate_arrays": {},
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [
+            "triad_labels"
+          ],
+          "mask_keys": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "plotting_value_keys": [],
+          "product_type": "nonlinear.bicoherence",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "observed_bicoherence_squared",
+            "surrogate_median_bicoherence_squared",
+            "surrogate_95_bicoherence_squared",
+            "empirical_p_value",
+            "fdr_adjusted_p_value",
+            "significant_fdr"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "dimensionless squared bicoherence",
+          "validity_by_value": null,
+          "validity_fields": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "value_dimensions": {},
+          "value_keys": [
+            "observed_bicoherence_squared",
+            "surrogate_median_bicoherence_squared",
+            "surrogate_95_bicoherence_squared",
+            "empirical_p_value",
+            "fdr_adjusted_p_value",
+            "significant_fdr"
+          ]
+        },
+        "resampled": false,
+        "selection": {
+          "method": "explicit target_frequencies_hz from analyses.yaml",
+          "selected_frequency_hz": [
+            25000.0
+          ]
+        },
+        "signal_scope": "probe median",
+        "surrogate_count": 19,
+        "time_grid_policy": "resample_uniform"
+      },
+      "recipe_instance": "triads",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "dimensionless squared bicoherence",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz"
+      },
+      "id": "triads.nonlinear.triads",
+      "interpretation": "Only FDR-significant entries are retained as measured coupling candidates.",
+      "kind": "json",
+      "path": "data/triads/triad_summary.json",
+      "provenance": {
+        "preprocessing": {
+          "automatic_frequency_selection": false,
+          "fdr_alpha": 0.05,
+          "frequency_max_hz": 100000.0,
+          "overlap_fraction": 0.5,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "recipe": "nonlinear_coupling",
+          "segment_samples": 128,
+          "surrogate_count": 19,
+          "target_frequencies_hz": [
+            25000.0
+          ],
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        }
+      },
+      "recipe_instance": "triads",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": null,
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "wavepacket.probe.raw_history.figure",
+      "interpretation": "Overlay of the selected probe histories before recipe preprocessing.",
+      "kind": "figure",
+      "path": "figures/wavepacket/raw_history_overlay.png",
+      "provenance": {
+        "figure_format": "png",
+        "normalization": "per_probe_peak",
+        "normalization_scales": [
+          0.1,
+          0.09990790624235975,
+          0.09974635826644469,
+          0.0999599057204375
+        ],
+        "preprocessing": {
+          "baseline_end_time_s": null,
+          "baseline_sample_count": 0,
+          "mean_subtraction": true,
+          "resampled": false,
+          "time_grid_policy": "resample_uniform"
+        },
+        "probe_labels": [
+          "x=0 m, y=0 m",
+          "x=0.01 m, y=0 m",
+          "x=0.02 m, y=0 m",
+          "x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "stage": "raw"
+      },
+      "recipe_instance": "wavepacket",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "dimensionless",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "wavepacket.probe.method_ready.figure",
+      "interpretation": "Overlay of the selected probe signals supplied to the recipe method.",
+      "kind": "figure",
+      "path": "figures/wavepacket/method_ready_overlay.png",
+      "provenance": {
+        "figure_format": "png",
+        "normalization": "per_probe_peak",
+        "normalization_scales": [
+          0.10115105105244336,
+          0.10109091376891205,
+          0.10091415949021847,
+          0.10106594409185074
+        ],
+        "preprocessing": {
+          "baseline_end_time_s": null,
+          "baseline_sample_count": 0,
+          "mean_subtraction": true,
+          "resampled": false,
+          "time_grid_policy": "resample_uniform"
+        },
+        "probe_labels": [
+          "x=0 m, y=0 m",
+          "x=0.01 m, y=0 m",
+          "x=0.02 m, y=0 m",
+          "x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "stage": "method_ready"
+      },
+      "recipe_instance": "wavepacket",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "dimensionless",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "wavepacket.transient.filtered_overlay.figure",
+      "interpretation": "Band-pass reconstructed signal overlaid for every selected probe.",
+      "kind": "figure",
+      "path": "figures/wavepacket/filtered_overlay.png",
+      "provenance": {
+        "band_hz": [
+          1000.0,
+          100000.0
+        ],
+        "figure_format": "png",
+        "normalization": "per_probe_peak",
+        "normalization_scales": [
+          0.10444015837076423,
+          0.10417665936647683,
+          0.10412188343690931,
+          0.10450931375197543
+        ],
+        "preprocessing": {
+          "band_max_hz": 100000.0,
+          "band_min_hz": 1000.0,
+          "overlap_fraction": 0.75,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "recipe": "transient_wavepacket",
+          "stft_segment_samples": 256,
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "probe_labels": [
+          "x=0 m, y=0 m",
+          "x=0.01 m, y=0 m",
+          "x=0.02 m, y=0 m",
+          "x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      "recipe_instance": "wavepacket",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "dimensionless",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "wavepacket.transient.envelope_overlay.figure",
+      "interpretation": "Analytic envelope overlaid for every selected probe.",
+      "kind": "figure",
+      "path": "figures/wavepacket/envelope_overlay.png",
+      "provenance": {
+        "band_hz": [
+          1000.0,
+          100000.0
+        ],
+        "figure_format": "png",
+        "normalization": "per_probe_peak",
+        "normalization_scales": [
+          0.1164242939874713,
+          0.11645484990991666,
+          0.11647264991826353,
+          0.11639448276903375
+        ],
+        "preprocessing": {
+          "band_max_hz": 100000.0,
+          "band_min_hz": 1000.0,
+          "overlap_fraction": 0.75,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "recipe": "transient_wavepacket",
+          "stft_segment_samples": 256,
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "probe_labels": [
+          "x=0 m, y=0 m",
+          "x=0.01 m, y=0 m",
+          "x=0.02 m, y=0 m",
+          "x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      "recipe_instance": "wavepacket",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "dimensionless",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "time": "s"
+      },
+      "id": "wavepacket.transient.envelope",
+      "interpretation": "Analytic envelope of the explicitly configured band-pass reconstruction.",
+      "kind": "array",
+      "path": "data/wavepacket/packet_envelope.npz",
+      "provenance": {
+        "band_hz": [
+          1000.0,
+          100000.0
+        ],
+        "baseline_sample_count": 0,
+        "preprocessing": {
+          "band_max_hz": 100000.0,
+          "band_min_hz": 1000.0,
+          "overlap_fraction": 0.75,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "recipe": "transient_wavepacket",
+          "stft_segment_samples": 256,
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "product_contract": {
+          "axes": {
+            "space": [
+              "x_m"
+            ],
+            "time": [
+              "time_s"
+            ]
+          },
+          "complex_value_semantics": "real_difference",
+          "coordinate_arrays": {
+            "space": [
+              "x_m"
+            ],
+            "time": [
+              "time_s"
+            ]
+          },
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [],
+          "mask_keys": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "plotting_value_keys": [],
+          "product_type": "transient.envelope",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "filtered_signal",
+            "envelope",
+            "arrival_time_s"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "Pa",
+          "validity_by_value": null,
+          "validity_fields": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "value_dimensions": {
+            "arrival_time_s": [
+              "space"
+            ],
+            "envelope": [
+              "time",
+              "space"
+            ],
+            "filtered_signal": [
+              "time",
+              "space"
+            ]
+          },
+          "value_keys": [
+            "filtered_signal",
+            "envelope",
+            "arrival_time_s"
+          ]
+        },
+        "resampled": false,
+        "time_grid_policy": "resample_uniform"
+      },
+      "recipe_instance": "wavepacket",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "wavepacket.transient.stft_figure",
+      "interpretation": "Shared-scale STFT panels, one panel for each selected probe.",
+      "kind": "figure",
+      "path": "figures/wavepacket/stft_overlay.png",
+      "provenance": {
+        "band_hz": [
+          1000.0,
+          100000.0
+        ],
+        "figure_format": "png",
+        "overlap_samples": 192,
+        "preprocessing": {
+          "band_max_hz": 100000.0,
+          "band_min_hz": 1000.0,
+          "overlap_fraction": 0.75,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "recipe": "transient_wavepacket",
+          "stft_segment_samples": 256,
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "probe_labels": [
+          "x=0 m, y=0 m",
+          "x=0.01 m, y=0 m",
+          "x=0.02 m, y=0 m",
+          "x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "segment_samples": 256,
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "shared_color_scale_db": [
+          -60.0,
+          0.0
+        ]
+      },
+      "recipe_instance": "wavepacket",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "relative_time": "s"
+      },
+      "id": "wavepacket.transient.stft",
+      "interpretation": "Hann-window STFT of the probe-median disturbance; segment resolution is recorded.",
+      "kind": "array",
+      "path": "data/wavepacket/packet_stft.npz",
+      "provenance": {
+        "overlap_samples": 192,
+        "preprocessing": {
+          "band_max_hz": 100000.0,
+          "band_min_hz": 1000.0,
+          "overlap_fraction": 0.75,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "recipe": "transient_wavepacket",
+          "stft_segment_samples": 256,
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "product_contract": {
+          "axes": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "x_m"
+            ],
+            "time": [
+              "relative_time_s"
+            ]
+          },
+          "complex_value_semantics": "magnitude_squared",
+          "coordinate_arrays": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "x_m"
+            ],
+            "time": [
+              "relative_time_s"
+            ]
+          },
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [],
+          "mask_keys": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "plotting_value_keys": [
+            "probe_complex_stft"
+          ],
+          "product_type": "transient.stft",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "complex_stft"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "Pa",
+          "validity_by_value": null,
+          "validity_fields": [
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency"
+          ],
+          "value_dimensions": {
+            "complex_stft": [
+              "frequency",
+              "time"
+            ],
+            "probe_complex_stft": [
+              "frequency",
+              "time",
+              "space"
+            ]
+          },
+          "value_keys": [
+            "complex_stft"
+          ]
+        },
+        "resampled": false,
+        "segment_samples": 256,
+        "time_grid_policy": "resample_uniform"
+      },
+      "recipe_instance": "wavepacket",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {},
+      "id": "wavepacket.transient.group_velocity",
+      "interpretation": "Kinematic packet-envelope regression; not a causality claim.",
+      "kind": "json",
+      "path": "data/wavepacket/group_velocity.json",
+      "provenance": {
+        "preprocessing": {
+          "band_max_hz": 100000.0,
+          "band_min_hz": 1000.0,
+          "overlap_fraction": 0.75,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "coordinates",
+            "mode": "both",
+            "normalization": "per_probe_peak"
+          },
+          "probe_set_id": "default",
+          "recipe": "transient_wavepacket",
+          "stft_segment_samples": 256,
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        }
+      },
+      "recipe_instance": "wavepacket",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": "m/s",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {},
+      "id": "run.measurement-evidence",
+      "interpretation": "Conservative measurement-based classification with explicit exclusion of LST/PSE and causal inference.",
+      "kind": "json",
+      "path": "data/measurement_evidence.json",
+      "provenance": {
+        "derived_from": [
+          "run.resolved-case",
+          "run.resolved-analyses",
+          "run.resolved-machine",
+          "run.plan",
+          "run.manifest",
+          "modes.probe.raw_history.figure",
+          "modes.probe.method_ready.figure",
+          "modes.modal.pod.figure",
+          "modes.modal.pod",
+          "modes.modal.spod.figure",
+          "modes.modal.spod",
+          "modes.modal.dmd.figure",
+          "modes.modal.dmd",
+          "modes.modal.sensitivity",
+          "spectrum.probe.raw_history.figure",
+          "spectrum.probe.method_ready.figure",
+          "spectrum.spectral.psd",
+          "spectrum.spectral.confidence",
+          "spectrum.spectral.coherence",
+          "spectrum.spectral.probe_signals",
+          "spectrum.spectral.fft_overlay.figure",
+          "spectrum.spectral.psd_overlay.figure",
+          "spectrum.spectral.probe_figure",
+          "spectrum.spectral.figure",
+          "triads.probe.raw_history.figure",
+          "triads.probe.method_ready.figure",
+          "triads.nonlinear.bicoherence.figure",
+          "triads.nonlinear.bicoherence",
+          "triads.nonlinear.triads",
+          "wavepacket.probe.raw_history.figure",
+          "wavepacket.probe.method_ready.figure",
+          "wavepacket.transient.filtered_overlay.figure",
+          "wavepacket.transient.envelope_overlay.figure",
+          "wavepacket.transient.envelope",
+          "wavepacket.transient.stft_figure",
+          "wavepacket.transient.stft",
+          "wavepacket.transient.group_velocity"
+        ],
+        "preprocessing": {
+          "classifier": "pelecpost.measurement-evidence",
+          "schema_version": 1
+        }
+      },
+      "recipe_instance": "__run__",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5"
+      ],
+      "units": null,
+      "variable": null
+    },
+    {
+      "coordinate_metadata": {},
+      "id": "run.log",
+      "interpretation": "Full workflow log including tracebacks.",
+      "kind": "run-metadata",
+      "path": "logs/run.log",
+      "provenance": {},
+      "recipe_instance": "__run__",
+      "schema_version": 1,
+      "source_inputs": [],
+      "units": null,
+      "variable": null
+    },
+    {
+      "coordinate_metadata": {},
+      "id": "run.report",
+      "interpretation": "Portable HTML run report.",
+      "kind": "run-metadata",
+      "path": "report/index.html",
+      "provenance": {},
+      "recipe_instance": "__run__",
+      "schema_version": 1,
+      "source_inputs": [],
+      "units": null,
+      "variable": null
+    }
+  ],
+  "schema": "pelecpost.artifacts",
+  "schema_version": 1
+}

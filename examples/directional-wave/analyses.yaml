@@ -1,3 +1,18 @@
 schema_version: 1
 analyses:
-  - {id: wave, recipe: directional_wave, variable: pressure, frequency_min_hz: 1.0e5, frequency_max_hz: 2.0e8, expected_speed_min_m_s: 300.0, expected_speed_max_m_s: 2500.0}
+  - id: wave
+    recipe: directional_wave
+    probe_set_id: default
+    variable: pressure
+    frequency_min_hz: 1.0e5
+    frequency_max_hz: 2.0e8
+    expected_speed_min_m_s: 300.0
+    expected_speed_max_m_s: 2500.0
+    temporal_wavenumber:
+      enabled: true
+      window_duration_s: 1.0e-5
+      overlap_fraction: 0.75
+      window: hann
+      snapshot_times_s: []
+      minimum_relative_energy_db: -30.0
+      display_floor_db: -60.0

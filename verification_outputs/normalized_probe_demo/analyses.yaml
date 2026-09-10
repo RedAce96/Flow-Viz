@@ -1,0 +1,50 @@
+schema_version: 1
+analyses:
+  - id: spectrum
+    recipe: probe_spectrum
+    probe_set_id: default
+    variable: pressure
+    probe_indices: [0, 1, 2, 3]
+    frequency_max_hz: 400000
+    welch_segment_samples: 256
+    probe_plotting:
+      mode: both
+      normalization: per_probe_peak
+      label: coordinates
+  - id: wavepacket
+    recipe: transient_wavepacket
+    probe_set_id: default
+    variable: pressure
+    probe_indices: [0, 1, 2, 3]
+    band_min_hz: 1000
+    band_max_hz: 100000
+    stft_segment_samples: 256
+    probe_plotting:
+      mode: both
+      normalization: per_probe_peak
+      label: coordinates
+  - id: triads
+    recipe: nonlinear_coupling
+    probe_set_id: default
+    variable: pressure
+    probe_indices: [0, 1, 2, 3]
+    segment_samples: 128
+    surrogate_count: 19
+    frequency_max_hz: 100000
+    target_frequencies_hz: [25000]
+    probe_plotting:
+      mode: both
+      normalization: per_probe_peak
+      label: coordinates
+  - id: modes
+    recipe: modal_screening
+    probe_set_id: default
+    variable: pressure
+    probe_indices: [0, 1, 2, 3]
+    mode_count: 3
+    spod_segment_samples: 256
+    dmd_ranks: [2, 3]
+    probe_plotting:
+      mode: both
+      normalization: per_probe_peak
+      label: coordinates

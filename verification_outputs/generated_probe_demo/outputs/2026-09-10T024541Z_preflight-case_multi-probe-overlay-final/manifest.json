@@ -1,0 +1,80 @@
+{
+  "case_id": "preflight-case",
+  "completed_utc": "2026-09-10T02:45:47.404212+00:00",
+  "created_utc": "2026-09-10T02:45:41.805632+00:00",
+  "provenance": {
+    "git": {
+      "commit": "648f787c181ded3ae06717b1cb1b4b28737ad6c8",
+      "dirty": true
+    },
+    "host": "Seths-MacBook-M2-Pro.local",
+    "input_fingerprints": [
+      {
+        "checksum": "32fdcda26fae6e2b20b560c1b2f08b2f15959eb6f2515f2e80dbeead4e157f79",
+        "checksum_algorithm": "sha256",
+        "input_id": "case.yaml",
+        "mtime_ns": 1789003895314576485,
+        "path": "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/case.yaml",
+        "size_bytes": 299
+      },
+      {
+        "checksum": "340c0f5a86fc4c92120d26fd6bfb520ee8c6c4f6472b619278fa54cfcbdaf34d",
+        "checksum_algorithm": "sha256",
+        "input_id": "analyses.yaml",
+        "mtime_ns": 1789008269050983813,
+        "path": "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/analyses.yaml",
+        "size_bytes": 797
+      },
+      {
+        "checksum": "3892ff3142baa3511f22feeed13e183cb5af175738fd5e6097eab2cdb33b49de",
+        "checksum_algorithm": "sha256",
+        "input_id": "machine.yaml",
+        "mtime_ns": 1789008269108776437,
+        "path": "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/machine.yaml",
+        "size_bytes": 407
+      },
+      {
+        "checksum": "67a40293c3abba4a45252fc1172b3500adb11b9447cc4f464ff74e0adb036eba",
+        "checksum_algorithm": "sha256",
+        "input_id": "inputs.probe_sets.default",
+        "mtime_ns": 1789003895314017839,
+        "path": "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5",
+        "size_bytes": 161488
+      }
+    ],
+    "packages": {
+      "h5py": "3.16.0",
+      "matplotlib": "3.11.1",
+      "numpy": "2.5.3",
+      "pydantic": "2.13.5",
+      "rich": "15.0.0",
+      "scipy": "1.18.1",
+      "typer": "0.27.2",
+      "yt": "4.4.2"
+    },
+    "python": "3.14.7",
+    "slurm": {}
+  },
+  "run_id": "2026-09-10T024541Z_preflight-case_multi-probe-overlay-final",
+  "schema": "pelecpost.run-manifest",
+  "schema_version": 1,
+  "status": "completed",
+  "workflows": {
+    "analysis.directional": {
+      "message": "",
+      "status": "completed"
+    },
+    "analysis.spectrum": {
+      "message": "",
+      "status": "completed"
+    },
+    "analysis.wavepacket": {
+      "message": "",
+      "status": "completed"
+    },
+    "input.probe_sets": {
+      "message": "preflight-validated shared resource",
+      "status": "completed"
+    }
+  }
+}

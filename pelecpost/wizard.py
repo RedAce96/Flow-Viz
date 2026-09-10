@@ -44,7 +44,9 @@ def _variable(probes: Any = None) -> str:
 
 def _analysis(recipe: str, inventory: Any, console: Console) -> dict[str, Any]:
     result: dict[str, Any] = {"id": recipe.replace("_", "-"), "recipe": recipe}
-    probes = inventory.probes
+    probe_sets = getattr(inventory, "probe_sets", {})
+    probe_set_id = next(iter(probe_sets), None)
+    probes = probe_sets.get(probe_set_id) if probe_set_id is not None else None
     if probes and probes.median_timestep_s:
         nyquist = 0.5 / probes.median_timestep_s
         duration = (probes.time_max_s or 0.0) - (probes.time_min_s or 0.0)
@@ -78,10 +80,11 @@ def _analysis(recipe: str, inventory: Any, console: Console) -> dict[str, Any]:
         if baseline != "none":
             result["baseline_id"] = typer.prompt("Baseline ID from machine.yaml")
     elif recipe == "probe_spectrum":
-        result["variable"] = _variable(probes)
+        result.update({"probe_set_id": probe_set_id, "variable": _variable(probes)})
         result["frequency_max_hz"] = typer.prompt("Maximum frequency [Hz]", type=float)
     elif recipe == "single_pulse_response":
         result.update({
+            "probe_set_id": probe_set_id,
             "variable": _variable(probes),
             "energy_per_pulse_j_m": typer.prompt("Pulse energy per unit span [J/m]", type=float),
             "pulse_fwhm_s": typer.prompt("Pulse FWHM [s]", type=float),
@@ -90,18 +93,21 @@ def _analysis(recipe: str, inventory: Any, console: Console) -> dict[str, Any]:
         })
     elif recipe == "directional_wave":
         result.update({
+            "probe_set_id": probe_set_id,
             "variable": _variable(probes),
             "frequency_min_hz": typer.prompt("Minimum frequency [Hz]", type=float),
             "frequency_max_hz": typer.prompt("Maximum frequency [Hz]", type=float),
         })
     elif recipe == "transient_wavepacket":
         result.update({
+            "probe_set_id": probe_set_id,
             "variable": _variable(probes),
             "band_min_hz": typer.prompt("Band minimum [Hz]", type=float),
             "band_max_hz": typer.prompt("Band maximum [Hz]", type=float),
         })
     elif recipe == "nonlinear_coupling":
         result.update({
+            "probe_set_id": probe_set_id,
             "variable": _variable(probes),
             "frequency_max_hz": typer.prompt("Maximum frequency [Hz]", type=float),
             "automatic_frequency_selection": typer.confirm(
@@ -113,22 +119,22 @@ def _analysis(recipe: str, inventory: Any, console: Console) -> dict[str, Any]:
             targets = typer.prompt("Comma-separated target frequencies [Hz]")
             result["target_frequencies_hz"] = [float(value) for value in targets.split(",")]
     elif recipe == "modal_screening":
-        result["variable"] = _variable(probes)
+        result.update({"probe_set_id": probe_set_id, "variable": _variable(probes)})
     elif recipe == "case_comparison":
-        archive_ids = tuple(getattr(inventory, "comparison_archives", {}))
+        archive_ids = tuple(getattr(inventory, "archived_runs", {}))
         if len(archive_ids) < 2:
-            raise typer.BadParameter("Case comparison requires two named archives in machine.yaml.")
-        console.print("Configured comparison archives:")
+            raise typer.BadParameter("Case comparison requires two named archived runs in machine.yaml.")
+        console.print("Configured archived runs:")
         for index, archive_id in enumerate(archive_ids, 1):
             console.print(f"  {index}. {archive_id}")
-        baseline_id = _choice("Baseline comparison archive", archive_ids)
+        baseline_id = _choice("Baseline archived run", archive_ids)
         remaining = tuple(item for item in archive_ids if item != baseline_id)
         for index, archive_id in enumerate(remaining, 1):
             console.print(f"  {index}. {archive_id}")
         result.update({
-            "baseline_id": baseline_id,
-            "comparison_id": _choice("Comparison archive", remaining),
-            "artifact_ids": [typer.prompt("Artifact ID")],
+            "baseline": {"archived_run_id": baseline_id, "analysis_id": typer.prompt("Baseline analysis ID")},
+            "comparison": {"archived_run_id": _choice("Comparison archived run", remaining), "analysis_id": typer.prompt("Comparison analysis ID")},
+            "product_ids": [typer.prompt("Product ID")],
         })
     return result
 
@@ -138,15 +144,15 @@ def configure_project(project_dir: str, console: Console) -> None:
     inventory = inspect_project(project)
     available_inputs = {
         "plotfiles": inventory.plotfiles is not None and inventory.plotfiles.count > 0,
-        "probes": inventory.probes is not None and inventory.probes.sample_count > 0,
-        "comparison_archives": bool(inventory.comparison_archives),
+        "probe_sets": any(item.sample_count > 0 for item in inventory.probe_sets.values()),
+        "archived_runs": bool(inventory.archived_runs),
     }
     compatible = tuple(
         name for name, definition in RECIPES.items()
         if project.case_file.case.dimensionality in definition.supported_dimensions
         and project.case_file.geometry.type in definition.supported_geometries
         and all(available_inputs[item] for item in definition.required_inputs)
-        and (name != "case_comparison" or len(inventory.comparison_archives) >= 2)
+        and (name != "case_comparison" or len(inventory.archived_runs) >= 2)
         and (
             name != "flow_overview"
             or (

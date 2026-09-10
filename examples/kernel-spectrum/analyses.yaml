@@ -1,4 +1,4 @@
 schema_version: 1
 analyses:
-  - {id: spectrum, recipe: probe_spectrum, variable: temperature, frequency_max_hz: 2.0e8}
-  - {id: pulse, recipe: single_pulse_response, variable: temperature, energy_per_pulse_j_m: 1.0, pulse_fwhm_s: 1.0e-8, pulse_period_s: 1.0e-7, start_time_s: 1.0e-7, baseline_end_time_s: 5.0e-8}
+  - {id: spectrum, recipe: probe_spectrum, probe_set_id: default, variable: temperature, probe_indices: [0, 1, 2, 3], frequency_max_hz: 2.0e8, probe_plotting: {mode: both, normalization: none, label: index_coordinates}}
+  - {id: pulse, recipe: single_pulse_response, probe_set_id: default, variable: temperature, probe_indices: [0, 1, 2, 3], energy_per_pulse_j_m: 1.0, pulse_fwhm_s: 1.0e-8, pulse_period_s: 1.0e-7, start_time_s: 1.0e-7, baseline_end_time_s: 5.0e-8}

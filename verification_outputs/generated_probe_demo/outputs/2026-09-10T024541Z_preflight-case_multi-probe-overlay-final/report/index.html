@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>PeleC post-processing report: preflight-case</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#18212b}
+table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccd5df;padding:.5rem;text-align:left}
+pre{white-space:pre-wrap}img{max-width:100%;height:auto}figure{margin:1.5rem 0}
+.completed{color:#166534}.failed,.blocker{color:#b91c1c}.warning{color:#a16207}
+.skipped-by-dependency,.unavailable{color:#6b21a8}code{background:#eef2f6;padding:.1rem .25rem}
+</style></head><body>
+<h1>PeleC post-processing report</h1>
+<p><strong>Case:</strong> preflight-case<br>
+<strong>Run:</strong> 2026-09-10T024541Z_preflight-case_multi-probe-overlay-final<br>
+<strong>Status:</strong> completed</p>
+<h2>Project and input inventory</h2><p>The resolved project files are registered below. This inventory was
+captured before computation and uses metadata-only readers.</p><pre>{
+  &quot;archived_errors&quot;: {},
+  &quot;archived_metadata&quot;: {},
+  &quot;archived_products&quot;: {},
+  &quot;archived_runs&quot;: {},
+  &quot;baselines&quot;: {},
+  &quot;plotfiles&quot;: null,
+  &quot;probe_sets&quot;: {
+    &quot;default&quot;: {
+      &quot;errors&quot;: [],
+      &quot;field_units&quot;: {
+        &quot;T&quot;: &quot;K&quot;,
+        &quot;p&quot;: &quot;dyne/cm^2&quot;
+      },
+      &quot;fields&quot;: [
+        &quot;T&quot;,
+        &quot;p&quot;
+      ],
+      &quot;format&quot;: &quot;compact_hdf5&quot;,
+      &quot;mapping_epoch_count&quot;: 1,
+      &quot;median_timestep_s&quot;: 1.0000000000000243e-06,
+      &quot;missing_value_count&quot;: {
+        &quot;T&quot;: 0,
+        &quot;p&quot;: 0
+      },
+      &quot;nonfinite_time_count&quot;: 0,
+      &quot;nonpositive_timestep_count&quot;: 0,
+      &quot;probe_count&quot;: 8,
+      &quot;provenance_present&quot;: true,
+      &quot;quality_approved&quot;: true,
+      &quot;requested_x_m&quot;: [
+        0.0,
+        0.01,
+        0.02,
+        0.03,
+        0.04,
+        0.05,
+        0.06,
+        0.07
+      ],
+      &quot;requested_y_m&quot;: [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      &quot;restart_overlap_count&quot;: 0,
+      &quot;sample_count&quot;: 1024,
+      &quot;source&quot;: &quot;/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5&quot;,
+      &quot;time_max_s&quot;: 0.001023,
+      &quot;time_min_s&quot;: 0.0,
+      &quot;timestep_max_deviation_s&quot;: 1.0842021724855044e-19,
+      &quot;timestep_std_s&quot;: 4.0750544731663123e-20,
+      &quot;x_max_m&quot;: 0.07,
+      &quot;x_min_m&quot;: 0.0,
+      &quot;y_max_m&quot;: 0.0,
+      &quot;y_min_m&quot;: 0.0
+    }
+  }
+}</pre>
+<h2 id="preflight">Preflight findings</h2><ul><li id='finding-few_segments-wavepacket' class='warning'><strong>WARNING FEW_SEGMENTS</strong>: Only 1 segments are available; spectral confidence is weak. <a href='#contract-wavepacket'>analysis contract</a></li></ul>
+<details><summary>Selections, sampling, geometry, and resource calculations</summary><pre>{
+  &quot;by_analysis&quot;: {
+    &quot;directional&quot;: {
+      &quot;distinct_x_count&quot;: 5,
+      &quot;median_timestep_s&quot;: 1.0000000000000243e-06,
+      &quot;native_frequency_resolution_hz&quot;: 977.5171065493646,
+      &quot;native_wavenumber_resolution_rad_m&quot;: 157.07963267948966,
+      &quot;nyquist_frequency_hz&quot;: 499999.99999998783,
+      &quot;probe_aperture_m&quot;: 0.04,
+      &quot;probe_count&quot;: 8,
+      &quot;probe_spacing_m&quot;: 0.01,
+      &quot;probe_spacing_relative_std&quot;: 1.2266347333466993e-16,
+      &quot;record_duration_s&quot;: 0.001023,
+      &quot;sample_count&quot;: 1023,
+      &quot;sampling_frequency_hz&quot;: 999999.9999999757,
+      &quot;selected_probe_count&quot;: 5,
+      &quot;spatial_nyquist_rad_m&quot;: 314.1592653589793
+    },
+    &quot;spectrum&quot;: {
+      &quot;distinct_x_count&quot;: 4,
+      &quot;median_timestep_s&quot;: 1.0000000000000243e-06,
+      &quot;native_frequency_resolution_hz&quot;: 977.5171065493646,
+      &quot;native_wavenumber_resolution_rad_m&quot;: 209.43951023931956,
+      &quot;nyquist_frequency_hz&quot;: 499999.99999998783,
+      &quot;probe_aperture_m&quot;: 0.03,
+      &quot;probe_count&quot;: 8,
+      &quot;probe_spacing_m&quot;: 0.01,
+      &quot;probe_spacing_relative_std&quot;: 1.0015430658247729e-16,
+      &quot;record_duration_s&quot;: 0.001023,
+      &quot;sample_count&quot;: 1023,
+      &quot;sampling_frequency_hz&quot;: 999999.9999999757,
+      &quot;segmented_estimator&quot;: {
+        &quot;approximate_degrees_of_freedom&quot;: 12,
+        &quot;effective_frequency_resolution_hz&quot;: 3906.249999999905,
+        &quot;sample_count&quot;: 1023,
+        &quot;segment_count&quot;: 6,
+        &quot;segment_samples&quot;: 256
+      },
+      &quot;selected_probe_count&quot;: 4,
+      &quot;spatial_nyquist_rad_m&quot;: 314.1592653589793
+    },
+    &quot;wavepacket&quot;: {
+      &quot;distinct_x_count&quot;: 4,
+      &quot;median_timestep_s&quot;: 1.0000000000000243e-06,
+      &quot;native_frequency_resolution_hz&quot;: 977.5171065493646,
+      &quot;native_wavenumber_resolution_rad_m&quot;: 209.43951023931956,
+      &quot;nyquist_frequency_hz&quot;: 499999.99999998783,
+      &quot;probe_aperture_m&quot;: 0.03,
+      &quot;probe_count&quot;: 8,
+      &quot;probe_spacing_m&quot;: 0.01,
+      &quot;probe_spacing_relative_std&quot;: 1.0015430658247729e-16,
+      &quot;record_duration_s&quot;: 0.001023,
+      &quot;sample_count&quot;: 1023,
+      &quot;sampling_frequency_hz&quot;: 999999.9999999757,
+      &quot;segmented_estimator&quot;: {
+        &quot;approximate_degrees_of_freedom&quot;: 2,
+        &quot;effective_frequency_resolution_hz&quot;: 977.517106549341,
+        &quot;sample_count&quot;: 1023,
+        &quot;segment_count&quot;: 1,
+        &quot;segment_samples&quot;: 1023
+      },
+      &quot;selected_probe_count&quot;: 4,
+      &quot;spatial_nyquist_rad_m&quot;: 314.1592653589793
+    }
+  },
+  &quot;directional_wave&quot;: {
+    &quot;directional&quot;: {
+      &quot;distinct_x_count&quot;: 5,
+      &quot;native_wavenumber_resolution_rad_m&quot;: 157.07963267948966,
+      &quot;probe_aperture_m&quot;: 0.04,
+      &quot;probe_spacing_m&quot;: 0.01,
+      &quot;probe_spacing_relative_std&quot;: 1.2266347333466993e-16,
+      &quot;selected_probe_count&quot;: 5,
+      &quot;spatial_nyquist_rad_m&quot;: 314.1592653589793
+    }
+  },
+  &quot;distinct_x_count&quot;: 8,
+  &quot;median_timestep_s&quot;: 1.0000000000000243e-06,
+  &quot;native_frequency_resolution_hz&quot;: 977.5171065493646,
+  &quot;native_wavenumber_resolution_rad_m&quot;: 89.7597901025655,
+  &quot;nyquist_frequency_hz&quot;: 499999.99999998783,
+  &quot;probe_aperture_m&quot;: 0.07,
+  &quot;probe_count&quot;: 8,
+  &quot;probe_spacing_m&quot;: 0.01,
+  &quot;probe_spacing_relative_std&quot;: 3.9882474652746385e-16,
+  &quot;record_duration_s&quot;: 0.001023,
+  &quot;resource_estimate&quot;: {
+    &quot;estimated_concurrent_peak_gb&quot;: 0.20018292665481568,
+    &quot;largest_workflow_peak_gb&quot;: 0.10009146332740784,
+    &quot;memory_limit_gb&quot;: 8.0,
+    &quot;workers&quot;: 2
+  },
+  &quot;sample_count&quot;: 1024,
+  &quot;sampling_frequency_hz&quot;: 999999.9999999757,
+  &quot;segmented_estimators&quot;: {
+    &quot;spectrum&quot;: {
+      &quot;approximate_degrees_of_freedom&quot;: 12,
+      &quot;effective_frequency_resolution_hz&quot;: 3906.249999999905,
+      &quot;sample_count&quot;: 1023,
+      &quot;segment_count&quot;: 6,
+      &quot;segment_samples&quot;: 256
+    },
+    &quot;wavepacket&quot;: {
+      &quot;approximate_degrees_of_freedom&quot;: 2,
+      &quot;effective_frequency_resolution_hz&quot;: 977.517106549341,
+      &quot;sample_count&quot;: 1023,
+      &quot;segment_count&quot;: 1,
+      &quot;segment_samples&quot;: 1023
+    }
+  },
+  &quot;selected_probe_count&quot;: 8,
+  &quot;selections&quot;: {
+    &quot;expected_output_root&quot;: &quot;/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/outputs&quot;,
+    &quot;plotfiles&quot;: {},
+    &quot;probe_sets&quot;: {
+      &quot;directional&quot;: [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      &quot;spectrum&quot;: [
+        0,
+        1,
+        2,
+        3
+      ],
+      &quot;wavepacket&quot;: [
+        0,
+        1,
+        2,
+        3
+      ]
+    }
+  },
+  &quot;spatial_nyquist_rad_m&quot;: 314.1592653589793,
+  &quot;transient_wavepacket&quot;: {
+    &quot;wavepacket&quot;: {
+      &quot;distinct_x_count&quot;: 4,
+      &quot;native_wavenumber_resolution_rad_m&quot;: 209.43951023931956,
+      &quot;probe_aperture_m&quot;: 0.03,
+      &quot;probe_spacing_m&quot;: 0.01,
+      &quot;probe_spacing_relative_std&quot;: 1.0015430658247729e-16,
+      &quot;selected_probe_count&quot;: 4,
+      &quot;spatial_nyquist_rad_m&quot;: 314.1592653589793
+    }
+  }
+}</pre></details>
+<h2>Analysis contracts</h2><article id='contract-directional'><h3>directional: What direction, wavelength, phase speed, and amplification are measured?</h3><p><strong>Recipe:</strong> directional_wave<br><strong>Declared outputs:</strong> wave.spatial_spectrum, wave.wavenumber, wave.komega, wave.komega_sensitivity, wave.komega.figure, probe.raw_history.figure, probe.method_ready.figure</p><h4>Assumptions and quality gates</h4><ul><li>Probe coordinates form a suitable approximately uniform aperture.</li></ul><h4>Interpretation limits</h4><ul><li>Measurements alone do not constitute LST/PSE or causal evidence.</li></ul></article><article id='contract-spectrum'><h3>spectrum: What stationary frequency content is present in the probe measurements?</h3><p><strong>Recipe:</strong> probe_spectrum<br><strong>Declared outputs:</strong> spectral.psd, spectral.coherence, spectral.confidence, spectral.figure, spectral.probe_signals, spectral.probe_figure, spectral.fft_overlay.figure, spectral.psd_overlay.figure, probe.raw_history.figure, probe.method_ready.figure</p><h4>Assumptions and quality gates</h4><ul><li>The selected record is approximately stationary.</li></ul><h4>Interpretation limits</h4><ul><li>Finite records and windowing limit frequency discrimination.</li></ul></article><article id='contract-wavepacket'><h3>wavepacket: How does a transient packet arrive and propagate?</h3><p><strong>Recipe:</strong> transient_wavepacket<br><strong>Declared outputs:</strong> transient.stft, transient.envelope, transient.group_velocity, transient.filtered_overlay.figure, transient.envelope_overlay.figure, transient.stft_figure, probe.raw_history.figure, probe.method_ready.figure</p><h4>Assumptions and quality gates</h4><ul><li>A localized packet exists in the selected time-frequency band.</li></ul><h4>Interpretation limits</h4><ul><li>Arrival detection depends on bandwidth and signal-to-noise ratio.</li></ul></article>
+<h2>Workflow status</h2><table><thead><tr><th>Workflow</th><th>Status</th><th>Message</th></tr></thead>
+<tbody><tr><td>analysis.directional</td><td class='completed'>completed</td><td><pre></pre></td></tr><tr><td>analysis.spectrum</td><td class='completed'>completed</td><td><pre></pre></td></tr><tr><td>analysis.wavepacket</td><td class='completed'>completed</td><td><pre></pre></td></tr><tr><td>input.probe_sets</td><td class='completed'>completed</td><td><pre>preflight-validated shared resource</pre></td></tr></tbody></table>
+<h2>Figure gallery</h2><figure><a href='../figures/directional/raw_history_overlay.png'><img src='../figures/directional/raw_history_overlay.png' alt='directional.probe.raw_history.figure'></a><figcaption>directional.probe.raw_history.figure: Overlay of the selected probe histories before recipe preprocessing.</figcaption></figure><figure><a href='../figures/directional/method_ready_overlay.png'><img src='../figures/directional/method_ready_overlay.png' alt='directional.probe.method_ready.figure'></a><figcaption>directional.probe.method_ready.figure: Overlay of the selected probe signals supplied to the recipe method.</figcaption></figure><figure><a href='../figures/directional/komega.png'><img src='../figures/directional/komega.png' alt='directional.wave.komega.figure'></a><figcaption>directional.wave.komega.figure: Signed k–omega map; positive k denotes downstream cos(omega t - k x).</figcaption></figure><figure><a href='../figures/spectrum/raw_history_overlay.png'><img src='../figures/spectrum/raw_history_overlay.png' alt='spectrum.probe.raw_history.figure'></a><figcaption>spectrum.probe.raw_history.figure: Overlay of the selected probe histories before recipe preprocessing.</figcaption></figure><figure><a href='../figures/spectrum/method_ready_overlay.png'><img src='../figures/spectrum/method_ready_overlay.png' alt='spectrum.probe.method_ready.figure'></a><figcaption>spectrum.probe.method_ready.figure: Overlay of the selected probe signals supplied to the recipe method.</figcaption></figure><figure><a href='../figures/spectrum/fft_overlay.png'><img src='../figures/spectrum/fft_overlay.png' alt='spectrum.spectral.fft_overlay.figure'></a><figcaption>spectrum.spectral.fft_overlay.figure: Single-sided FFT amplitude overlaid for every selected probe.</figcaption></figure><figure><a href='../figures/spectrum/psd_overlay.png'><img src='../figures/spectrum/psd_overlay.png' alt='spectrum.spectral.psd_overlay.figure'></a><figcaption>spectrum.spectral.psd_overlay.figure: One-sided Welch PSD overlaid for every selected probe.</figcaption></figure><figure><a href='../figures/spectrum/probe_time_fft.png'><img src='../figures/spectrum/probe_time_fft.png' alt='spectrum.spectral.probe_figure'></a><figcaption>spectrum.spectral.probe_figure: Per-probe raw history, processed history, and single-sided FFT amplitude.</figcaption></figure><figure><a href='../figures/spectrum/stationary_spectrum.png'><img src='../figures/spectrum/stationary_spectrum.png' alt='spectrum.spectral.figure'></a><figcaption>spectrum.spectral.figure: Median stationary spectrum with the 10th–90th percentile probe envelope.</figcaption></figure><figure><a href='../figures/wavepacket/raw_history_overlay.png'><img src='../figures/wavepacket/raw_history_overlay.png' alt='wavepacket.probe.raw_history.figure'></a><figcaption>wavepacket.probe.raw_history.figure: Overlay of the selected probe histories before recipe preprocessing.</figcaption></figure><figure><a href='../figures/wavepacket/method_ready_overlay.png'><img src='../figures/wavepacket/method_ready_overlay.png' alt='wavepacket.probe.method_ready.figure'></a><figcaption>wavepacket.probe.method_ready.figure: Overlay of the selected probe signals supplied to the recipe method.</figcaption></figure><figure><a href='../figures/wavepacket/filtered_overlay.png'><img src='../figures/wavepacket/filtered_overlay.png' alt='wavepacket.transient.filtered_overlay.figure'></a><figcaption>wavepacket.transient.filtered_overlay.figure: Band-pass reconstructed signal overlaid for every selected probe.</figcaption></figure><figure><a href='../figures/wavepacket/envelope_overlay.png'><img src='../figures/wavepacket/envelope_overlay.png' alt='wavepacket.transient.envelope_overlay.figure'></a><figcaption>wavepacket.transient.envelope_overlay.figure: Analytic envelope overlaid for every selected probe.</figcaption></figure><figure><a href='../figures/wavepacket/stft_overlay.png'><img src='../figures/wavepacket/stft_overlay.png' alt='wavepacket.transient.stft_figure'></a><figcaption>wavepacket.transient.stft_figure: Shared-scale STFT panels, one panel for each selected probe.</figcaption></figure>
+<h2>Numerical products</h2><ul><li><a href='../resolved-case.yaml'>run.resolved-case</a> [run-metadata; __run__] — Resolved portable case configuration.</li><li><a href='../resolved-analyses.yaml'>run.resolved-analyses</a> [run-metadata; __run__] — Resolved recipe configuration.</li><li><a href='../resolved-machine.yaml'>run.resolved-machine</a> [run-metadata; __run__] — Resolved machine-local configuration.</li><li><a href='../plan.json'>run.plan</a> [run-metadata; __run__] — Scientific and resource preflight record.</li><li><a href='../manifest.json'>run.manifest</a> [run-metadata; __run__] — Atomic workflow state and provenance manifest.</li><li><a href='../figures/directional/raw_history_overlay.png'>directional.probe.raw_history.figure</a> [figure; <a href='#contract-directional'>directional</a>] — Overlay of the selected probe histories before recipe preprocessing.</li><li><a href='../figures/directional/method_ready_overlay.png'>directional.probe.method_ready.figure</a> [figure; <a href='#contract-directional'>directional</a>] — Overlay of the selected probe signals supplied to the recipe method.</li><li><a href='../data/directional/complex_wavenumber.npz'>directional.wave.wavenumber</a> [array; <a href='#contract-directional'>directional</a>] — Coherence-gated dominant-wave estimate; it is not an LST/PSE eigensolution.</li><li><a href='../data/directional/local_spatial_spectrum.npz'>directional.wave.spatial_spectrum</a> [array; <a href='#contract-directional'>directional</a>] — Welch-averaged local spatial spectral power and adjacent-probe coherence.</li><li><a href='../data/directional/komega_spectrum.npz'>directional.wave.komega</a> [array; <a href='#contract-directional'>directional</a>] — Signed numerical k–omega map; positive k denotes downstream cos(omega t - k x).</li><li><a href='../data/directional/komega_sensitivity.json'>directional.wave.komega_sensitivity</a> [json; <a href='#contract-directional'>directional</a>] — Dominant-ridge changes under temporal-window and half-record perturbations; large differences limit directional-wave interpretation.</li><li><a href='../figures/directional/komega.png'>directional.wave.komega.figure</a> [figure; <a href='#contract-directional'>directional</a>] — Signed k–omega map; positive k denotes downstream cos(omega t - k x).</li><li><a href='../figures/spectrum/raw_history_overlay.png'>spectrum.probe.raw_history.figure</a> [figure; <a href='#contract-spectrum'>spectrum</a>] — Overlay of the selected probe histories before recipe preprocessing.</li><li><a href='../figures/spectrum/method_ready_overlay.png'>spectrum.probe.method_ready.figure</a> [figure; <a href='#contract-spectrum'>spectrum</a>] — Overlay of the selected probe signals supplied to the recipe method.</li><li><a href='../data/spectrum/stationary_spectrum.npz'>spectrum.spectral.psd</a> [array; <a href='#contract-spectrum'>spectrum</a>] — One-sided Welch power spectral density; peaks are descriptive stationary content.</li><li><a href='../data/spectrum/spectral_confidence.json'>spectrum.spectral.confidence</a> [json; <a href='#contract-spectrum'>spectrum</a>] — Degrees of freedom are approximate because overlapped windowed segments are correlated.</li><li><a href='../data/spectrum/adjacent_probe_coherence.npz'>spectrum.spectral.coherence</a> [array; <a href='#contract-spectrum'>spectrum</a>] — Magnitude-squared coherence and downstream-minus-upstream cross phase for adjacent probes ordered by physical x coordinate.</li><li><a href='../data/spectrum/probe_time_fft.npz'>spectrum.spectral.probe_signals</a> [array; <a href='#contract-spectrum'>spectrum</a>] — Selected probe histories and configured-detrend/window single-sided FFT amplitudes.</li><li><a href='../figures/spectrum/fft_overlay.png'>spectrum.spectral.fft_overlay.figure</a> [figure; <a href='#contract-spectrum'>spectrum</a>] — Single-sided FFT amplitude overlaid for every selected probe.</li><li><a href='../figures/spectrum/psd_overlay.png'>spectrum.spectral.psd_overlay.figure</a> [figure; <a href='#contract-spectrum'>spectrum</a>] — One-sided Welch PSD overlaid for every selected probe.</li><li><a href='../figures/spectrum/probe_time_fft.png'>spectrum.spectral.probe_figure</a> [figure; <a href='#contract-spectrum'>spectrum</a>] — Per-probe raw history, processed history, and single-sided FFT amplitude.</li><li><a href='../figures/spectrum/stationary_spectrum.png'>spectrum.spectral.figure</a> [figure; <a href='#contract-spectrum'>spectrum</a>] — Median stationary spectrum with the 10th–90th percentile probe envelope.</li><li><a href='../figures/wavepacket/raw_history_overlay.png'>wavepacket.probe.raw_history.figure</a> [figure; <a href='#contract-wavepacket'>wavepacket</a>] — Overlay of the selected probe histories before recipe preprocessing.</li><li><a href='../figures/wavepacket/method_ready_overlay.png'>wavepacket.probe.method_ready.figure</a> [figure; <a href='#contract-wavepacket'>wavepacket</a>] — Overlay of the selected probe signals supplied to the recipe method.</li><li><a href='../figures/wavepacket/filtered_overlay.png'>wavepacket.transient.filtered_overlay.figure</a> [figure; <a href='#contract-wavepacket'>wavepacket</a>] — Band-pass reconstructed signal overlaid for every selected probe.</li><li><a href='../figures/wavepacket/envelope_overlay.png'>wavepacket.transient.envelope_overlay.figure</a> [figure; <a href='#contract-wavepacket'>wavepacket</a>] — Analytic envelope overlaid for every selected probe.</li><li><a href='../data/wavepacket/packet_envelope.npz'>wavepacket.transient.envelope</a> [array; <a href='#contract-wavepacket'>wavepacket</a>] — Analytic envelope of the explicitly configured band-pass reconstruction.</li><li><a href='../figures/wavepacket/stft_overlay.png'>wavepacket.transient.stft_figure</a> [figure; <a href='#contract-wavepacket'>wavepacket</a>] — Shared-scale STFT panels, one panel for each selected probe.</li><li><a href='../data/wavepacket/packet_stft.npz'>wavepacket.transient.stft</a> [array; <a href='#contract-wavepacket'>wavepacket</a>] — Hann-window STFT of the probe-median disturbance; segment resolution is recorded.</li><li><a href='../data/wavepacket/group_velocity.json'>wavepacket.transient.group_velocity</a> [json; <a href='#contract-wavepacket'>wavepacket</a>] — Kinematic packet-envelope regression; not a causality claim.</li><li><a href='../data/measurement_evidence.json'>run.measurement-evidence</a> [json; __run__] — Conservative measurement-based classification with explicit exclusion of LST/PSE and causal inference.</li><li><a href='../logs/run.log'>run.log</a> [run-metadata; __run__] — Full workflow log including tracebacks.</li><li><a href='../report/index.html'>run.report</a> [run-metadata; __run__] — Portable HTML run report.</li></ul>
+<h2>Measurement-based classification</h2>
+<p>This conservative classification excludes LST/PSE attribution and causal inference.</p>
+<pre>{
+  &quot;decision_thresholds&quot;: {
+    &quot;maximum_dmd_condition_number&quot;: 100000000.0,
+    &quot;maximum_dmd_frequency_relative_range&quot;: 0.1,
+    &quot;minimum_packet_arrival_r_squared&quot;: 0.8,
+    &quot;minimum_pod_subspace_cosine&quot;: 0.9,
+    &quot;minimum_wave_accepted_fraction&quot;: 0.1
+  },
+  &quot;domains&quot;: {
+    &quot;aerodynamic_loads&quot;: [],
+    &quot;coherent_wave&quot;: [
+      {
+        &quot;analysis_id&quot;: &quot;directional&quot;,
+        &quot;growth_fit_accepted_fraction&quot;: 0.11764705882352941,
+        &quot;meaning&quot;: &quot;Coherence-gated propagation measured on the selected probe line; not an instability eigenmode.&quot;,
+        &quot;phase_fit_accepted_fraction&quot;: 0.11764705882352941,
+        &quot;spatial_amplification_status&quot;: &quot;supported_measured_amplification&quot;,
+        &quot;status&quot;: &quot;supported_measured_propagation&quot;
+      }
+    ],
+    &quot;modal_robustness&quot;: [],
+    &quot;quadratic_nonlinearity&quot;: [],
+    &quot;transient_packet&quot;: [
+      {
+        &quot;analysis_id&quot;: &quot;wavepacket&quot;,
+        &quot;arrival_time_regression_r_squared&quot;: 0.8008115634913925,
+        &quot;confidence_interval_95_m_s&quot;: [
+          14.99984178237463,
+          82.15151440475724
+        ],
+        &quot;group_velocity_m_s&quot;: 25.36783358701167,
+        &quot;meaning&quot;: &quot;Band-limited arrival regression; not a causal attribution.&quot;,
+        &quot;status&quot;: &quot;supported_packet_kinematics&quot;
+      }
+    ]
+  },
+  &quot;excluded_scope&quot;: {
+    &quot;LST_PSE&quot;: &quot;not performed or inferred&quot;,
+    &quot;causality&quot;: &quot;measurement association does not establish causality&quot;
+  },
+  &quot;limitations&quot;: [
+    &quot;An empty domain means that no compatible registered product was available.&quot;,
+    &quot;Statuses are non-exclusive measurement descriptions and inherit artifact quality gates.&quot;
+  ],
+  &quot;schema&quot;: &quot;pelecpost.measurement-evidence&quot;,
+  &quot;schema_version&quot;: 1
+}</pre>
+<h2>Evidence matrix</h2><table><thead><tr><th>Product</th><th>Analysis contract</th><th>Permitted interpretation</th><th>Quality gates</th></tr></thead>
+<tbody><tr><td><a href='../resolved-case.yaml'>run.resolved-case</a></td><td>__run__</td><td>Resolved portable case configuration.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../resolved-analyses.yaml'>run.resolved-analyses</a></td><td>__run__</td><td>Resolved recipe configuration.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../resolved-machine.yaml'>run.resolved-machine</a></td><td>__run__</td><td>Resolved machine-local configuration.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../plan.json'>run.plan</a></td><td>__run__</td><td>Scientific and resource preflight record.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../manifest.json'>run.manifest</a></td><td>__run__</td><td>Atomic workflow state and provenance manifest.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../figures/directional/raw_history_overlay.png'>directional.probe.raw_history.figure</a></td><td><a href='#contract-directional'>directional</a></td><td>Overlay of the selected probe histories before recipe preprocessing.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../figures/directional/method_ready_overlay.png'>directional.probe.method_ready.figure</a></td><td><a href='#contract-directional'>directional</a></td><td>Overlay of the selected probe signals supplied to the recipe method.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../data/directional/complex_wavenumber.npz'>directional.wave.wavenumber</a></td><td><a href='#contract-directional'>directional</a></td><td>Coherence-gated dominant-wave estimate; it is not an LST/PSE eigensolution.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../data/directional/local_spatial_spectrum.npz'>directional.wave.spatial_spectrum</a></td><td><a href='#contract-directional'>directional</a></td><td>Welch-averaged local spatial spectral power and adjacent-probe coherence.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../data/directional/komega_spectrum.npz'>directional.wave.komega</a></td><td><a href='#contract-directional'>directional</a></td><td>Signed numerical k–omega map; positive k denotes downstream cos(omega t - k x).</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../data/directional/komega_sensitivity.json'>directional.wave.komega_sensitivity</a></td><td><a href='#contract-directional'>directional</a></td><td>Dominant-ridge changes under temporal-window and half-record perturbations; large differences limit directional-wave interpretation.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../figures/directional/komega.png'>directional.wave.komega.figure</a></td><td><a href='#contract-directional'>directional</a></td><td>Signed k–omega map; positive k denotes downstream cos(omega t - k x).</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../figures/spectrum/raw_history_overlay.png'>spectrum.probe.raw_history.figure</a></td><td><a href='#contract-spectrum'>spectrum</a></td><td>Overlay of the selected probe histories before recipe preprocessing.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../figures/spectrum/method_ready_overlay.png'>spectrum.probe.method_ready.figure</a></td><td><a href='#contract-spectrum'>spectrum</a></td><td>Overlay of the selected probe signals supplied to the recipe method.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../data/spectrum/stationary_spectrum.npz'>spectrum.spectral.psd</a></td><td><a href='#contract-spectrum'>spectrum</a></td><td>One-sided Welch power spectral density; peaks are descriptive stationary content.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../data/spectrum/spectral_confidence.json'>spectrum.spectral.confidence</a></td><td><a href='#contract-spectrum'>spectrum</a></td><td>Degrees of freedom are approximate because overlapped windowed segments are correlated.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../data/spectrum/adjacent_probe_coherence.npz'>spectrum.spectral.coherence</a></td><td><a href='#contract-spectrum'>spectrum</a></td><td>Magnitude-squared coherence and downstream-minus-upstream cross phase for adjacent probes ordered by physical x coordinate.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../data/spectrum/probe_time_fft.npz'>spectrum.spectral.probe_signals</a></td><td><a href='#contract-spectrum'>spectrum</a></td><td>Selected probe histories and configured-detrend/window single-sided FFT amplitudes.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../figures/spectrum/fft_overlay.png'>spectrum.spectral.fft_overlay.figure</a></td><td><a href='#contract-spectrum'>spectrum</a></td><td>Single-sided FFT amplitude overlaid for every selected probe.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../figures/spectrum/psd_overlay.png'>spectrum.spectral.psd_overlay.figure</a></td><td><a href='#contract-spectrum'>spectrum</a></td><td>One-sided Welch PSD overlaid for every selected probe.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../figures/spectrum/probe_time_fft.png'>spectrum.spectral.probe_figure</a></td><td><a href='#contract-spectrum'>spectrum</a></td><td>Per-probe raw history, processed history, and single-sided FFT amplitude.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../figures/spectrum/stationary_spectrum.png'>spectrum.spectral.figure</a></td><td><a href='#contract-spectrum'>spectrum</a></td><td>Median stationary spectrum with the 10th–90th percentile probe envelope.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../figures/wavepacket/raw_history_overlay.png'>wavepacket.probe.raw_history.figure</a></td><td><a href='#contract-wavepacket'>wavepacket</a></td><td>Overlay of the selected probe histories before recipe preprocessing.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../figures/wavepacket/method_ready_overlay.png'>wavepacket.probe.method_ready.figure</a></td><td><a href='#contract-wavepacket'>wavepacket</a></td><td>Overlay of the selected probe signals supplied to the recipe method.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../figures/wavepacket/filtered_overlay.png'>wavepacket.transient.filtered_overlay.figure</a></td><td><a href='#contract-wavepacket'>wavepacket</a></td><td>Band-pass reconstructed signal overlaid for every selected probe.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../figures/wavepacket/envelope_overlay.png'>wavepacket.transient.envelope_overlay.figure</a></td><td><a href='#contract-wavepacket'>wavepacket</a></td><td>Analytic envelope overlaid for every selected probe.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../data/wavepacket/packet_envelope.npz'>wavepacket.transient.envelope</a></td><td><a href='#contract-wavepacket'>wavepacket</a></td><td>Analytic envelope of the explicitly configured band-pass reconstruction.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../figures/wavepacket/stft_overlay.png'>wavepacket.transient.stft_figure</a></td><td><a href='#contract-wavepacket'>wavepacket</a></td><td>Shared-scale STFT panels, one panel for each selected probe.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../data/wavepacket/packet_stft.npz'>wavepacket.transient.stft</a></td><td><a href='#contract-wavepacket'>wavepacket</a></td><td>Hann-window STFT of the probe-median disturbance; segment resolution is recorded.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../data/wavepacket/group_velocity.json'>wavepacket.transient.group_velocity</a></td><td><a href='#contract-wavepacket'>wavepacket</a></td><td>Kinematic packet-envelope regression; not a causality claim.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../data/measurement_evidence.json'>run.measurement-evidence</a></td><td>__run__</td><td>Conservative measurement-based classification with explicit exclusion of LST/PSE and causal inference.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../logs/run.log'>run.log</a></td><td>__run__</td><td>Full workflow log including tracebacks.</td><td><a href='#preflight'>preflight gates</a></td></tr><tr><td><a href='../report/index.html'>run.report</a></td><td>__run__</td><td>Portable HTML run report.</td><td><a href='#preflight'>preflight gates</a></td></tr></tbody></table>
+<h2>Interpretation limits</h2><ul><li><a href='#contract-directional'>directional</a>: Measurements alone do not constitute LST/PSE or causal evidence.</li><li><a href='#contract-spectrum'>spectrum</a>: Finite records and windowing limit frequency discrimination.</li><li><a href='#contract-wavepacket'>wavepacket</a>: Arrival detection depends on bandwidth and signal-to-noise ratio.</li></ul>
+<p>Warnings and assumptions linked above remain part of the scientific record and must accompany copied products.</p>
+<h2>Provenance</h2><pre>{
+  &quot;git&quot;: {
+    &quot;commit&quot;: &quot;648f787c181ded3ae06717b1cb1b4b28737ad6c8&quot;,
+    &quot;dirty&quot;: true
+  },
+  &quot;host&quot;: &quot;Seths-MacBook-M2-Pro.local&quot;,
+  &quot;input_fingerprints&quot;: [
+    {
+      &quot;checksum&quot;: &quot;32fdcda26fae6e2b20b560c1b2f08b2f15959eb6f2515f2e80dbeead4e157f79&quot;,
+      &quot;checksum_algorithm&quot;: &quot;sha256&quot;,
+      &quot;input_id&quot;: &quot;case.yaml&quot;,
+      &quot;mtime_ns&quot;: 1789003895314576485,
+      &quot;path&quot;: &quot;/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/case.yaml&quot;,
+      &quot;size_bytes&quot;: 299
+    },
+    {
+      &quot;checksum&quot;: &quot;340c0f5a86fc4c92120d26fd6bfb520ee8c6c4f6472b619278fa54cfcbdaf34d&quot;,
+      &quot;checksum_algorithm&quot;: &quot;sha256&quot;,
+      &quot;input_id&quot;: &quot;analyses.yaml&quot;,
+      &quot;mtime_ns&quot;: 1789008269050983813,
+      &quot;path&quot;: &quot;/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/analyses.yaml&quot;,
+      &quot;size_bytes&quot;: 797
+    },
+    {
+      &quot;checksum&quot;: &quot;3892ff3142baa3511f22feeed13e183cb5af175738fd5e6097eab2cdb33b49de&quot;,
+      &quot;checksum_algorithm&quot;: &quot;sha256&quot;,
+      &quot;input_id&quot;: &quot;machine.yaml&quot;,
+      &quot;mtime_ns&quot;: 1789008269108776437,
+      &quot;path&quot;: &quot;/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/machine.yaml&quot;,
+      &quot;size_bytes&quot;: 407
+    },
+    {
+      &quot;checksum&quot;: &quot;67a40293c3abba4a45252fc1172b3500adb11b9447cc4f464ff74e0adb036eba&quot;,
+      &quot;checksum_algorithm&quot;: &quot;sha256&quot;,
+      &quot;input_id&quot;: &quot;inputs.probe_sets.default&quot;,
+      &quot;mtime_ns&quot;: 1789003895314017839,
+      &quot;path&quot;: &quot;/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5&quot;,
+      &quot;size_bytes&quot;: 161488
+    }
+  ],
+  &quot;packages&quot;: {
+    &quot;h5py&quot;: &quot;3.16.0&quot;,
+    &quot;matplotlib&quot;: &quot;3.11.1&quot;,
+    &quot;numpy&quot;: &quot;2.5.3&quot;,
+    &quot;pydantic&quot;: &quot;2.13.5&quot;,
+    &quot;rich&quot;: &quot;15.0.0&quot;,
+    &quot;scipy&quot;: &quot;1.18.1&quot;,
+    &quot;typer&quot;: &quot;0.27.2&quot;,
+    &quot;yt&quot;: &quot;4.4.2&quot;
+  },
+  &quot;python&quot;: &quot;3.14.7&quot;,
+  &quot;slurm&quot;: {}
+}</pre>
+</body></html>

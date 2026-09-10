@@ -73,13 +73,11 @@ class ProbeInventory:
 @dataclass(frozen=True)
 class InputInventory:
     plotfiles: PlotfileInventory | None
-    probes: ProbeInventory | None
-    comparison_archives: dict[str, str]
-    comparison_products: dict[str, tuple[str, ...]]
-    comparison_metadata: dict[str, dict[str, dict[str, Any]]]
-    comparison_errors: dict[str, str]
-    comparison_probe_sets: dict[str, ProbeInventory]
-    comparison_probe_errors: dict[str, str]
+    probe_sets: dict[str, ProbeInventory]
+    archived_runs: dict[str, Path]
+    archived_products: dict[str, tuple[str, ...]]
+    archived_metadata: dict[str, dict[str, dict[str, Any]]]
+    archived_errors: dict[str, str]
     baselines: dict[str, tuple[str, ...]]
 
     def as_dict(self) -> dict[str, Any]:
@@ -87,6 +85,7 @@ class InputInventory:
 
 
 def _resolve(project: ResolvedProject, path: Path) -> Path:
+    path = path.expanduser()
     return path if path.is_absolute() else (project.root / path).resolve()
 
 
@@ -282,9 +281,12 @@ def _inspect_binary(project: ResolvedProject, patterns: tuple[str, ...]) -> Prob
             sample_count=int(time.size), probe_count=collection.n_probes,
             fields=collection.field_names,
             field_units=dict(zip(collection.field_names, collection.field_units)),
-            x_min_m=float(np.min(x_cm) * 0.01), x_max_m=float(np.max(x_cm) * 0.01),
-            y_min_m=float(np.min(y_cm) * 0.01), y_max_m=float(np.max(y_cm) * 0.01),
-            time_min_s=float(time[0]), time_max_s=float(time[-1]),
+            x_min_m=float(np.min(x_cm) * 0.01) if x_cm.size else None,
+            x_max_m=float(np.max(x_cm) * 0.01) if x_cm.size else None,
+            y_min_m=float(np.min(y_cm) * 0.01) if y_cm.size else None,
+            y_max_m=float(np.max(y_cm) * 0.01) if y_cm.size else None,
+            time_min_s=float(time[0]) if time.size else None,
+            time_max_s=float(time[-1]) if time.size else None,
             median_timestep_s=median_dt,
             timestep_std_s=float(np.std(dt)) if dt.size else None,
             timestep_max_deviation_s=(
@@ -304,26 +306,14 @@ def _inspect_binary(project: ResolvedProject, patterns: tuple[str, ...]) -> Prob
         )
 
 
-def _inspect_probes(project: ResolvedProject) -> ProbeInventory | None:
-    config = project.machine_file.inputs.probes
-    if config is None:
-        return None
+def _inspect_probe_config(project: ResolvedProject, config: Any) -> ProbeInventory:
     try:
         if config.compact_file is not None:
             return _inspect_hdf5(_resolve(project, config.compact_file))
         if config.binary_files:
             return _inspect_binary(project, config.binary_files)
-        return ProbeInventory(
-            source="", format="unconfigured", sample_count=0, probe_count=0,
-            fields=(), field_units={}, x_min_m=None, x_max_m=None,
-            y_min_m=None, y_max_m=None, time_min_s=None, time_max_s=None,
-            median_timestep_s=None, timestep_std_s=None, timestep_max_deviation_s=None,
-            nonfinite_time_count=0, nonpositive_timestep_count=0,
-            missing_value_count={},
-            restart_overlap_count=0, mapping_epoch_count=0, quality_approved=None,
-            provenance_present=False, errors=("probe source is empty",),
-        )
-    except (OSError, ValueError, KeyError, EOFError) as exc:
+        raise ValueError("probe source is empty")
+    except (OSError, ValueError, KeyError, EOFError, IndexError) as exc:
         return ProbeInventory(
             source=str(config.compact_file or config.binary_files), format="unknown",
             sample_count=0, probe_count=0, fields=(), field_units={},
@@ -337,17 +327,6 @@ def _inspect_probes(project: ResolvedProject) -> ProbeInventory | None:
         )
 
 
-def _inspect_probe_config(
-    project: ResolvedProject, config: Any
-) -> ProbeInventory:
-    """Inspect one ProbeInput (comparison_probe_sets entry)."""
-    if getattr(config, "compact_file", None) is not None:
-        return _inspect_hdf5(_resolve(project, config.compact_file))
-    if getattr(config, "binary_files", ()):
-        return _inspect_binary(project, config.binary_files)
-    raise ValueError("comparison probe set is empty")
-
-
 def inspect_project(project: ResolvedProject) -> InputInventory:
     baselines = {}
     for name, config in project.machine_file.inputs.baselines.items():
@@ -356,14 +335,14 @@ def inspect_project(project: ResolvedProject) -> InputInventory:
             path.name for path in sorted(source.glob(f"{config.prefix}*"))
             if (path / "Header").is_file()
         ) if source.is_dir() else ()
-    comparison_archives = {
-        name: str(_resolve(project, path))
-        for name, path in project.machine_file.inputs.comparison_archives.items()
+    archived_runs = {
+        name: _resolve(project, path)
+        for name, path in project.machine_file.inputs.archived_runs.items()
     }
-    comparison_products: dict[str, tuple[str, ...]] = {}
-    comparison_metadata: dict[str, dict[str, dict[str, Any]]] = {}
-    comparison_errors: dict[str, str] = {}
-    for archive_id, archive in comparison_archives.items():
+    archived_products: dict[str, tuple[str, ...]] = {}
+    archived_metadata: dict[str, dict[str, dict[str, Any]]] = {}
+    archived_errors: dict[str, str] = {}
+    for archive_id, archive in archived_runs.items():
         try:
             payload = json.loads(
                 (Path(archive) / "artifacts.json").read_text(encoding="utf-8")
@@ -375,27 +354,34 @@ def inspect_project(project: ResolvedProject) -> InputInventory:
                 str(item["id"]): item
                 for item in products if isinstance(item, dict) and "id" in item
             }
-            comparison_products[archive_id] = tuple(metadata)
-            comparison_metadata[archive_id] = metadata
+            archived_products[archive_id] = tuple(metadata)
+            archived_metadata[archive_id] = metadata
         except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
-            comparison_products[archive_id] = ()
-            comparison_metadata[archive_id] = {}
-            comparison_errors[archive_id] = str(exc)
-    comparison_probe_sets: dict[str, ProbeInventory] = {}
-    comparison_probe_errors: dict[str, str] = {}
-    for archive_id, config in project.machine_file.inputs.comparison_probe_sets.items():
+            archived_products[archive_id] = ()
+            archived_metadata[archive_id] = {}
+            archived_errors[archive_id] = str(exc)
+    probe_sets: dict[str, ProbeInventory] = {}
+    for probe_set_id, config in project.machine_file.inputs.probe_sets.items():
         try:
-            comparison_probe_sets[archive_id] = _inspect_probe_config(project, config)
-        except (OSError, ValueError, KeyError, EOFError) as exc:
-            comparison_probe_errors[archive_id] = str(exc)
+            probe_sets[probe_set_id] = _inspect_probe_config(project, config)
+        except (OSError, ValueError, KeyError, EOFError, IndexError) as exc:
+            probe_sets[probe_set_id] = ProbeInventory(
+                source=str(config.compact_file or config.binary_files), format="unknown",
+                sample_count=0, probe_count=0, fields=(), field_units={},
+                x_min_m=None, x_max_m=None, y_min_m=None, y_max_m=None,
+                time_min_s=None, time_max_s=None, median_timestep_s=None,
+                timestep_std_s=None, timestep_max_deviation_s=None,
+                nonfinite_time_count=0, nonpositive_timestep_count=0,
+                missing_value_count={}, restart_overlap_count=0,
+                mapping_epoch_count=0, quality_approved=None,
+                provenance_present=False, errors=(str(exc),),
+            )
     return InputInventory(
         plotfiles=_inspect_plotfiles(project),
-        probes=_inspect_probes(project),
-        comparison_archives=comparison_archives,
-        comparison_products=comparison_products,
-        comparison_metadata=comparison_metadata,
-        comparison_errors=comparison_errors,
-        comparison_probe_sets=comparison_probe_sets,
-        comparison_probe_errors=comparison_probe_errors,
+        probe_sets=probe_sets,
+        archived_runs=archived_runs,
+        archived_products=archived_products,
+        archived_metadata=archived_metadata,
+        archived_errors=archived_errors,
         baselines=baselines,
     )

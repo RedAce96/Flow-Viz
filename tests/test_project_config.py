@@ -104,10 +104,50 @@ class ProjectConfigTests(unittest.TestCase):
             root = Path(temporary)
             self.write_project(root, analyses=[{
                 "id": "bad", "recipe": "transient_wavepacket",
-                "variable": "pressure", "band_min_hz": 1.0,
+                "probe_set_id": "default", "variable": "pressure", "band_min_hz": 1.0,
                 "band_max_hz": 2.0, "probe_indices": [1, 1],
             }])
             with self.assertRaisesRegex(ProjectConfigurationError, "probe_indices must be unique"):
+                load_project(root)
+
+    def test_probe_plotting_defaults_and_rejects_invalid_values(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write_project(root, analyses=[{
+                "id": "spectrum", "recipe": "probe_spectrum",
+                "probe_set_id": "default", "variable": "pressure",
+            }])
+            project = load_project(root)
+            plotting = project.analyses_file.analyses[0].probe_plotting
+            self.assertEqual(plotting.mode, "both")
+            self.assertEqual(plotting.normalization, "none")
+            self.assertEqual(plotting.label, "index_coordinates")
+            bad = yaml.safe_load((root / "analyses.yaml").read_text())
+            bad["analyses"][0]["probe_plotting"] = {"normalization": "bad"}
+            (root / "analyses.yaml").write_text(yaml.safe_dump(bad), encoding="utf-8")
+            with self.assertRaisesRegex(ProjectConfigurationError, "normalization"):
+                load_project(root)
+
+    def test_temporal_wavenumber_requires_duration_and_rejects_duplicate_snapshots(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            analysis = {
+                "id": "wave", "recipe": "directional_wave", "probe_set_id": "default",
+                "variable": "pressure", "frequency_max_hz": 100_000,
+                "temporal_wavenumber": {"enabled": True},
+            }
+            self.write_project(root, analyses=[analysis])
+            with self.assertRaisesRegex(ProjectConfigurationError, "window_duration_s"):
+                load_project(root)
+            analysis["temporal_wavenumber"] = {
+                "enabled": True, "window_duration_s": 1.0e-4,
+                "snapshot_times_s": [1.0, 1.0],
+            }
+            (root / "analyses.yaml").write_text(
+                yaml.safe_dump({"schema_version": 1, "analyses": [analysis]}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ProjectConfigurationError, "snapshot_times_s"):
                 load_project(root)
 
     def test_volume_fraction_smoothing_window_is_odd(self):
@@ -161,6 +201,7 @@ class ProjectConfigTests(unittest.TestCase):
             self.assertIn('"case.yaml"', text)
             self.assertIn('"analyses.yaml"', text)
             self.assertIn('"machine.yaml"', text)
+            self.assertIn('"probe_plotting"', text)
 
     def test_cli_initializes_and_validates_project(self):
         runner = CliRunner()

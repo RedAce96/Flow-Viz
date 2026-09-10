@@ -1,0 +1,329 @@
+{
+  "analysis_contracts": {
+    "directional": {
+      "assumptions": [
+        "Probe coordinates form a suitable approximately uniform aperture."
+      ],
+      "expected_artifact_ids": [
+        "wave.spatial_spectrum",
+        "wave.wavenumber",
+        "wave.komega",
+        "wave.komega_sensitivity",
+        "wave.komega.figure"
+      ],
+      "limitations": [
+        "Measurements alone do not constitute LST/PSE or causal evidence."
+      ],
+      "physical_question": "What direction, wavelength, phase speed, and amplification are measured?",
+      "recipe": "directional_wave",
+      "required_fields": [],
+      "required_inputs": [
+        "probe_sets"
+      ]
+    },
+    "spectrum": {
+      "assumptions": [
+        "The selected record is approximately stationary."
+      ],
+      "expected_artifact_ids": [
+        "spectral.psd",
+        "spectral.coherence",
+        "spectral.confidence",
+        "spectral.figure",
+        "spectral.probe_signals",
+        "spectral.probe_figure"
+      ],
+      "limitations": [
+        "Finite records and windowing limit frequency discrimination."
+      ],
+      "physical_question": "What stationary frequency content is present in the probe measurements?",
+      "recipe": "probe_spectrum",
+      "required_fields": [],
+      "required_inputs": [
+        "probe_sets"
+      ]
+    },
+    "wavepacket": {
+      "assumptions": [
+        "A localized packet exists in the selected time-frequency band."
+      ],
+      "expected_artifact_ids": [
+        "transient.stft",
+        "transient.envelope",
+        "transient.group_velocity"
+      ],
+      "limitations": [
+        "Arrival detection depends on bandwidth and signal-to-noise ratio."
+      ],
+      "physical_question": "How does a transient packet arrive and propagate?",
+      "recipe": "transient_wavepacket",
+      "required_fields": [],
+      "required_inputs": [
+        "probe_sets"
+      ]
+    }
+  },
+  "case_id": "preflight-case",
+  "estimates": [
+    {
+      "analysis_id": "spectrum",
+      "estimated_peak_gb": 0.10018292665481568,
+      "expected_artifact_ids": [
+        "spectral.psd",
+        "spectral.coherence",
+        "spectral.confidence",
+        "spectral.figure",
+        "spectral.probe_signals",
+        "spectral.probe_figure"
+      ],
+      "memory_components_gb": {
+        "fft_workspace": 0.00012195110321044922,
+        "plotting_workspace": 0.1,
+        "probe_signal_or_disk_workspace": 6.097555160522461e-05
+      },
+      "recipe": "probe_spectrum"
+    },
+    {
+      "analysis_id": "wavepacket",
+      "estimated_peak_gb": 0.00030487775802612305,
+      "expected_artifact_ids": [
+        "transient.stft",
+        "transient.envelope",
+        "transient.group_velocity"
+      ],
+      "memory_components_gb": {
+        "probe_signal_or_disk_workspace": 6.097555160522461e-05,
+        "stft_and_envelope": 0.00024390220642089844
+      },
+      "recipe": "transient_wavepacket"
+    },
+    {
+      "analysis_id": "directional",
+      "estimated_peak_gb": 0.00036585330963134766,
+      "expected_artifact_ids": [
+        "wave.spatial_spectrum",
+        "wave.wavenumber",
+        "wave.komega",
+        "wave.komega_sensitivity",
+        "wave.komega.figure"
+      ],
+      "memory_components_gb": {
+        "probe_signal_or_disk_workspace": 6.097555160522461e-05,
+        "wavenumber_and_komega": 0.00030487775802612305
+      },
+      "recipe": "directional_wave"
+    }
+  ],
+  "findings": [
+    {
+      "analysis_id": "wavepacket",
+      "code": "FEW_SEGMENTS",
+      "message": "Only 1 segments are available; spectral confidence is weak.",
+      "severity": "WARNING"
+    }
+  ],
+  "inventory": {
+    "archived_errors": {},
+    "archived_metadata": {},
+    "archived_products": {},
+    "archived_runs": {},
+    "baselines": {},
+    "plotfiles": null,
+    "probe_sets": {
+      "default": {
+        "errors": [],
+        "field_units": {
+          "T": "K",
+          "p": "dyne/cm^2"
+        },
+        "fields": [
+          "T",
+          "p"
+        ],
+        "format": "compact_hdf5",
+        "mapping_epoch_count": 1,
+        "median_timestep_s": 1.0000000000000243e-06,
+        "missing_value_count": {
+          "T": 0,
+          "p": 0
+        },
+        "nonfinite_time_count": 0,
+        "nonpositive_timestep_count": 0,
+        "probe_count": 8,
+        "provenance_present": true,
+        "quality_approved": true,
+        "requested_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03,
+          0.04,
+          0.05,
+          0.06,
+          0.07
+        ],
+        "requested_y_m": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "restart_overlap_count": 0,
+        "sample_count": 1024,
+        "source": "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/examples/generated_probe_demo/probes.h5",
+        "time_max_s": 0.001023,
+        "time_min_s": 0.0,
+        "timestep_max_deviation_s": 1.0842021724855044e-19,
+        "timestep_std_s": 4.0750544731663123e-20,
+        "x_max_m": 0.07,
+        "x_min_m": 0.0,
+        "y_max_m": 0.0,
+        "y_min_m": 0.0
+      }
+    }
+  },
+  "output_root": "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/examples/generated_probe_demo/outputs",
+  "sampling": {
+    "by_analysis": {
+      "directional": {
+        "distinct_x_count": 8,
+        "median_timestep_s": 1.0000000000000243e-06,
+        "native_frequency_resolution_hz": 977.5171065493646,
+        "native_wavenumber_resolution_rad_m": 89.7597901025655,
+        "nyquist_frequency_hz": 499999.99999998783,
+        "probe_aperture_m": 0.07,
+        "probe_count": 8,
+        "probe_spacing_m": 0.01,
+        "probe_spacing_relative_std": 3.9882474652746385e-16,
+        "record_duration_s": 0.001023,
+        "sample_count": 1023,
+        "sampling_frequency_hz": 999999.9999999757,
+        "selected_probe_count": 8,
+        "spatial_nyquist_rad_m": 314.1592653589793
+      },
+      "spectrum": {
+        "distinct_x_count": 8,
+        "median_timestep_s": 1.0000000000000243e-06,
+        "native_frequency_resolution_hz": 977.5171065493646,
+        "native_wavenumber_resolution_rad_m": 89.7597901025655,
+        "nyquist_frequency_hz": 499999.99999998783,
+        "probe_aperture_m": 0.07,
+        "probe_count": 8,
+        "probe_spacing_m": 0.01,
+        "probe_spacing_relative_std": 3.9882474652746385e-16,
+        "record_duration_s": 0.001023,
+        "sample_count": 1023,
+        "sampling_frequency_hz": 999999.9999999757,
+        "segmented_estimator": {
+          "approximate_degrees_of_freedom": 12,
+          "effective_frequency_resolution_hz": 3906.249999999905,
+          "sample_count": 1023,
+          "segment_count": 6,
+          "segment_samples": 256
+        },
+        "selected_probe_count": 8,
+        "spatial_nyquist_rad_m": 314.1592653589793
+      },
+      "wavepacket": {
+        "distinct_x_count": 8,
+        "median_timestep_s": 1.0000000000000243e-06,
+        "native_frequency_resolution_hz": 977.5171065493646,
+        "native_wavenumber_resolution_rad_m": 89.7597901025655,
+        "nyquist_frequency_hz": 499999.99999998783,
+        "probe_aperture_m": 0.07,
+        "probe_count": 8,
+        "probe_spacing_m": 0.01,
+        "probe_spacing_relative_std": 3.9882474652746385e-16,
+        "record_duration_s": 0.001023,
+        "sample_count": 1023,
+        "sampling_frequency_hz": 999999.9999999757,
+        "segmented_estimator": {
+          "approximate_degrees_of_freedom": 2,
+          "effective_frequency_resolution_hz": 977.517106549341,
+          "sample_count": 1023,
+          "segment_count": 1,
+          "segment_samples": 1023
+        },
+        "selected_probe_count": 8,
+        "spatial_nyquist_rad_m": 314.1592653589793
+      }
+    },
+    "directional_wave": {
+      "directional": {
+        "distinct_x_count": 8,
+        "native_wavenumber_resolution_rad_m": 89.7597901025655,
+        "probe_aperture_m": 0.07,
+        "probe_spacing_m": 0.01,
+        "probe_spacing_relative_std": 3.9882474652746385e-16,
+        "selected_probe_count": 8,
+        "spatial_nyquist_rad_m": 314.1592653589793
+      }
+    },
+    "distinct_x_count": 8,
+    "median_timestep_s": 1.0000000000000243e-06,
+    "native_frequency_resolution_hz": 977.5171065493646,
+    "native_wavenumber_resolution_rad_m": 89.7597901025655,
+    "nyquist_frequency_hz": 499999.99999998783,
+    "probe_aperture_m": 0.07,
+    "probe_count": 8,
+    "probe_spacing_m": 0.01,
+    "probe_spacing_relative_std": 3.9882474652746385e-16,
+    "record_duration_s": 0.001023,
+    "resource_estimate": {
+      "estimated_concurrent_peak_gb": 0.20036585330963136,
+      "largest_workflow_peak_gb": 0.10018292665481568,
+      "memory_limit_gb": 8.0,
+      "workers": 2
+    },
+    "sample_count": 1024,
+    "sampling_frequency_hz": 999999.9999999757,
+    "segmented_estimators": {
+      "spectrum": {
+        "approximate_degrees_of_freedom": 12,
+        "effective_frequency_resolution_hz": 3906.249999999905,
+        "sample_count": 1023,
+        "segment_count": 6,
+        "segment_samples": 256
+      },
+      "wavepacket": {
+        "approximate_degrees_of_freedom": 2,
+        "effective_frequency_resolution_hz": 977.517106549341,
+        "sample_count": 1023,
+        "segment_count": 1,
+        "segment_samples": 1023
+      }
+    },
+    "selected_probe_count": 8,
+    "selections": {
+      "expected_output_root": "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/examples/generated_probe_demo/outputs",
+      "plotfiles": {},
+      "probe_sets": {
+        "directional": "all",
+        "spectrum": "all",
+        "wavepacket": "all"
+      }
+    },
+    "spatial_nyquist_rad_m": 314.1592653589793,
+    "transient_wavepacket": {
+      "wavepacket": {
+        "distinct_x_count": 8,
+        "native_wavenumber_resolution_rad_m": 89.7597901025655,
+        "probe_aperture_m": 0.07,
+        "probe_spacing_m": 0.01,
+        "probe_spacing_relative_std": 3.9882474652746385e-16,
+        "selected_probe_count": 8,
+        "spatial_nyquist_rad_m": 314.1592653589793
+      }
+    }
+  },
+  "workflow_order": [
+    "input.probe_sets",
+    "analysis.directional",
+    "analysis.spectrum",
+    "analysis.wavepacket"
+  ]
+}

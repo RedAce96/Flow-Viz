@@ -1,0 +1,55 @@
+{
+  "schema": "pelecpost.measurement-evidence",
+  "schema_version": 1,
+  "decision_thresholds": {
+    "minimum_wave_accepted_fraction": 0.1,
+    "minimum_packet_arrival_r_squared": 0.8,
+    "minimum_pod_subspace_cosine": 0.9,
+    "maximum_dmd_frequency_relative_range": 0.1,
+    "maximum_dmd_condition_number": 100000000.0
+  },
+  "domains": {
+    "coherent_wave": [],
+    "transient_packet": [
+      {
+        "analysis_id": "wavepacket",
+        "status": "supported_packet_kinematics",
+        "group_velocity_m_s": 25.36783358701167,
+        "arrival_time_regression_r_squared": 0.8008115634913925,
+        "confidence_interval_95_m_s": [
+          14.99984178237463,
+          82.15151440475724
+        ],
+        "meaning": "Band-limited arrival regression; not a causal attribution."
+      }
+    ],
+    "quadratic_nonlinearity": [
+      {
+        "analysis_id": "triads",
+        "status": "no_fdr_significant_association_detected",
+        "significant_triad_count": 0,
+        "tested_triad_count": 1,
+        "meaning": "Surrogate/FDR-controlled quadratic association; not causal transfer."
+      }
+    ],
+    "modal_robustness": [
+      {
+        "analysis_id": "modes",
+        "status": "sensitivity_gate_not_passed",
+        "minimum_pod_subspace_cosine": 1.0,
+        "dmd_frequency_relative_range": 0.0004922882599803858,
+        "maximum_dmd_condition_number": 461352161460225.56,
+        "meaning": "POD/SPOD/DMD robustness only; not an eigenmode attribution."
+      }
+    ],
+    "aerodynamic_loads": []
+  },
+  "excluded_scope": {
+    "LST_PSE": "not performed or inferred",
+    "causality": "measurement association does not establish causality"
+  },
+  "limitations": [
+    "An empty domain means that no compatible registered product was available.",
+    "Statuses are non-exclusive measurement descriptions and inherit artifact quality gates."
+  ]
+}

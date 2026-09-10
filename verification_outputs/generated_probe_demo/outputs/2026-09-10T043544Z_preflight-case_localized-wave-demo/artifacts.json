@@ -1,0 +1,3230 @@
+{
+  "artifacts": [
+    {
+      "coordinate_metadata": {},
+      "id": "run.resolved-case",
+      "interpretation": "Resolved portable case configuration.",
+      "kind": "run-metadata",
+      "path": "resolved-case.yaml",
+      "provenance": {},
+      "recipe_instance": "__run__",
+      "schema_version": 1,
+      "source_inputs": [],
+      "units": null,
+      "variable": null
+    },
+    {
+      "coordinate_metadata": {},
+      "id": "run.resolved-analyses",
+      "interpretation": "Resolved recipe configuration.",
+      "kind": "run-metadata",
+      "path": "resolved-analyses.yaml",
+      "provenance": {},
+      "recipe_instance": "__run__",
+      "schema_version": 1,
+      "source_inputs": [],
+      "units": null,
+      "variable": null
+    },
+    {
+      "coordinate_metadata": {},
+      "id": "run.resolved-machine",
+      "interpretation": "Resolved machine-local configuration.",
+      "kind": "run-metadata",
+      "path": "resolved-machine.yaml",
+      "provenance": {},
+      "recipe_instance": "__run__",
+      "schema_version": 1,
+      "source_inputs": [],
+      "units": null,
+      "variable": null
+    },
+    {
+      "coordinate_metadata": {},
+      "id": "run.plan",
+      "interpretation": "Scientific and resource preflight record.",
+      "kind": "run-metadata",
+      "path": "plan.json",
+      "provenance": {},
+      "recipe_instance": "__run__",
+      "schema_version": 1,
+      "source_inputs": [],
+      "units": null,
+      "variable": null
+    },
+    {
+      "coordinate_metadata": {},
+      "id": "run.manifest",
+      "interpretation": "Atomic workflow state and provenance manifest.",
+      "kind": "run-metadata",
+      "path": "manifest.json",
+      "provenance": {},
+      "recipe_instance": "__run__",
+      "schema_version": 1,
+      "source_inputs": [],
+      "units": null,
+      "variable": null
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "directional.probe.raw_history.figure",
+      "interpretation": "Overlay of the selected probe histories before recipe preprocessing.",
+      "kind": "figure",
+      "path": "figures/directional/raw_history_overlay.png",
+      "provenance": {
+        "figure_format": "png",
+        "normalization": "none",
+        "normalization_scales": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "preprocessing": {
+          "resampled": false,
+          "time_grid_policy": "resample_uniform"
+        },
+        "probe_labels": [
+          "Probe 0 \u00b7 x=0 m, y=0 m",
+          "Probe 1 \u00b7 x=0.01 m, y=0 m",
+          "Probe 2 \u00b7 x=0.02 m, y=0 m",
+          "Probe 3 \u00b7 x=0.03 m, y=0 m",
+          "Probe 4 \u00b7 x=0.04 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03,
+          0.04
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "stage": "raw"
+      },
+      "recipe_instance": "directional",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "directional.probe.method_ready.figure",
+      "interpretation": "Overlay of the selected probe signals supplied to the recipe method.",
+      "kind": "figure",
+      "path": "figures/directional/method_ready_overlay.png",
+      "provenance": {
+        "figure_format": "png",
+        "normalization": "none",
+        "normalization_scales": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "preprocessing": {
+          "resampled": false,
+          "time_grid_policy": "resample_uniform"
+        },
+        "probe_labels": [
+          "Probe 0 \u00b7 x=0 m, y=0 m",
+          "Probe 1 \u00b7 x=0.01 m, y=0 m",
+          "Probe 2 \u00b7 x=0.02 m, y=0 m",
+          "Probe 3 \u00b7 x=0.03 m, y=0 m",
+          "Probe 4 \u00b7 x=0.04 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03,
+          0.04
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "stage": "method_ready"
+      },
+      "recipe_instance": "directional",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "wavenumber": "rad/m",
+        "x": "m"
+      },
+      "id": "directional.wave.wavenumber",
+      "interpretation": "Coherence-gated dominant-wave estimate; it is not an LST/PSE eigensolution.",
+      "kind": "array",
+      "path": "data/directional/complex_wavenumber.npz",
+      "provenance": {
+        "accepted_fraction": 0.11764705882352941,
+        "growth_accepted_fraction": 0.11764705882352941,
+        "phase_convention": "omega_t_minus_alpha_x",
+        "preprocessing": {
+          "frequency_max_hz": 100000.0,
+          "frequency_min_hz": 1000.0,
+          "minimum_coherence": 0.8,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "directional_wave",
+          "spatial_window": "hann",
+          "temporal_wavenumber": {
+            "display_floor_db": -60.0,
+            "enabled": true,
+            "minimum_relative_energy_db": -20.0,
+            "overlap_fraction": 0.75,
+            "snapshot_times_s": [
+              0.000256,
+              0.000512,
+              0.000768
+            ],
+            "window": "hann",
+            "window_duration_s": 0.000128
+          },
+          "temporal_window": "rectangular",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "product_contract": {
+          "axes": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "x_center_m"
+            ]
+          },
+          "complex_value_semantics": "real_difference",
+          "coordinate_arrays": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "x_center_m"
+            ]
+          },
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "snapshot_requested_time_s",
+            "snapshot_time_s",
+            "time_center_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [],
+          "mask_keys": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "plotting_value_keys": [],
+          "product_type": "wave.wavenumber",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "alpha_real_rad_m",
+            "alpha_imag_rad_m",
+            "alpha_real_ci95_rad_m",
+            "alpha_imag_ci95_rad_m",
+            "amplification_rate_per_m",
+            "phase_speed_m_s",
+            "coherence_squared",
+            "phase_fit_r_squared",
+            "amplitude_fit_r_squared",
+            "spatial_alias_margin"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "rad/m",
+          "validity_by_value": {
+            "alpha_imag_ci95_rad_m": [
+              "phase_valid_mask"
+            ],
+            "alpha_imag_rad_m": [
+              "phase_valid_mask"
+            ],
+            "alpha_real_ci95_rad_m": [
+              "phase_valid_mask"
+            ],
+            "alpha_real_rad_m": [
+              "phase_valid_mask"
+            ],
+            "amplification_rate_per_m": [
+              "growth_valid_mask"
+            ],
+            "amplitude_fit_r_squared": [
+              "growth_valid_mask"
+            ],
+            "phase_fit_r_squared": [
+              "phase_valid_mask"
+            ],
+            "phase_speed_m_s": [
+              "phase_valid_mask"
+            ]
+          },
+          "validity_fields": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "value_dimensions": {
+            "alpha_imag_ci95_rad_m": [
+              "frequency",
+              "space"
+            ],
+            "alpha_imag_rad_m": [
+              "frequency",
+              "space"
+            ],
+            "alpha_real_ci95_rad_m": [
+              "frequency",
+              "space"
+            ],
+            "alpha_real_rad_m": [
+              "frequency",
+              "space"
+            ],
+            "amplification_rate_per_m": [
+              "frequency",
+              "space"
+            ],
+            "amplitude_fit_r_squared": [
+              "frequency",
+              "space"
+            ],
+            "coherence_squared": [
+              "frequency",
+              "space"
+            ],
+            "phase_fit_r_squared": [
+              "frequency",
+              "space"
+            ],
+            "phase_speed_m_s": [
+              "frequency",
+              "space"
+            ],
+            "spatial_alias_margin": [
+              "frequency",
+              "space"
+            ]
+          },
+          "value_keys": [
+            "alpha_real_rad_m",
+            "alpha_imag_rad_m",
+            "alpha_real_ci95_rad_m",
+            "alpha_imag_ci95_rad_m",
+            "amplification_rate_per_m",
+            "phase_speed_m_s",
+            "coherence_squared",
+            "phase_fit_r_squared",
+            "amplitude_fit_r_squared",
+            "spatial_alias_margin"
+          ],
+          "value_units": {
+            "alpha_imag_ci95_rad_m": "rad/m",
+            "alpha_imag_rad_m": "rad/m",
+            "alpha_real_ci95_rad_m": "rad/m",
+            "alpha_real_rad_m": "rad/m",
+            "amplification_rate_per_m": "1/m",
+            "amplitude_fit_r_squared": "1",
+            "coherence_squared": "1",
+            "phase_fit_r_squared": "1",
+            "phase_speed_m_s": "m/s",
+            "spatial_alias_margin": "1"
+          }
+        },
+        "resampled": false,
+        "time_grid_policy": "resample_uniform"
+      },
+      "recipe_instance": "directional",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "rad/m",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "x": "m"
+      },
+      "id": "directional.wave.spatial_spectrum",
+      "interpretation": "Welch-averaged local spatial spectral power and adjacent-probe coherence.",
+      "kind": "array",
+      "path": "data/directional/local_spatial_spectrum.npz",
+      "provenance": {
+        "preprocessing": {
+          "frequency_max_hz": 100000.0,
+          "frequency_min_hz": 1000.0,
+          "minimum_coherence": 0.8,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "directional_wave",
+          "spatial_window": "hann",
+          "temporal_wavenumber": {
+            "display_floor_db": -60.0,
+            "enabled": true,
+            "minimum_relative_energy_db": -20.0,
+            "overlap_fraction": 0.75,
+            "snapshot_times_s": [
+              0.000256,
+              0.000512,
+              0.000768
+            ],
+            "window": "hann",
+            "window_duration_s": 0.000128
+          },
+          "temporal_window": "rectangular",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "product_contract": {
+          "axes": {
+            "edge_space": [
+              "probe_x_m"
+            ],
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "x_center_m"
+            ]
+          },
+          "complex_value_semantics": "real_difference",
+          "coordinate_arrays": {
+            "edge_space": [
+              "probe_x_m"
+            ],
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "x_center_m"
+            ]
+          },
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "snapshot_requested_time_s",
+            "snapshot_time_s",
+            "time_center_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [],
+          "mask_keys": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "plotting_value_keys": [],
+          "product_type": "wave.spatial_spectrum",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "spectral_power",
+            "relative_spectral_power_db",
+            "adjacent_coherence_squared"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "(Pa)^2",
+          "validity_by_value": null,
+          "validity_fields": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "value_dimensions": {
+            "adjacent_coherence_squared": [
+              "frequency",
+              "edge_space"
+            ],
+            "relative_spectral_power_db": [
+              "frequency",
+              "space"
+            ],
+            "spectral_power": [
+              "frequency",
+              "space"
+            ]
+          },
+          "value_keys": [
+            "spectral_power",
+            "relative_spectral_power_db",
+            "adjacent_coherence_squared"
+          ],
+          "value_units": {
+            "adjacent_coherence_squared": "1",
+            "relative_spectral_power_db": "dB",
+            "spectral_power": "variable^2"
+          }
+        }
+      },
+      "recipe_instance": "directional",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "(Pa)^2",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "wavenumber": "rad/m"
+      },
+      "id": "directional.wave.komega",
+      "interpretation": "Signed numerical k\u2013omega map; positive k denotes downstream cos(omega t - k x).",
+      "kind": "array",
+      "path": "data/directional/komega_spectrum.npz",
+      "provenance": {
+        "direction_convention": "positive k is downstream for cos(omega*t-k*x)",
+        "preprocessing": {
+          "frequency_max_hz": 100000.0,
+          "frequency_min_hz": 1000.0,
+          "minimum_coherence": 0.8,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "directional_wave",
+          "spatial_window": "hann",
+          "temporal_wavenumber": {
+            "display_floor_db": -60.0,
+            "enabled": true,
+            "minimum_relative_energy_db": -20.0,
+            "overlap_fraction": 0.75,
+            "snapshot_times_s": [
+              0.000256,
+              0.000512,
+              0.000768
+            ],
+            "window": "hann",
+            "window_duration_s": 0.000128
+          },
+          "temporal_window": "rectangular",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "product_contract": {
+          "axes": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "wavenumber": [
+              "wavenumber_rad_m"
+            ]
+          },
+          "complex_value_semantics": "real_difference",
+          "coordinate_arrays": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "wavenumber": [
+              "wavenumber_rad_m"
+            ]
+          },
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "snapshot_requested_time_s",
+            "snapshot_time_s",
+            "time_center_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [],
+          "mask_keys": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "plotting_value_keys": [],
+          "product_type": "wave.komega",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "power",
+            "amplitude"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "(Pa)^2",
+          "validity_by_value": null,
+          "validity_fields": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "value_dimensions": {
+            "amplitude": [
+              "frequency",
+              "wavenumber"
+            ],
+            "power": [
+              "frequency",
+              "wavenumber"
+            ]
+          },
+          "value_keys": [
+            "power",
+            "amplitude"
+          ],
+          "value_units": {
+            "amplitude": "variable",
+            "power": "variable^2"
+          }
+        },
+        "resampled": false,
+        "spatial_window": "hann",
+        "temporal_window": "rectangular",
+        "time_grid_policy": "resample_uniform"
+      },
+      "recipe_instance": "directional",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "(Pa)^2",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "time": "s",
+        "wavenumber": "rad/m"
+      },
+      "id": "directional.wave.temporal_wavenumber",
+      "interpretation": "Sliding-window band-integrated signed wavenumber ridge for a transient probe aperture.",
+      "kind": "array",
+      "path": "data/directional/temporal_wavenumber.npz",
+      "provenance": {
+        "preprocessing": {
+          "frequency_max_hz": 100000.0,
+          "frequency_min_hz": 1000.0,
+          "minimum_coherence": 0.8,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "directional_wave",
+          "spatial_window": "hann",
+          "temporal_wavenumber": {
+            "display_floor_db": -60.0,
+            "enabled": true,
+            "minimum_relative_energy_db": -20.0,
+            "overlap_fraction": 0.75,
+            "snapshot_times_s": [
+              0.000256,
+              0.000512,
+              0.000768
+            ],
+            "window": "hann",
+            "window_duration_s": 0.000128
+          },
+          "temporal_window": "rectangular",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "product_contract": {
+          "axes": {
+            "time": [
+              "time_center_s"
+            ],
+            "wavenumber": [
+              "wavenumber_rad_m"
+            ]
+          },
+          "complex_value_semantics": "real_difference",
+          "coordinate_arrays": {
+            "time": [
+              "time_center_s"
+            ],
+            "wavenumber": [
+              "wavenumber_rad_m"
+            ]
+          },
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "snapshot_requested_time_s",
+            "snapshot_time_s",
+            "time_center_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [],
+          "mask_keys": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "plotting_value_keys": [
+            "relative_band_power_db"
+          ],
+          "product_type": "wave.temporal_wavenumber",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "band_power",
+            "band_energy",
+            "dominant_wavenumber_rad_m",
+            "dominant_frequency_hz",
+            "phase_speed_m_s",
+            "wavelength_m"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "(Pa)^2",
+          "validity_by_value": {
+            "band_energy": [
+              "active_mask"
+            ],
+            "band_power": [
+              "active_mask"
+            ],
+            "dominant_frequency_hz": [
+              "valid_time_mask"
+            ],
+            "dominant_wavenumber_rad_m": [
+              "valid_time_mask"
+            ],
+            "phase_speed_m_s": [
+              "valid_time_mask"
+            ],
+            "wavelength_m": [
+              "valid_time_mask"
+            ]
+          },
+          "validity_fields": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "value_dimensions": {
+            "band_energy": [
+              "time"
+            ],
+            "band_power": [
+              "time",
+              "wavenumber"
+            ],
+            "dominant_frequency_hz": [
+              "time"
+            ],
+            "dominant_wavenumber_rad_m": [
+              "time"
+            ],
+            "phase_speed_m_s": [
+              "time"
+            ],
+            "wavelength_m": [
+              "time"
+            ]
+          },
+          "value_keys": [
+            "band_power",
+            "band_energy",
+            "dominant_wavenumber_rad_m",
+            "dominant_frequency_hz",
+            "phase_speed_m_s",
+            "wavelength_m"
+          ],
+          "value_units": {
+            "band_energy": "variable^2",
+            "band_power": "variable^2",
+            "dominant_frequency_hz": "Hz",
+            "dominant_wavenumber_rad_m": "rad/m",
+            "phase_speed_m_s": "m/s",
+            "wavelength_m": "m"
+          }
+        },
+        "snapshot_requested_time_s": [
+          0.000256,
+          0.000512,
+          0.000768
+        ],
+        "snapshot_roles": [
+          "requested",
+          "requested",
+          "requested"
+        ],
+        "snapshot_time_s": [
+          0.000256,
+          0.000512,
+          0.000768
+        ],
+        "temporal_wavenumber": {
+          "frequency_band_hz": [
+            1000.0,
+            100000.0
+          ],
+          "minimum_relative_energy_db": -20.0,
+          "overlap_fraction": 0.75,
+          "window": "hann",
+          "window_duration_s": 0.0001280000000000031
+        },
+        "valid_time_count": 29
+      },
+      "recipe_instance": "directional",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "(Pa)^2",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "snapshot_time": "s",
+        "wavenumber": "rad/m"
+      },
+      "id": "directional.wave.komega_snapshots",
+      "interpretation": "Selected shared-scale time-localized signed f-k spectra.",
+      "kind": "array",
+      "path": "data/directional/komega_snapshots.npz",
+      "provenance": {
+        "preprocessing": {
+          "frequency_max_hz": 100000.0,
+          "frequency_min_hz": 1000.0,
+          "minimum_coherence": 0.8,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "directional_wave",
+          "spatial_window": "hann",
+          "temporal_wavenumber": {
+            "display_floor_db": -60.0,
+            "enabled": true,
+            "minimum_relative_energy_db": -20.0,
+            "overlap_fraction": 0.75,
+            "snapshot_times_s": [
+              0.000256,
+              0.000512,
+              0.000768
+            ],
+            "window": "hann",
+            "window_duration_s": 0.000128
+          },
+          "temporal_window": "rectangular",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "product_contract": {
+          "axes": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "time": [
+              "snapshot_time_s"
+            ],
+            "wavenumber": [
+              "wavenumber_rad_m"
+            ]
+          },
+          "complex_value_semantics": "real_difference",
+          "coordinate_arrays": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "time": [
+              "snapshot_time_s"
+            ],
+            "wavenumber": [
+              "wavenumber_rad_m"
+            ]
+          },
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "snapshot_requested_time_s",
+            "snapshot_time_s",
+            "time_center_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [],
+          "mask_keys": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "plotting_value_keys": [
+            "relative_power_db"
+          ],
+          "product_type": "wave.komega_snapshots",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "power"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "(Pa)^2",
+          "validity_by_value": {
+            "power": [
+              "valid_snapshot_mask"
+            ]
+          },
+          "validity_fields": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "value_dimensions": {
+            "power": [
+              "time",
+              "frequency",
+              "wavenumber"
+            ]
+          },
+          "value_keys": [
+            "power"
+          ],
+          "value_units": {
+            "power": "variable^2"
+          }
+        },
+        "snapshot_requested_time_s": [
+          0.000256,
+          0.000512,
+          0.000768
+        ],
+        "snapshot_roles": [
+          "requested",
+          "requested",
+          "requested"
+        ],
+        "snapshot_time_s": [
+          0.000256,
+          0.000512,
+          0.000768
+        ],
+        "temporal_wavenumber": {
+          "frequency_band_hz": [
+            1000.0,
+            100000.0
+          ],
+          "minimum_relative_energy_db": -20.0,
+          "overlap_fraction": 0.75,
+          "window": "hann",
+          "window_duration_s": 0.0001280000000000031
+        },
+        "valid_time_count": 29
+      },
+      "recipe_instance": "directional",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "(Pa)^2",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "time": "s",
+        "wavenumber": "rad/m"
+      },
+      "id": "directional.wave.temporal_wavenumber.figure",
+      "interpretation": "Globally scaled band-integrated signed wavenumber evolution.",
+      "kind": "figure",
+      "path": "figures/directional/temporal_wavenumber.png",
+      "provenance": {
+        "figure_format": "png",
+        "interpretation": "Time-localized signed spatial spectrum; relative dB uses one global record maximum.",
+        "preprocessing": {
+          "frequency_max_hz": 100000.0,
+          "frequency_min_hz": 1000.0,
+          "minimum_coherence": 0.8,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "directional_wave",
+          "spatial_window": "hann",
+          "temporal_wavenumber": {
+            "display_floor_db": -60.0,
+            "enabled": true,
+            "minimum_relative_energy_db": -20.0,
+            "overlap_fraction": 0.75,
+            "snapshot_times_s": [
+              0.000256,
+              0.000512,
+              0.000768
+            ],
+            "window": "hann",
+            "window_duration_s": 0.000128
+          },
+          "temporal_window": "rectangular",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "snapshot_roles": [
+          "requested",
+          "requested",
+          "requested"
+        ],
+        "snapshot_time_s": [
+          0.000256,
+          0.000512,
+          0.000768
+        ],
+        "snapshot_valid_mask": [
+          true,
+          true,
+          true
+        ],
+        "window_duration_s": 0.0001280000000000031
+      },
+      "recipe_instance": "directional",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "relative dB",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "time": "s",
+        "wavenumber": "rad/m"
+      },
+      "id": "directional.wave.wavenumber_history.figure",
+      "interpretation": "Dominant signed wavenumber and derived quantities; invalid windows are omitted.",
+      "kind": "figure",
+      "path": "figures/directional/wavenumber_history.png",
+      "provenance": {
+        "figure_format": "png",
+        "interpretation": "Time-localized signed spatial spectrum; relative dB uses one global record maximum.",
+        "preprocessing": {
+          "frequency_max_hz": 100000.0,
+          "frequency_min_hz": 1000.0,
+          "minimum_coherence": 0.8,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "directional_wave",
+          "spatial_window": "hann",
+          "temporal_wavenumber": {
+            "display_floor_db": -60.0,
+            "enabled": true,
+            "minimum_relative_energy_db": -20.0,
+            "overlap_fraction": 0.75,
+            "snapshot_times_s": [
+              0.000256,
+              0.000512,
+              0.000768
+            ],
+            "window": "hann",
+            "window_duration_s": 0.000128
+          },
+          "temporal_window": "rectangular",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "snapshot_roles": [
+          "requested",
+          "requested",
+          "requested"
+        ],
+        "snapshot_time_s": [
+          0.000256,
+          0.000512,
+          0.000768
+        ],
+        "snapshot_valid_mask": [
+          true,
+          true,
+          true
+        ],
+        "valid_time_mask": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "window_duration_s": 0.0001280000000000031
+      },
+      "recipe_instance": "directional",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "variable-dependent",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "time": "s",
+        "wavenumber": "rad/m"
+      },
+      "id": "directional.wave.space_time.figure",
+      "interpretation": "Method-ready SI probe signal over the selected spatial aperture and time.",
+      "kind": "figure",
+      "path": "figures/directional/space_time.png",
+      "provenance": {
+        "figure_format": "png",
+        "interpretation": "Time-localized signed spatial spectrum; relative dB uses one global record maximum.",
+        "preprocessing": {
+          "frequency_max_hz": 100000.0,
+          "frequency_min_hz": 1000.0,
+          "minimum_coherence": 0.8,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "directional_wave",
+          "spatial_window": "hann",
+          "temporal_wavenumber": {
+            "display_floor_db": -60.0,
+            "enabled": true,
+            "minimum_relative_energy_db": -20.0,
+            "overlap_fraction": 0.75,
+            "snapshot_times_s": [
+              0.000256,
+              0.000512,
+              0.000768
+            ],
+            "window": "hann",
+            "window_duration_s": 0.000128
+          },
+          "temporal_window": "rectangular",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "snapshot_roles": [
+          "requested",
+          "requested",
+          "requested"
+        ],
+        "snapshot_time_s": [
+          0.000256,
+          0.000512,
+          0.000768
+        ],
+        "snapshot_valid_mask": [
+          true,
+          true,
+          true
+        ],
+        "window_duration_s": 0.0001280000000000031
+      },
+      "recipe_instance": "directional",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "time": "s",
+        "wavenumber": "rad/m"
+      },
+      "id": "directional.wave.komega_snapshots.figure",
+      "interpretation": "Shared-scale time-localized signed f-k snapshots.",
+      "kind": "figure",
+      "path": "figures/directional/komega_snapshots.png",
+      "provenance": {
+        "figure_format": "png",
+        "interpretation": "Time-localized signed spatial spectrum; relative dB uses one global record maximum.",
+        "preprocessing": {
+          "frequency_max_hz": 100000.0,
+          "frequency_min_hz": 1000.0,
+          "minimum_coherence": 0.8,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "directional_wave",
+          "spatial_window": "hann",
+          "temporal_wavenumber": {
+            "display_floor_db": -60.0,
+            "enabled": true,
+            "minimum_relative_energy_db": -20.0,
+            "overlap_fraction": 0.75,
+            "snapshot_times_s": [
+              0.000256,
+              0.000512,
+              0.000768
+            ],
+            "window": "hann",
+            "window_duration_s": 0.000128
+          },
+          "temporal_window": "rectangular",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "snapshot_roles": [
+          "requested",
+          "requested",
+          "requested"
+        ],
+        "snapshot_time_s": [
+          0.000256,
+          0.000512,
+          0.000768
+        ],
+        "snapshot_valid_mask": [
+          true,
+          true,
+          true
+        ],
+        "window_duration_s": 0.0001280000000000031
+      },
+      "recipe_instance": "directional",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "relative dB",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "time": "s",
+        "wavenumber": "rad/m"
+      },
+      "id": "directional.wave.dispersion.figure",
+      "interpretation": "Median and spatial spread of the coherence-gated full-record dispersion estimates.",
+      "kind": "figure",
+      "path": "figures/directional/dispersion.png",
+      "provenance": {
+        "figure_format": "png",
+        "preprocessing": {
+          "frequency_max_hz": 100000.0,
+          "frequency_min_hz": 1000.0,
+          "minimum_coherence": 0.8,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "directional_wave",
+          "spatial_window": "hann",
+          "temporal_wavenumber": {
+            "display_floor_db": -60.0,
+            "enabled": true,
+            "minimum_relative_energy_db": -20.0,
+            "overlap_fraction": 0.75,
+            "snapshot_times_s": [
+              0.000256,
+              0.000512,
+              0.000768
+            ],
+            "window": "hann",
+            "window_duration_s": 0.000128
+          },
+          "temporal_window": "rectangular",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "valid_frequency_fraction": 0.11764705882352941,
+        "x_center_m": [
+          0.02
+        ]
+      },
+      "recipe_instance": "directional",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "variable-dependent",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz"
+      },
+      "id": "directional.wave.komega_sensitivity",
+      "interpretation": "Dominant-ridge changes under temporal-window and half-record perturbations; large differences limit directional-wave interpretation.",
+      "kind": "json",
+      "path": "data/directional/komega_sensitivity.json",
+      "provenance": {
+        "preprocessing": {
+          "frequency_max_hz": 100000.0,
+          "frequency_min_hz": 1000.0,
+          "minimum_coherence": 0.8,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "directional_wave",
+          "spatial_window": "hann",
+          "temporal_wavenumber": {
+            "display_floor_db": -60.0,
+            "enabled": true,
+            "minimum_relative_energy_db": -20.0,
+            "overlap_fraction": 0.75,
+            "snapshot_times_s": [
+              0.000256,
+              0.000512,
+              0.000768
+            ],
+            "window": "hann",
+            "window_duration_s": 0.000128
+          },
+          "temporal_window": "rectangular",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        }
+      },
+      "recipe_instance": "directional",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "rad/m",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "wavenumber": "rad/m"
+      },
+      "id": "directional.wave.komega.figure",
+      "interpretation": "Signed k\u2013omega map; positive k denotes downstream cos(omega t - k x).",
+      "kind": "figure",
+      "path": "figures/directional/komega.png",
+      "provenance": {
+        "preprocessing": {
+          "frequency_max_hz": 100000.0,
+          "frequency_min_hz": 1000.0,
+          "minimum_coherence": 0.8,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "directional_wave",
+          "spatial_window": "hann",
+          "temporal_wavenumber": {
+            "display_floor_db": -60.0,
+            "enabled": true,
+            "minimum_relative_energy_db": -20.0,
+            "overlap_fraction": 0.75,
+            "snapshot_times_s": [
+              0.000256,
+              0.000512,
+              0.000768
+            ],
+            "window": "hann",
+            "window_duration_s": 0.000128
+          },
+          "temporal_window": "rectangular",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        }
+      },
+      "recipe_instance": "directional",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "relative dB",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "spectrum.probe.raw_history.figure",
+      "interpretation": "Overlay of the selected probe histories before recipe preprocessing.",
+      "kind": "figure",
+      "path": "figures/spectrum/raw_history_overlay.png",
+      "provenance": {
+        "figure_format": "png",
+        "normalization": "none",
+        "normalization_scales": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "preprocessing": {
+          "detrend": "mean",
+          "resampled": false,
+          "time_grid_policy": "resample_uniform",
+          "window": "hann"
+        },
+        "probe_labels": [
+          "Probe 0 \u00b7 x=0 m, y=0 m",
+          "Probe 1 \u00b7 x=0.01 m, y=0 m",
+          "Probe 2 \u00b7 x=0.02 m, y=0 m",
+          "Probe 3 \u00b7 x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "stage": "raw"
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "spectrum.probe.method_ready.figure",
+      "interpretation": "Overlay of the selected probe signals supplied to the recipe method.",
+      "kind": "figure",
+      "path": "figures/spectrum/method_ready_overlay.png",
+      "provenance": {
+        "figure_format": "png",
+        "normalization": "none",
+        "normalization_scales": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "preprocessing": {
+          "detrend": "mean",
+          "resampled": false,
+          "time_grid_policy": "resample_uniform",
+          "window": "hann"
+        },
+        "probe_labels": [
+          "Probe 0 \u00b7 x=0 m, y=0 m",
+          "Probe 1 \u00b7 x=0.01 m, y=0 m",
+          "Probe 2 \u00b7 x=0.02 m, y=0 m",
+          "Probe 3 \u00b7 x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "stage": "method_ready"
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "probe_x": "m"
+      },
+      "id": "spectrum.spectral.psd",
+      "interpretation": "One-sided Welch power spectral density; peaks are descriptive stationary content.",
+      "kind": "array",
+      "path": "data/spectrum/stationary_spectrum.npz",
+      "provenance": {
+        "detrend": "mean",
+        "overlap_samples": 128,
+        "preprocessing": {
+          "detrend": "mean",
+          "frequency_max_hz": 400000.0,
+          "overlap_fraction": 0.5,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "probe_spectrum",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure",
+          "welch_segment_samples": 256,
+          "window": "hann"
+        },
+        "product_contract": {
+          "axes": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "x_m"
+            ]
+          },
+          "complex_value_semantics": "real_difference",
+          "coordinate_arrays": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "x_m"
+            ]
+          },
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "snapshot_requested_time_s",
+            "snapshot_time_s",
+            "time_center_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [],
+          "mask_keys": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "plotting_value_keys": [],
+          "product_type": "spectral.psd",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "psd"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "(Pa)^2/Hz",
+          "validity_by_value": null,
+          "validity_fields": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "value_dimensions": {
+            "psd": [
+              "frequency",
+              "space"
+            ]
+          },
+          "value_keys": [
+            "psd"
+          ],
+          "value_units": {}
+        },
+        "resampled": false,
+        "segment_samples": 256,
+        "si_boundary": "inspected probe field units (cgs fallback) to public SI",
+        "signal_workspace": {
+          "read_block_rows": 524288,
+          "resident_bound_bytes": 268435456,
+          "source_matrix_bytes": 32768,
+          "storage": "memory"
+        },
+        "time_grid_policy": "resample_uniform",
+        "window": "hann"
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "(Pa)^2/Hz",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {},
+      "id": "spectrum.spectral.confidence",
+      "interpretation": "Degrees of freedom are approximate because overlapped windowed segments are correlated.",
+      "kind": "json",
+      "path": "data/spectrum/spectral_confidence.json",
+      "provenance": {
+        "preprocessing": {
+          "detrend": "mean",
+          "frequency_max_hz": 400000.0,
+          "overlap_fraction": 0.5,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "probe_spectrum",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure",
+          "welch_segment_samples": 256,
+          "window": "hann"
+        }
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": null,
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "probe_x": "m"
+      },
+      "id": "spectrum.spectral.coherence",
+      "interpretation": "Magnitude-squared coherence and downstream-minus-upstream cross phase for adjacent probes ordered by physical x coordinate.",
+      "kind": "array",
+      "path": "data/spectrum/adjacent_probe_coherence.npz",
+      "provenance": {
+        "overlap_samples": 128,
+        "pair_count": 3,
+        "preprocessing": {
+          "detrend": "mean",
+          "frequency_max_hz": 400000.0,
+          "overlap_fraction": 0.5,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "probe_spectrum",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure",
+          "welch_segment_samples": 256,
+          "window": "hann"
+        },
+        "product_contract": {
+          "axes": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "upstream_x_m"
+            ]
+          },
+          "complex_value_semantics": "real_difference",
+          "coordinate_arrays": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "upstream_x_m"
+            ]
+          },
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "snapshot_requested_time_s",
+            "snapshot_time_s",
+            "time_center_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [],
+          "mask_keys": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "plotting_value_keys": [],
+          "product_type": "spectral.coherence",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "coherence_squared",
+            "cross_phase_rad"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "dimensionless",
+          "validity_by_value": null,
+          "validity_fields": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "value_dimensions": {
+            "coherence_squared": [
+              "frequency",
+              "space"
+            ],
+            "cross_phase_rad": [
+              "frequency",
+              "space"
+            ]
+          },
+          "value_keys": [
+            "coherence_squared",
+            "cross_phase_rad"
+          ],
+          "value_units": {}
+        },
+        "resampled": false,
+        "segment_samples": 256,
+        "time_grid_policy": "resample_uniform"
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "dimensionless",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "probe_x": "m",
+        "time": "s"
+      },
+      "id": "spectrum.spectral.probe_signals",
+      "interpretation": "Selected probe histories and configured-detrend/window single-sided FFT amplitudes.",
+      "kind": "array",
+      "path": "data/spectrum/probe_time_fft.npz",
+      "provenance": {
+        "detrend": "mean",
+        "preprocessing": {
+          "detrend": "mean",
+          "frequency_max_hz": 400000.0,
+          "overlap_fraction": 0.5,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "probe_spectrum",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure",
+          "welch_segment_samples": 256,
+          "window": "hann"
+        },
+        "product_contract": {
+          "axes": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "x_m"
+            ],
+            "time": [
+              "raw_time_s",
+              "time_s"
+            ]
+          },
+          "complex_value_semantics": "real_difference",
+          "coordinate_arrays": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "x_m"
+            ],
+            "time": [
+              "raw_time_s",
+              "time_s"
+            ]
+          },
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "snapshot_requested_time_s",
+            "snapshot_time_s",
+            "time_center_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [],
+          "mask_keys": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "plotting_value_keys": [],
+          "product_type": "spectral.probe_signals",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "raw_values",
+            "processed_values",
+            "amplitude"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "Pa",
+          "validity_by_value": null,
+          "validity_fields": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "value_dimensions": {
+            "amplitude": [
+              "frequency",
+              "space"
+            ],
+            "processed_values": [
+              "time",
+              "space"
+            ],
+            "raw_values": [
+              "time",
+              "space"
+            ]
+          },
+          "value_keys": [
+            "raw_values",
+            "processed_values",
+            "amplitude"
+          ],
+          "value_units": {}
+        },
+        "resampled": false,
+        "time_grid_policy": "resample_uniform",
+        "window": "hann"
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "spectrum.spectral.fft_overlay.figure",
+      "interpretation": "Single-sided FFT amplitude overlaid for every selected probe.",
+      "kind": "figure",
+      "path": "figures/spectrum/fft_overlay.png",
+      "provenance": {
+        "detrend": "mean",
+        "figure_format": "png",
+        "normalization": "none",
+        "normalization_scales": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "preprocessing": {
+          "detrend": "mean",
+          "frequency_max_hz": 400000.0,
+          "overlap_fraction": 0.5,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "probe_spectrum",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure",
+          "welch_segment_samples": 256,
+          "window": "hann"
+        },
+        "probe_labels": [
+          "Probe 0 \u00b7 x=0 m, y=0 m",
+          "Probe 1 \u00b7 x=0.01 m, y=0 m",
+          "Probe 2 \u00b7 x=0.02 m, y=0 m",
+          "Probe 3 \u00b7 x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "time_grid_policy": "resample_uniform",
+        "window": "hann"
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "spectrum.spectral.psd_overlay.figure",
+      "interpretation": "One-sided Welch PSD overlaid for every selected probe.",
+      "kind": "figure",
+      "path": "figures/spectrum/psd_overlay.png",
+      "provenance": {
+        "detrend": "mean",
+        "figure_format": "png",
+        "normalization": "none",
+        "normalization_scales": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "preprocessing": {
+          "detrend": "mean",
+          "frequency_max_hz": 400000.0,
+          "overlap_fraction": 0.5,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "probe_spectrum",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure",
+          "welch_segment_samples": 256,
+          "window": "hann"
+        },
+        "probe_labels": [
+          "Probe 0 \u00b7 x=0 m, y=0 m",
+          "Probe 1 \u00b7 x=0.01 m, y=0 m",
+          "Probe 2 \u00b7 x=0.02 m, y=0 m",
+          "Probe 3 \u00b7 x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "time_grid_policy": "resample_uniform",
+        "window": "hann"
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "(Pa)^2/Hz",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "probe_x": "m",
+        "time": "s"
+      },
+      "id": "spectrum.spectral.probe_figure",
+      "interpretation": "Per-probe raw history, processed history, and single-sided FFT amplitude.",
+      "kind": "figure",
+      "path": "figures/spectrum/probe_time_fft.png",
+      "provenance": {
+        "detrend": "mean",
+        "page": 1,
+        "page_count": 1,
+        "preprocessing": {
+          "detrend": "mean",
+          "frequency_max_hz": 400000.0,
+          "overlap_fraction": 0.5,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "probe_spectrum",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure",
+          "welch_segment_samples": 256,
+          "window": "hann"
+        },
+        "resampled": false,
+        "time_grid_policy": "resample_uniform",
+        "window": "hann"
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz"
+      },
+      "id": "spectrum.spectral.figure",
+      "interpretation": "Median stationary spectrum with the 10th\u201390th percentile probe envelope.",
+      "kind": "figure",
+      "path": "figures/spectrum/stationary_spectrum.png",
+      "provenance": {
+        "preprocessing": {
+          "detrend": "mean",
+          "frequency_max_hz": 400000.0,
+          "overlap_fraction": 0.5,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "probe_spectrum",
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure",
+          "welch_segment_samples": 256,
+          "window": "hann"
+        }
+      },
+      "recipe_instance": "spectrum",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "(Pa)^2/Hz",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "wavepacket.probe.raw_history.figure",
+      "interpretation": "Overlay of the selected probe histories before recipe preprocessing.",
+      "kind": "figure",
+      "path": "figures/wavepacket/raw_history_overlay.png",
+      "provenance": {
+        "figure_format": "png",
+        "normalization": "none",
+        "normalization_scales": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "preprocessing": {
+          "baseline_end_time_s": null,
+          "baseline_sample_count": 0,
+          "mean_subtraction": true,
+          "resampled": false,
+          "time_grid_policy": "resample_uniform"
+        },
+        "probe_labels": [
+          "Probe 0 \u00b7 x=0 m, y=0 m",
+          "Probe 1 \u00b7 x=0.01 m, y=0 m",
+          "Probe 2 \u00b7 x=0.02 m, y=0 m",
+          "Probe 3 \u00b7 x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "stage": "raw"
+      },
+      "recipe_instance": "wavepacket",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "wavepacket.probe.method_ready.figure",
+      "interpretation": "Overlay of the selected probe signals supplied to the recipe method.",
+      "kind": "figure",
+      "path": "figures/wavepacket/method_ready_overlay.png",
+      "provenance": {
+        "figure_format": "png",
+        "normalization": "none",
+        "normalization_scales": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "preprocessing": {
+          "baseline_end_time_s": null,
+          "baseline_sample_count": 0,
+          "mean_subtraction": true,
+          "resampled": false,
+          "time_grid_policy": "resample_uniform"
+        },
+        "probe_labels": [
+          "Probe 0 \u00b7 x=0 m, y=0 m",
+          "Probe 1 \u00b7 x=0.01 m, y=0 m",
+          "Probe 2 \u00b7 x=0.02 m, y=0 m",
+          "Probe 3 \u00b7 x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "stage": "method_ready"
+      },
+      "recipe_instance": "wavepacket",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "wavepacket.transient.filtered_overlay.figure",
+      "interpretation": "Band-pass reconstructed signal overlaid for every selected probe.",
+      "kind": "figure",
+      "path": "figures/wavepacket/filtered_overlay.png",
+      "provenance": {
+        "band_hz": [
+          1000.0,
+          100000.0
+        ],
+        "figure_format": "png",
+        "normalization": "none",
+        "normalization_scales": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "preprocessing": {
+          "band_max_hz": 100000.0,
+          "band_min_hz": 1000.0,
+          "overlap_fraction": 0.75,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "transient_wavepacket",
+          "stft_segment_samples": 2048,
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "probe_labels": [
+          "Probe 0 \u00b7 x=0 m, y=0 m",
+          "Probe 1 \u00b7 x=0.01 m, y=0 m",
+          "Probe 2 \u00b7 x=0.02 m, y=0 m",
+          "Probe 3 \u00b7 x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      "recipe_instance": "wavepacket",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "wavepacket.transient.envelope_overlay.figure",
+      "interpretation": "Analytic envelope overlaid for every selected probe.",
+      "kind": "figure",
+      "path": "figures/wavepacket/envelope_overlay.png",
+      "provenance": {
+        "band_hz": [
+          1000.0,
+          100000.0
+        ],
+        "figure_format": "png",
+        "normalization": "none",
+        "normalization_scales": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "preprocessing": {
+          "band_max_hz": 100000.0,
+          "band_min_hz": 1000.0,
+          "overlap_fraction": 0.75,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "transient_wavepacket",
+          "stft_segment_samples": 2048,
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "probe_labels": [
+          "Probe 0 \u00b7 x=0 m, y=0 m",
+          "Probe 1 \u00b7 x=0.01 m, y=0 m",
+          "Probe 2 \u00b7 x=0.02 m, y=0 m",
+          "Probe 3 \u00b7 x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      "recipe_instance": "wavepacket",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "time": "s"
+      },
+      "id": "wavepacket.transient.envelope",
+      "interpretation": "Analytic envelope of the explicitly configured band-pass reconstruction.",
+      "kind": "array",
+      "path": "data/wavepacket/packet_envelope.npz",
+      "provenance": {
+        "band_hz": [
+          1000.0,
+          100000.0
+        ],
+        "baseline_sample_count": 0,
+        "preprocessing": {
+          "band_max_hz": 100000.0,
+          "band_min_hz": 1000.0,
+          "overlap_fraction": 0.75,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "transient_wavepacket",
+          "stft_segment_samples": 2048,
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "product_contract": {
+          "axes": {
+            "space": [
+              "x_m"
+            ],
+            "time": [
+              "time_s"
+            ]
+          },
+          "complex_value_semantics": "real_difference",
+          "coordinate_arrays": {
+            "space": [
+              "x_m"
+            ],
+            "time": [
+              "time_s"
+            ]
+          },
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "snapshot_requested_time_s",
+            "snapshot_time_s",
+            "time_center_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [],
+          "mask_keys": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "plotting_value_keys": [],
+          "product_type": "transient.envelope",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "filtered_signal",
+            "envelope",
+            "arrival_time_s"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "Pa",
+          "validity_by_value": null,
+          "validity_fields": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "value_dimensions": {
+            "arrival_time_s": [
+              "space"
+            ],
+            "envelope": [
+              "time",
+              "space"
+            ],
+            "filtered_signal": [
+              "time",
+              "space"
+            ]
+          },
+          "value_keys": [
+            "filtered_signal",
+            "envelope",
+            "arrival_time_s"
+          ],
+          "value_units": {}
+        },
+        "resampled": false,
+        "time_grid_policy": "resample_uniform"
+      },
+      "recipe_instance": "wavepacket",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "probe_x": "m",
+        "probe_y": "m",
+        "time": "s"
+      },
+      "id": "wavepacket.transient.stft_figure",
+      "interpretation": "Shared-scale STFT panels, one panel for each selected probe.",
+      "kind": "figure",
+      "path": "figures/wavepacket/stft_overlay.png",
+      "provenance": {
+        "band_hz": [
+          1000.0,
+          100000.0
+        ],
+        "figure_format": "png",
+        "overlap_samples": 768,
+        "preprocessing": {
+          "band_max_hz": 100000.0,
+          "band_min_hz": 1000.0,
+          "overlap_fraction": 0.75,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "transient_wavepacket",
+          "stft_segment_samples": 2048,
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "probe_labels": [
+          "Probe 0 \u00b7 x=0 m, y=0 m",
+          "Probe 1 \u00b7 x=0.01 m, y=0 m",
+          "Probe 2 \u00b7 x=0.02 m, y=0 m",
+          "Probe 3 \u00b7 x=0.03 m, y=0 m"
+        ],
+        "probe_x_m": [
+          0.0,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "segment_samples": 1024,
+        "selected_probe_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "shared_color_scale_db": [
+          -60.0,
+          0.0
+        ]
+      },
+      "recipe_instance": "wavepacket",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {
+        "frequency": "Hz",
+        "relative_time": "s"
+      },
+      "id": "wavepacket.transient.stft",
+      "interpretation": "Hann-window STFT of the probe-median disturbance; segment resolution is recorded.",
+      "kind": "array",
+      "path": "data/wavepacket/packet_stft.npz",
+      "provenance": {
+        "overlap_samples": 768,
+        "preprocessing": {
+          "band_max_hz": 100000.0,
+          "band_min_hz": 1000.0,
+          "overlap_fraction": 0.75,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "transient_wavepacket",
+          "stft_segment_samples": 2048,
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        },
+        "product_contract": {
+          "axes": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "x_m"
+            ],
+            "time": [
+              "relative_time_s"
+            ]
+          },
+          "complex_value_semantics": "magnitude_squared",
+          "coordinate_arrays": {
+            "frequency": [
+              "frequency_hz"
+            ],
+            "space": [
+              "x_m"
+            ],
+            "time": [
+              "relative_time_s"
+            ]
+          },
+          "coordinate_keys": [
+            "coordinates_m",
+            "downstream_probe_indices",
+            "downstream_x_m",
+            "frequency_hz",
+            "frequency_indices",
+            "probe_indices",
+            "probe_x_m",
+            "raw_time_s",
+            "relative_time_s",
+            "snapshot_requested_time_s",
+            "snapshot_time_s",
+            "time_center_s",
+            "time_s",
+            "triad_labels",
+            "upstream_probe_indices",
+            "upstream_x_m",
+            "wavenumber_rad_m",
+            "x_center_m",
+            "x_m"
+          ],
+          "json_value_paths": [],
+          "label_keys": [],
+          "mask_keys": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "plotting_value_keys": [
+            "probe_complex_stft"
+          ],
+          "product_type": "transient.stft",
+          "required_json_value_paths": [],
+          "required_value_keys": [
+            "complex_stft"
+          ],
+          "schema": "pelecpost.product",
+          "schema_version": 1,
+          "supported_comparison_operations": [
+            "strict",
+            "intersection",
+            "interpolate_to_baseline",
+            "interpolate_to_comparison"
+          ],
+          "supported_plotting_operations": [
+            "line",
+            "heatmap",
+            "complex_magnitude",
+            "mask_overlay"
+          ],
+          "units": "Pa",
+          "validity_by_value": null,
+          "validity_fields": [
+            "active_mask",
+            "growth_valid_mask",
+            "phase_valid_mask",
+            "spectral_valid_mask",
+            "valid_frequency",
+            "valid_snapshot_mask",
+            "valid_time_mask"
+          ],
+          "value_dimensions": {
+            "complex_stft": [
+              "frequency",
+              "time"
+            ],
+            "probe_complex_stft": [
+              "frequency",
+              "time",
+              "space"
+            ]
+          },
+          "value_keys": [
+            "complex_stft"
+          ],
+          "value_units": {}
+        },
+        "resampled": false,
+        "segment_samples": 1024,
+        "time_grid_policy": "resample_uniform"
+      },
+      "recipe_instance": "wavepacket",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "Pa",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {},
+      "id": "wavepacket.transient.group_velocity",
+      "interpretation": "Kinematic packet-envelope regression; not a causality claim.",
+      "kind": "json",
+      "path": "data/wavepacket/group_velocity.json",
+      "provenance": {
+        "preprocessing": {
+          "band_max_hz": 100000.0,
+          "band_min_hz": 1000.0,
+          "overlap_fraction": 0.75,
+          "probe_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "probe_plotting": {
+            "label": "index_coordinates",
+            "mode": "both",
+            "normalization": "none"
+          },
+          "probe_set_id": "default",
+          "recipe": "transient_wavepacket",
+          "stft_segment_samples": 2048,
+          "time_grid_policy": "resample_uniform",
+          "variable": "pressure"
+        }
+      },
+      "recipe_instance": "wavepacket",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": "m/s",
+      "variable": "pressure"
+    },
+    {
+      "coordinate_metadata": {},
+      "id": "run.measurement-evidence",
+      "interpretation": "Conservative measurement-based classification with explicit exclusion of LST/PSE and causal inference.",
+      "kind": "json",
+      "path": "data/measurement_evidence.json",
+      "provenance": {
+        "derived_from": [
+          "run.resolved-case",
+          "run.resolved-analyses",
+          "run.resolved-machine",
+          "run.plan",
+          "run.manifest",
+          "directional.probe.raw_history.figure",
+          "directional.probe.method_ready.figure",
+          "directional.wave.wavenumber",
+          "directional.wave.spatial_spectrum",
+          "directional.wave.komega",
+          "directional.wave.temporal_wavenumber",
+          "directional.wave.komega_snapshots",
+          "directional.wave.temporal_wavenumber.figure",
+          "directional.wave.wavenumber_history.figure",
+          "directional.wave.space_time.figure",
+          "directional.wave.komega_snapshots.figure",
+          "directional.wave.dispersion.figure",
+          "directional.wave.komega_sensitivity",
+          "directional.wave.komega.figure",
+          "spectrum.probe.raw_history.figure",
+          "spectrum.probe.method_ready.figure",
+          "spectrum.spectral.psd",
+          "spectrum.spectral.confidence",
+          "spectrum.spectral.coherence",
+          "spectrum.spectral.probe_signals",
+          "spectrum.spectral.fft_overlay.figure",
+          "spectrum.spectral.psd_overlay.figure",
+          "spectrum.spectral.probe_figure",
+          "spectrum.spectral.figure",
+          "wavepacket.probe.raw_history.figure",
+          "wavepacket.probe.method_ready.figure",
+          "wavepacket.transient.filtered_overlay.figure",
+          "wavepacket.transient.envelope_overlay.figure",
+          "wavepacket.transient.envelope",
+          "wavepacket.transient.stft_figure",
+          "wavepacket.transient.stft",
+          "wavepacket.transient.group_velocity"
+        ],
+        "preprocessing": {
+          "classifier": "pelecpost.measurement-evidence",
+          "schema_version": 1
+        }
+      },
+      "recipe_instance": "__run__",
+      "schema_version": 1,
+      "source_inputs": [
+        "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5"
+      ],
+      "units": null,
+      "variable": null
+    },
+    {
+      "coordinate_metadata": {},
+      "id": "run.log",
+      "interpretation": "Full workflow log including tracebacks.",
+      "kind": "run-metadata",
+      "path": "logs/run.log",
+      "provenance": {},
+      "recipe_instance": "__run__",
+      "schema_version": 1,
+      "source_inputs": [],
+      "units": null,
+      "variable": null
+    },
+    {
+      "coordinate_metadata": {},
+      "id": "run.report",
+      "interpretation": "Portable HTML run report.",
+      "kind": "run-metadata",
+      "path": "report/index.html",
+      "provenance": {},
+      "recipe_instance": "__run__",
+      "schema_version": 1,
+      "source_inputs": [],
+      "units": null,
+      "variable": null
+    }
+  ],
+  "schema": "pelecpost.artifacts",
+  "schema_version": 1
+}

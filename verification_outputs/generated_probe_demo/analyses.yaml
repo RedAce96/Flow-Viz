@@ -1,0 +1,43 @@
+analyses:
+- frequency_max_hz: 400000
+  id: spectrum
+  probe_set_id: default
+  probe_indices: [0, 1, 2, 3]
+  probe_plotting:
+    mode: both
+    normalization: none
+    label: index_coordinates
+  recipe: probe_spectrum
+  variable: pressure
+  welch_segment_samples: 256
+- band_max_hz: 100000
+  band_min_hz: 1000
+  id: wavepacket
+  probe_set_id: default
+  probe_indices: [0, 1, 2, 3]
+  probe_plotting:
+    mode: both
+    normalization: none
+    label: index_coordinates
+  recipe: transient_wavepacket
+  variable: pressure
+- frequency_max_hz: 100000
+  frequency_min_hz: 1000
+  id: directional
+  probe_set_id: default
+  probe_indices: [0, 1, 2, 3, 4]
+  probe_plotting:
+    mode: both
+    normalization: none
+    label: index_coordinates
+  recipe: directional_wave
+  variable: pressure
+  temporal_wavenumber:
+    enabled: true
+    window_duration_s: 0.000128
+    overlap_fraction: 0.75
+    window: hann
+    snapshot_times_s: [0.000256, 0.000512, 0.000768]
+    minimum_relative_energy_db: -20.0
+    display_floor_db: -60.0
+schema_version: 1

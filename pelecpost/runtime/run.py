@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import importlib.metadata
+import json
 import os
 import platform
 import re
@@ -65,7 +66,10 @@ def _packages() -> dict[str, str]:
 CHECKSUM_LIMIT_BYTES = 64 * 1024**2
 
 
-def _fingerprint(path: Path, *, checksum_limit_bytes: int = CHECKSUM_LIMIT_BYTES) -> dict[str, Any]:
+def _fingerprint(
+    path: Path, *, checksum_limit_bytes: int = CHECKSUM_LIMIT_BYTES,
+    input_id: str | None = None,
+) -> dict[str, Any]:
     info = path.stat()
     result: dict[str, Any] = {
         "path": str(path.resolve()), "size_bytes": info.st_size, "mtime_ns": info.st_mtime_ns,
@@ -80,6 +84,8 @@ def _fingerprint(path: Path, *, checksum_limit_bytes: int = CHECKSUM_LIMIT_BYTES
         result["checksum_policy"] = (
             f"omitted because file exceeds {checksum_limit_bytes} byte practical limit"
         )
+    if input_id is not None:
+        result["input_id"] = input_id
     return result
 
 
@@ -88,47 +94,79 @@ def _input_fingerprints(project: ResolvedProject) -> list[dict[str, Any]]:
     for name in ("case.yaml", "analyses.yaml", "machine.yaml"):
         path = project.root / name
         if path.is_file():
-            result.append(_fingerprint(path))
+            result.append(_fingerprint(path, input_id=name))
     plotfiles = project.machine_file.inputs.plotfiles
     if plotfiles:
-        source = plotfiles.source if plotfiles.source.is_absolute() else project.root / plotfiles.source
+        configured_source = plotfiles.source.expanduser()
+        source = configured_source if configured_source.is_absolute() else project.root / configured_source
         for plotfile in sorted(source.glob(f"{plotfiles.prefix}*")):
             header = plotfile / "Header"
             if header.is_file():
-                result.append(_fingerprint(header))
-    probes = project.machine_file.inputs.probes
-    if probes and probes.compact_file:
-        source = probes.compact_file if probes.compact_file.is_absolute() else project.root / probes.compact_file
-        if source.is_file():
-            result.append(_fingerprint(source))
-    elif probes and probes.binary_files:
-        from pp_probe_store import expand_paths
+                result.append(_fingerprint(header, input_id="inputs.plotfiles"))
+    for probe_set_id, probe_set in project.machine_file.inputs.probe_sets.items():
+        probes = probe_set
+        if probes.compact_file:
+            configured_source = probes.compact_file.expanduser()
+            source = configured_source if configured_source.is_absolute() else project.root / configured_source
+            if source.is_file():
+                result.append(_fingerprint(
+                    source, input_id=f"inputs.probe_sets.{probe_set_id}"
+                ))
+        elif probes.binary_files:
+            from pp_probe_store import expand_paths
 
-        patterns = []
-        for pattern in probes.binary_files:
-            configured = Path(pattern)
-            if any(character in pattern for character in "*?["):
-                parent = configured.parent
-                if not parent.is_absolute():
-                    parent = (project.root / parent).resolve()
-                patterns.append(str(parent / configured.name))
-            else:
-                if not configured.is_absolute():
-                    configured = (project.root / configured).resolve()
-                patterns.append(str(configured))
-        result.extend(_fingerprint(Path(path)) for path in expand_paths(patterns))
-    for baseline in project.machine_file.inputs.baselines.values():
-        source = baseline.source if baseline.source.is_absolute() else project.root / baseline.source
-        for plotfile in sorted(source.glob(f"{baseline.prefix}*")):
-            header = plotfile / "Header"
-            if header.is_file():
-                result.append(_fingerprint(header))
-    for configured in project.machine_file.inputs.comparison_archives.values():
+            patterns = []
+            for pattern in probes.binary_files:
+                configured = Path(pattern).expanduser()
+                if any(character in pattern for character in "*?["):
+                    parent = configured.parent
+                    if not parent.is_absolute():
+                        parent = (project.root / parent).resolve()
+                    patterns.append(str(parent / configured.name))
+                else:
+                    if not configured.is_absolute():
+                        configured = (project.root / configured).resolve()
+                    patterns.append(str(configured))
+            result.extend(
+                _fingerprint(Path(path), input_id=f"inputs.probe_sets.{probe_set_id}")
+                for path in expand_paths(patterns)
+            )
+    for archive_id, configured in project.machine_file.inputs.archived_runs.items():
+        configured = configured.expanduser()
         run = configured if configured.is_absolute() else project.root / configured
         for name in ("manifest.json", "artifacts.json"):
             path = run / name
             if path.is_file():
-                result.append(_fingerprint(path))
+                result.append(_fingerprint(path, input_id=f"inputs.archived_runs.{archive_id}"))
+        artifacts_path = run / "artifacts.json"
+        if artifacts_path.is_file():
+            try:
+                records = json.loads(artifacts_path.read_text(encoding="utf-8"))["artifacts"]
+            except (OSError, json.JSONDecodeError, KeyError, TypeError):
+                records = ()
+            for record in records:
+                relative = record.get("path") if isinstance(record, dict) else None
+                if not isinstance(relative, str):
+                    continue
+                path = (run / relative).resolve()
+                try:
+                    path.relative_to(run.resolve())
+                except ValueError:
+                    continue
+                if path.is_file():
+                    record_id = record.get("id", relative) if isinstance(record, dict) else relative
+                    result.append(_fingerprint(
+                        path, input_id=f"inputs.archived_runs.{archive_id}:{record_id}"
+                    ))
+    for baseline_id, baseline in project.machine_file.inputs.baselines.items():
+        configured_source = baseline.source.expanduser()
+        source = configured_source if configured_source.is_absolute() else project.root / configured_source
+        for plotfile in sorted(source.glob(f"{baseline.prefix}*")):
+            header = plotfile / "Header"
+            if header.is_file():
+                result.append(_fingerprint(
+                    header, input_id=f"inputs.baselines.{baseline_id}"
+                ))
     return result
 
 

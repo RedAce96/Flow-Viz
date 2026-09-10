@@ -58,6 +58,7 @@ def build_workflow_graph(project: ResolvedProject) -> WorkflowGraph:
     nodes: dict[str, WorkflowNode] = {}
     geometry_requires_plotfiles = project.case_file.geometry.type == "volume_fraction"
     enabled_recipes = {analysis.recipe for analysis in project.enabled_analyses}
+    enabled_analysis_ids = {analysis.id for analysis in project.enabled_analyses}
     for analysis in project.enabled_analyses:
         definition = recipe_for(analysis.recipe)
         active_conflicts = enabled_recipes.intersection(definition.conflicts)
@@ -95,6 +96,15 @@ def build_workflow_graph(project: ResolvedProject) -> WorkflowGraph:
                 WorkflowNode(dependency, dependency, None, True, nested),
             )
             dependency_ids.append(dependency)
+        if analysis.recipe == "case_comparison":
+            for reference_name in ("baseline", "comparison"):
+                reference = getattr(analysis, reference_name)
+                if (
+                    reference.archived_run_id is None
+                    and reference.analysis_id in enabled_analysis_ids
+                    and reference.analysis_id != analysis.id
+                ):
+                    dependency_ids.append(f"analysis.{reference.analysis_id}")
         node_id = f"analysis.{analysis.id}"
         nodes[node_id] = WorkflowNode(
             node_id,

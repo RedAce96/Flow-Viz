@@ -42,7 +42,7 @@ class CliContractTests(unittest.TestCase):
             self.assertIn("machine.example.yaml", missing.stdout)
             (root / "machine.example.yaml").replace(root / "machine.yaml")
             analyses = {"schema_version": 1, "analyses": [{
-                "id": "spectrum", "recipe": "probe_spectrum", "variable": "pressure",
+                "id": "spectrum", "recipe": "probe_spectrum", "probe_set_id": "default", "variable": "pressure",
             }]}
             (root / "analyses.yaml").write_text(yaml.safe_dump(analyses), encoding="utf-8")
             rejected = command("plan", str(root))

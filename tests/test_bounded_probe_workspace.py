@@ -146,13 +146,13 @@ class BoundedProbeWorkspaceTests(unittest.TestCase):
             root = Path(temporary)
             project = PreflightTests().project(root, [{
                 "id": "spectrum", "recipe": "probe_spectrum",
-                "variable": "pressure", "welch_segment_samples": 256,
+                "probe_set_id": "default", "variable": "pressure", "welch_segment_samples": 256,
             }])
             binary = root / "probe.segment0000.pbin"
             self.write_probe_v2(binary, samples=1024, probes=5)
             machine_path = root / "machine.yaml"
             machine = yaml.safe_load(machine_path.read_text())
-            machine["inputs"]["probes"] = {"binary_files": [str(binary)]}
+            machine["inputs"]["probe_sets"] = {"default": {"binary_files": [str(binary)]}}
             machine_path.write_text(yaml.safe_dump(machine), encoding="utf-8")
             result = run_project(load_project(project.root))
             self.assertEqual(result.status, "completed")

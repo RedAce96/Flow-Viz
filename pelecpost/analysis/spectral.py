@@ -26,15 +26,20 @@ from pelecpost.config.models import (
     DirectionalWaveAnalysis,
     ProbeSpectrumAnalysis,
     SinglePulseAnalysis,
+    TemporalWavenumberEnabled,
 )
 from pelecpost.errors import UnsupportedCapabilityError
-from pelecpost.io.signals import (
-    open_compact_signal_workspace,
-    open_probe_v2_signal_workspace,
-)
+from pelecpost.io.signals import open_probe_signal_workspace
 from pelecpost.runtime.context import WorkflowContext
 
 from .executors import executor
+from .probe_plotting import register_probe_line_overlay, register_probe_trace_figures
+from .temporal_wavenumber import (
+    compute_temporal_snapshots,
+    compute_temporal_wavenumber,
+    register_dispersion_figure,
+    register_temporal_wavenumber_figures,
+)
 
 
 FIELD_NAMES = {
@@ -61,62 +66,113 @@ def _field(variable: str, fields: tuple[str, ...]) -> str:
     raise KeyError(f"No storage field maps to {variable!r}")
 
 
-def load_compact_signal(
+def _si_conversion(variable: str, source_unit: str | None, solver_units: str
+) -> tuple[float, str]:
+    """Return a conversion from the inspected source unit into public SI."""
+    unit = (source_unit or "").strip().lower().replace(" ", "")
+    si_units = {
+        "pressure": {"pa", "pascal", "pascals"},
+        "density": {"kg/m^3", "kg/m3", "kg·m^-3"},
+        "x_velocity": {"m/s", "m·s^-1"},
+        "y_velocity": {"m/s", "m·s^-1"},
+        "temperature": {"k", "kelvin"},
+    }
+    public_units = {
+        "pressure": "Pa", "density": "kg/m^3", "x_velocity": "m/s",
+        "y_velocity": "m/s", "temperature": "K",
+    }
+    if variable not in si_units:
+        raise KeyError(f"No SI conversion is defined for {variable!r}")
+    public_unit = public_units[variable]
+    if unit in si_units[variable] or unit == "si":
+        return 1.0, public_unit
+    cgs = {
+        "pressure": {"dyne/cm^2", "dyn/cm^2", "barye", "ba"},
+        "density": {"g/cm^3"},
+        "x_velocity": {"cm/s"},
+        "y_velocity": {"cm/s"},
+        "temperature": set(),
+    }
+    if unit in cgs[variable] or unit == "cgs":
+        return SI[variable][0], public_unit
+    if unit in {"", "unknown"}:
+        return (SI[variable][0] if solver_units == "cgs" else 1.0), public_unit
+    raise ValueError(
+        f"Unsupported source unit {source_unit!r} for variable {variable!r}; "
+        f"expected SI or recognized CGS units"
+    )
+
+
+def load_probe_signal(
     context: WorkflowContext,
 ) -> tuple[str, str, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Read one configured probe variable and convert it to SI."""
+    """Read one named probe source and convert its inspected field to SI."""
     analysis = context.analysis
     configured_variable = getattr(analysis, "variable", None)
     if configured_variable is None:
         raise TypeError(f"Recipe {analysis.recipe!r} has no probe variable")
-    return load_compact_variable(
-        context, configured_variable.value, getattr(analysis, "probe_indices", ())
+    return load_probe_variable(
+        context, configured_variable.value, getattr(analysis, "probe_indices", ()),
+        probe_set_id=analysis.probe_set_id,
+        start_time_s=getattr(analysis, "record_start_time_s", None),
+        end_time_s=getattr(analysis, "end_time_s", None),
     )
 
 
-def load_compact_variable(
+def load_probe_variable(
     context: WorkflowContext,
     variable: str,
     probe_indices: tuple[int, ...] = (),
     *,
+    probe_set_id: str | None = None,
     probe_input: Any | None = None,
     probe_inventory: Any | None = None,
+    start_time_s: float | None = None,
+    end_time_s: float | None = None,
 ) -> tuple[str, str, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Read an explicitly selected compact-probe variable through the SI boundary."""
+    """Read an explicitly selected probe variable through the SI boundary."""
     analysis = context.analysis
     if probe_input is None:
-        probe_input = context.project.machine_file.inputs.probes
+        source_id = probe_set_id or getattr(analysis, "probe_set_id", None)
+        if source_id is None:
+            raise ValueError("probe recipe requires probe_set_id")
+        try:
+            probe_input = context.project.machine_file.inputs.probe_sets[source_id]
+        except KeyError as exc:
+            raise ValueError(f"unknown probe_set_id {source_id!r}") from exc
     if probe_input is None:
         raise UnsupportedCapabilityError(
             f"The {analysis.recipe} executor requires a configured probe source"
         )
-    inventory = probe_inventory if probe_inventory is not None else context.plan.inventory.probes
-    assert inventory is not None
+    if probe_inventory is None:
+        source_id = probe_set_id or getattr(analysis, "probe_set_id", None)
+        probe_inventory = context.plan.inventory.probe_sets.get(source_id or "")
+    inventory = probe_inventory
+    if inventory is None:
+        raise UnsupportedCapabilityError("probe source was not inspected")
     storage_field = _field(variable, inventory.fields)
     selected = np.asarray(
         probe_indices if probe_indices else range(inventory.probe_count), dtype=int
     )
     if selected.size == 0 or np.any(selected < 0) or np.any(selected >= inventory.probe_count):
         raise ValueError("probe_indices contain no valid probes")
-    factor, unit = SI[variable]
-    if context.project.case_file.case.solver_units.value == "si":
-        factor = 1.0
+    factor, unit = _si_conversion(
+        variable, inventory.field_units.get(storage_field),
+        context.project.case_file.case.solver_units.value,
+    )
     scratch = context.project.machine_file.compute.scratch_directory
     if scratch is not None and not scratch.is_absolute():
         scratch = (context.project.root / scratch).resolve()
     memory_limit = float(context.project.machine_file.compute.memory_limit_gb)
     if probe_input.compact_file is not None:
-        source = probe_input.compact_file
+        source = probe_input.compact_file.expanduser()
         if not source.is_absolute():
             source = (context.project.root / source).resolve()
-        workspace = open_compact_signal_workspace(
-            source, storage_field, selected, si_factor=factor,
-            memory_limit_gb=memory_limit, scratch_directory=scratch,
-        )
+        source_spec: Path | tuple[str, ...] = source
     else:
         patterns = []
         for pattern in probe_input.binary_files:
-            configured = Path(pattern)
+            configured = Path(pattern).expanduser()
             if any(character in pattern for character in "*?["):
                 parent = configured.parent
                 if not parent.is_absolute():
@@ -126,22 +182,41 @@ def load_compact_variable(
                 if not configured.is_absolute():
                     configured = (context.project.root / configured).resolve()
                 patterns.append(str(configured))
-        workspace = open_probe_v2_signal_workspace(
-            tuple(patterns), storage_field, selected, si_factor=factor,
-            memory_limit_gb=memory_limit, scratch_directory=scratch,
-        )
+        source_spec = tuple(patterns)
+    workspace = open_probe_signal_workspace(
+        source_spec, storage_field, selected, si_factor=factor,
+        memory_limit_gb=memory_limit, scratch_directory=scratch,
+    )
     context.add_cleanup(workspace.close)
+    time = workspace.time_s
+    values = workspace.values
+    if start_time_s is not None or end_time_s is not None:
+        lower = -np.inf if start_time_s is None else float(start_time_s)
+        upper = np.inf if end_time_s is None else float(end_time_s)
+        mask = (time >= lower) & (time <= upper)
+        selected_times = np.flatnonzero(mask)
+        if len(selected_times) < 2:
+            raise ValueError("time selection leaves fewer than two probe samples")
+        if np.max(np.diff(selected_times)) > 1:
+            raise ValueError("time selection must be a contiguous probe interval")
+        time = time[selected_times]
+        values = values[selected_times, :]
     assert context.resource_metadata is not None
-    context.resource_metadata["compact_signal"] = {
+    context.resource_metadata["probe_signal"] = {
         "storage": workspace.storage,
         "source_matrix_bytes": workspace.source_matrix_bytes,
         "resident_bound_bytes": workspace.resident_bound_bytes,
         "read_block_rows": workspace.read_block_rows,
     }
     return (
-        variable, unit, workspace.time_s, workspace.x_m, workspace.values,
+        variable, unit, time, workspace.x_m, values,
         workspace.selected_probe_indices,
     )
+
+
+# Internal aliases retained for plotfile linkage during the staged migration.
+load_compact_signal = load_probe_signal
+load_compact_variable = load_probe_variable
 
 
 def _prepare_fft_grid(
@@ -170,36 +245,46 @@ def _prepare_fft_grid(
     sample_count = int(np.floor((time[-1] - time[0]) / dt)) + 1
     uniform_time = time[0] + np.arange(sample_count, dtype=float) * dt
     spill_path: Path | None = None
-    if scratch_directory is None:
-        uniform_values: np.ndarray = np.empty(
-            (sample_count, values.shape[1]), dtype=np.float64
-        )
-        cleanup: Callable[[], None] | None = None
-    else:
-        scratch = Path(scratch_directory)
-        scratch.mkdir(parents=True, exist_ok=True)
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix="pelec-post-fft-grid-", suffix=".mmap", dir=str(scratch)
-        )
-        os.close(descriptor)
-        spill_path = Path(temporary_name)
-        uniform_values = np.memmap(
-            spill_path, mode="w+", dtype=np.float64,
-            shape=(sample_count, values.shape[1]),
-        )
-
-        def cleanup() -> None:
-            uniform_values.flush()
-            mmap = getattr(uniform_values, "_mmap", None)
-            if mmap is not None:
-                mmap.close()
-            if spill_path is not None:
-                try:
-                    spill_path.unlink()
-                except FileNotFoundError:
-                    pass
-
+    uniform_values: np.ndarray | None = None
+    cleanup: Callable[[], None] | None = None
     try:
+        if scratch_directory is None:
+            uniform_values = np.empty(
+                (sample_count, values.shape[1]), dtype=np.float64
+            )
+        else:
+            scratch = Path(scratch_directory)
+            scratch.mkdir(parents=True, exist_ok=True)
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix="pelec-post-fft-grid-", suffix=".mmap", dir=str(scratch)
+            )
+            os.close(descriptor)
+            spill_path = Path(temporary_name)
+            uniform_values = np.memmap(
+                spill_path, mode="w+", dtype=np.float64,
+                shape=(sample_count, values.shape[1]),
+            )
+
+            closed = False
+
+            def cleanup() -> None:
+                nonlocal closed, spill_path
+                if closed:
+                    return
+                closed = True
+                if isinstance(uniform_values, np.memmap):
+                    uniform_values.flush()
+                    mmap = getattr(uniform_values, "_mmap", None)
+                    if mmap is not None:
+                        mmap.close()
+                if spill_path is not None:
+                    try:
+                        spill_path.unlink()
+                    except FileNotFoundError:
+                        pass
+                    spill_path = None
+
+        assert uniform_values is not None
         for column in range(values.shape[1]):
             uniform_values[:, column] = np.interp(
                 uniform_time, time, np.asarray(values[:, column], dtype=float)
@@ -207,8 +292,32 @@ def _prepare_fft_grid(
     except BaseException:
         if cleanup is not None:
             cleanup()
+        elif spill_path is not None:
+            if isinstance(uniform_values, np.memmap):
+                mmap = getattr(uniform_values, "_mmap", None)
+                if mmap is not None:
+                    mmap.close()
+            try:
+                spill_path.unlink()
+            except FileNotFoundError:
+                pass
         raise
     return uniform_time, uniform_values, dt, True, cleanup
+
+
+def prepare_probe_time_grid(
+    context: WorkflowContext, time: np.ndarray, values: np.ndarray,
+    policy: str | None = None,
+) -> tuple[np.ndarray, np.ndarray, float, bool, Callable[[], None] | None]:
+    """Apply the analysis-wide time-grid policy to a loaded probe signal."""
+    scratch = context.project.machine_file.compute.scratch_directory
+    if scratch is not None and not scratch.is_absolute():
+        scratch = (context.project.root / scratch).resolve()
+    return _prepare_fft_grid(
+        time, values,
+        policy or getattr(context.analysis, "time_grid_policy", "resample_uniform"),
+        scratch,
+    )
 
 
 def _processed_probe_signal(
@@ -255,11 +364,12 @@ def spectrum_from_signal(
     time_grid_policy: str,
     frequency_max_hz: float | None,
     scratch_directory: Path | None,
+    register_cleanup: Callable[[Callable[[], None]], None] | None = None,
 ) -> dict[str, Any]:
     """Compute the probe_spectrum pipeline products for an in-memory signal.
 
-    Shared by run_probe_spectrum and the direct-probe comparison executor so
-    both sides use identical preprocessing and grids.
+    Shared by the stationary spectrum executor and any future product
+    producers that need the same preprocessing and time-grid behavior.
     """
     if end_time_s is not None:
         if len(time) == 0:
@@ -275,41 +385,54 @@ def spectrum_from_signal(
     fft_time, fft_values, dt, resampled, fft_cleanup = _prepare_fft_grid(
         time, values, time_grid_policy, scratch_directory
     )
-    segment = welch_segment_samples or min(4096, len(fft_time))
-    segment = min(segment, len(fft_time))
-    overlap = round(segment * overlap_fraction)
-    overlap = min(overlap, segment - 1)
-    window_name = "boxcar" if window == "rectangular" else window
-    scipy_detrend = {"mean": "constant", "linear": "linear", "none": False}[detrend]
-    frequency, psd = welch(
-        fft_values, fs=1.0 / dt, window=window_name, nperseg=segment,
-        noverlap=overlap, detrend=scipy_detrend, axis=0, scaling="density",
-        return_onesided=True,
-    )
-    if frequency_max_hz is not None:
-        mask = frequency <= frequency_max_hz
-        frequency, psd = frequency[mask], psd[mask]
-    processed_values, weights = _processed_probe_signal(fft_values, detrend, window)
-    fft_frequency, fft_amplitude = _single_sided_amplitude(processed_values, dt, weights)
-    fft_keep = np.ones_like(fft_frequency, dtype=bool)
-    if frequency_max_hz is not None:
-        fft_keep &= fft_frequency <= frequency_max_hz
-    return {
-        "raw_time": time,
-        "raw_values": values,
-        "fft_time": fft_time,
-        "fft_values": fft_values,
-        "processed_values": processed_values,
-        "fft_frequency": fft_frequency[fft_keep],
-        "fft_amplitude": fft_amplitude[fft_keep],
-        "welch_frequency": frequency,
-        "psd": psd,
-        "dt": dt,
-        "resampled": resampled,
-        "segment": segment,
-        "overlap": overlap,
-        "cleanup": fft_cleanup,
-    }
+    cleanup_returned = fft_cleanup
+    if fft_cleanup is not None and register_cleanup is not None:
+        try:
+            register_cleanup(fft_cleanup)
+        except BaseException:
+            fft_cleanup()
+            raise
+        cleanup_returned = None
+    try:
+        segment = welch_segment_samples or min(4096, len(fft_time))
+        segment = min(segment, len(fft_time))
+        overlap = round(segment * overlap_fraction)
+        overlap = min(overlap, segment - 1)
+        window_name = "boxcar" if window == "rectangular" else window
+        scipy_detrend = {"mean": "constant", "linear": "linear", "none": False}[detrend]
+        frequency, psd = welch(
+            fft_values, fs=1.0 / dt, window=window_name, nperseg=segment,
+            noverlap=overlap, detrend=scipy_detrend, axis=0, scaling="density",
+            return_onesided=True,
+        )
+        if frequency_max_hz is not None:
+            mask = frequency <= frequency_max_hz
+            frequency, psd = frequency[mask], psd[mask]
+        processed_values, weights = _processed_probe_signal(fft_values, detrend, window)
+        fft_frequency, fft_amplitude = _single_sided_amplitude(processed_values, dt, weights)
+        fft_keep = np.ones_like(fft_frequency, dtype=bool)
+        if frequency_max_hz is not None:
+            fft_keep &= fft_frequency <= frequency_max_hz
+        return {
+            "raw_time": time,
+            "raw_values": values,
+            "fft_time": fft_time,
+            "fft_values": fft_values,
+            "processed_values": processed_values,
+            "fft_frequency": fft_frequency[fft_keep],
+            "fft_amplitude": fft_amplitude[fft_keep],
+            "welch_frequency": frequency,
+            "psd": psd,
+            "dt": dt,
+            "resampled": resampled,
+            "segment": segment,
+            "overlap": overlap,
+            "cleanup": cleanup_returned,
+        }
+    except BaseException:
+        if fft_cleanup is not None and register_cleanup is None:
+            fft_cleanup()
+        raise
 
 
 def _plot_probe_time_fft(
@@ -384,7 +507,7 @@ def _plot_probe_time_fft(
 @executor("probe_spectrum")
 def run_probe_spectrum(context: WorkflowContext) -> None:
     analysis = cast(ProbeSpectrumAnalysis, context.analysis)
-    variable, unit, time, x_m, values, selected = load_compact_signal(context)
+    variable, unit, time, x_m, values, selected = load_probe_signal(context)
     scratch = context.project.machine_file.compute.scratch_directory
     if scratch is not None and not scratch.is_absolute():
         scratch = (context.project.root / scratch).resolve()
@@ -397,6 +520,7 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
         time_grid_policy=analysis.time_grid_policy,
         frequency_max_hz=analysis.frequency_max_hz,
         scratch_directory=scratch,
+        register_cleanup=context.add_cleanup,
     )
     if products["cleanup"] is not None:
         context.add_cleanup(products["cleanup"])
@@ -413,6 +537,17 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
     segment = products["segment"]
     overlap = products["overlap"]
     _ = processed_preview
+    register_probe_trace_figures(
+        context, raw_time=time, raw_values=values, prepared_time=fft_time,
+        prepared_values=processed_preview, x_m=x_m, selected=selected,
+        variable=variable, units=unit,
+        preprocessing={
+            "time_grid_policy": analysis.time_grid_policy,
+            "window": analysis.window,
+            "detrend": analysis.detrend,
+            "resampled": resampled,
+        },
+    )
     data_path = context.data_dir / "stationary_spectrum.npz"
     np.savez_compressed(
         data_path,
@@ -433,13 +568,16 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
         coordinate_metadata={"frequency": "Hz", "probe_x": "m"},
         interpretation="One-sided Welch power spectral density; peaks are descriptive stationary content.",
         provenance={
-            "si_boundary": f"compact {context.project.case_file.case.solver_units.value} to public SI",
+            "si_boundary": (
+                f"inspected probe field units ({context.project.case_file.case.solver_units.value} "
+                "fallback) to public SI"
+            ),
             "window": analysis.window,
             "detrend": analysis.detrend, "segment_samples": segment,
             "overlap_samples": overlap,
             "time_grid_policy": analysis.time_grid_policy,
             "resampled": resampled,
-            "signal_workspace": (context.resource_metadata or {})["compact_signal"],
+            "signal_workspace": (context.resource_metadata or {})["probe_signal"],
         },
     )
     step = max(1, segment - overlap)
@@ -542,28 +680,52 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
         provenance={"time_grid_policy": analysis.time_grid_policy, "resampled": resampled,
                     "window": analysis.window, "detrend": analysis.detrend},
     )
-    probe_figure_path = context.figure_dir / "probe_time_fft.png"
-    probe_figure_paths = _plot_probe_time_fft(
-        probe_figure_path, time, values, fft_time, processed_values,
-        fft_frequency, fft_amplitude, x_m, selected, unit,
-        analysis.detrend, analysis.window,
+    positive_fft = fft_frequency > 0.0
+    register_probe_line_overlay(
+        context, artifact_id="spectral.fft_overlay.figure",
+        filename="fft_overlay", x=fft_frequency[positive_fft],
+        values=fft_amplitude[positive_fft], x_label="Frequency [Hz]",
+        y_label=f"Amplitude [{unit}]", variable=variable, units=unit,
+        selected=selected, x_m=x_m,
+        interpretation="Single-sided FFT amplitude overlaid for every selected probe.",
+        provenance={"time_grid_policy": analysis.time_grid_policy,
+                    "window": analysis.window, "detrend": analysis.detrend},
+        log_x=True, log_y=True,
     )
-    for page, path in enumerate(probe_figure_paths, start=1):
-        context.register(
-            artifact_id=(
-                "spectral.probe_figure"
-                if len(probe_figure_paths) == 1
-                else f"spectral.probe_figure.{page:03d}"
-            ),
-            path=path, kind="figure", variable=variable, units=unit,
-            coordinate_metadata={"time": "s", "frequency": "Hz", "probe_x": "m"},
-            interpretation=(
-                "Per-probe raw history, processed history, and single-sided FFT amplitude."
-            ),
-            provenance={"time_grid_policy": analysis.time_grid_policy, "resampled": resampled,
-                        "window": analysis.window, "detrend": analysis.detrend,
-                        "page": page, "page_count": len(probe_figure_paths)},
+    positive_psd = frequency > 0.0
+    register_probe_line_overlay(
+        context, artifact_id="spectral.psd_overlay.figure",
+        filename="psd_overlay", x=frequency[positive_psd], values=psd[positive_psd],
+        x_label="Frequency [Hz]", y_label=f"PSD [({unit})²/Hz]",
+        variable=variable, units=f"({unit})^2/Hz", selected=selected, x_m=x_m,
+        interpretation="One-sided Welch PSD overlaid for every selected probe.",
+        provenance={"time_grid_policy": analysis.time_grid_policy,
+                    "window": analysis.window, "detrend": analysis.detrend},
+        log_x=True, log_y=True,
+    )
+    probe_figure_path = context.figure_dir / "probe_time_fft.png"
+    if analysis.probe_plotting.mode in {"panels", "both"}:
+        probe_figure_paths = _plot_probe_time_fft(
+            probe_figure_path, time, values, fft_time, processed_values,
+            fft_frequency, fft_amplitude, x_m, selected, unit,
+            analysis.detrend, analysis.window,
         )
+        for page, path in enumerate(probe_figure_paths, start=1):
+            context.register(
+                artifact_id=(
+                    "spectral.probe_figure"
+                    if len(probe_figure_paths) == 1
+                    else f"spectral.probe_figure.{page:03d}"
+                ),
+                path=path, kind="figure", variable=variable, units=unit,
+                coordinate_metadata={"time": "s", "frequency": "Hz", "probe_x": "m"},
+                interpretation=(
+                    "Per-probe raw history, processed history, and single-sided FFT amplitude."
+                ),
+                provenance={"time_grid_policy": analysis.time_grid_policy, "resampled": resampled,
+                            "window": analysis.window, "detrend": analysis.detrend,
+                            "page": page, "page_count": len(probe_figure_paths)},
+            )
     figure_path = context.figure_dir / "stationary_spectrum.png"
     fig, axis = plt.subplots(figsize=(9, 5))
     positive = frequency > 0
@@ -592,7 +754,12 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
 @executor("single_pulse_response")
 def run_single_pulse_response(context: WorkflowContext) -> None:
     analysis = cast(SinglePulseAnalysis, context.analysis)
-    variable, unit, time, x_m, values, _ = load_compact_signal(context)
+    variable, unit, raw_time, x_m, raw_values, selected = load_probe_signal(context)
+    time = raw_time
+    values = raw_values
+    time, values, _dt, resampled, cleanup = prepare_probe_time_grid(context, time, values)
+    if cleanup is not None:
+        context.add_cleanup(cleanup)
     baseline_end = analysis.baseline_end_time_s
     if baseline_end is None:
         baseline_end = analysis.start_time_s
@@ -601,6 +768,17 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
     )
     response = baseline["disturbance"]
     response -= np.mean(response, axis=0, keepdims=True)
+    register_probe_trace_figures(
+        context, raw_time=raw_time, raw_values=raw_values,
+        prepared_time=time, prepared_values=response, x_m=x_m, selected=selected,
+        variable=variable, units=unit,
+        preprocessing={
+            "time_grid_policy": analysis.time_grid_policy,
+            "baseline_end_time_s": baseline_end,
+            "mean_subtraction": True,
+            "resampled": resampled,
+        },
+    )
     response_complex = np.fft.rfft(response, axis=0) / len(time)
     source = reviewed_spectral.compute_single_pulse_source_spectrum(
         time,
@@ -652,7 +830,28 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
         artifact_id="pulse.transfer", path=path, kind="array", variable=variable,
         units=f"{unit}/(J/m)", coordinate_metadata={"frequency": "Hz", "probe_x": "m"},
         interpretation="Finite-record single-pulse response/source ratio; invalid low-source bins are masked.",
-        provenance={"estimator": "finite_record_single_pulse", "baseline_end_time_s": baseline_end},
+        provenance={"estimator": "finite_record_single_pulse", "baseline_end_time_s": baseline_end,
+                    "time_grid_policy": analysis.time_grid_policy, "resampled": resampled},
+    )
+    register_probe_line_overlay(
+        context, artifact_id="pulse.transfer_magnitude.figure",
+        filename="transfer_magnitude_overlay", x=frequency[keep],
+        values=np.abs(transfer["magnitude"][keep]), x_label="Frequency [Hz]",
+        y_label="Transfer magnitude", variable=variable, units="dimensionless",
+        selected=selected, x_m=x_m,
+        interpretation="Finite-record transfer magnitude overlaid for every selected probe.",
+        provenance={"valid_frequency_mask": "invalid source bins omitted"},
+        log_x=True, log_y=True,
+    )
+    register_probe_line_overlay(
+        context, artifact_id="pulse.transfer_phase.figure",
+        filename="transfer_phase_overlay", x=frequency[keep],
+        values=transfer["phase_rad"][keep], x_label="Frequency [Hz]",
+        y_label="Transfer phase [rad]", variable=variable, units="rad",
+        selected=selected, x_m=x_m,
+        interpretation="Finite-record transfer phase overlaid for every selected probe.",
+        provenance={"valid_frequency_mask": "invalid source bins omitted"},
+        log_x=True,
     )
     quality = {
         "baseline_sample_count": baseline["baseline_sample_count"],
@@ -747,7 +946,19 @@ def _komega_sensitivity(
 @executor("directional_wave")
 def run_directional_wave(context: WorkflowContext) -> None:
     analysis = cast(DirectionalWaveAnalysis, context.analysis)
-    variable, unit, time, x_m, values, _ = load_compact_signal(context)
+    variable, unit, raw_time, x_m, raw_values, selected = load_probe_signal(context)
+    time = raw_time
+    values = raw_values
+    time, values, _dt, resampled, cleanup = prepare_probe_time_grid(context, time, values)
+    if cleanup is not None:
+        context.add_cleanup(cleanup)
+    register_probe_trace_figures(
+        context, raw_time=raw_time, raw_values=raw_values,
+        prepared_time=time, prepared_values=values, x_m=x_m, selected=selected,
+        variable=variable, units=unit,
+        preprocessing={"time_grid_policy": analysis.time_grid_policy,
+                       "resampled": resampled},
+    )
     speed_bounds = None
     if analysis.expected_speed_min_m_s is not None and analysis.expected_speed_max_m_s is not None:
         speed_bounds = (analysis.expected_speed_min_m_s, analysis.expected_speed_max_m_s)
@@ -789,7 +1000,8 @@ def run_directional_wave(context: WorkflowContext) -> None:
         units="rad/m", coordinate_metadata={"frequency": "Hz", "x": "m", "wavenumber": "rad/m"},
         interpretation="Coherence-gated dominant-wave estimate; it is not an LST/PSE eigensolution.",
         provenance={"phase_convention": local["phase_convention"], "accepted_fraction": accepted,
-                    "growth_accepted_fraction": growth},
+                    "growth_accepted_fraction": growth,
+                    "time_grid_policy": analysis.time_grid_policy, "resampled": resampled},
     )
     spectrum_path = context.data_dir / "local_spatial_spectrum.npz"
     np.savez_compressed(
@@ -797,7 +1009,7 @@ def run_directional_wave(context: WorkflowContext) -> None:
         x_center_m=local["x_center_m"], spectral_power=local["spectral_power"],
         relative_spectral_power_db=local["relative_spectral_power_db"],
         adjacent_coherence_squared=local["adjacent_coherence_squared"],
-        probe_x_m=local["probe_x_sorted_m"],
+        probe_x_m=local["probe_x_sorted_m"], probe_indices=selected,
     )
     context.register(
         artifact_id="wave.spatial_spectrum", path=spectrum_path, kind="array",
@@ -818,8 +1030,64 @@ def run_directional_wave(context: WorkflowContext) -> None:
         interpretation="Signed numerical k–omega map; positive k denotes downstream cos(omega t - k x).",
         provenance={"temporal_window": analysis.temporal_window,
                     "spatial_window": analysis.spatial_window,
-                    "direction_convention": komega["direction_convention"]},
+                    "direction_convention": komega["direction_convention"],
+                    "time_grid_policy": analysis.time_grid_policy, "resampled": resampled},
     )
+    if isinstance(analysis.temporal_wavenumber, TemporalWavenumberEnabled):
+        summary = compute_temporal_wavenumber(values, time, x_m, analysis)
+        snapshots = compute_temporal_snapshots(values, time, x_m, analysis, summary)
+        temporal_path = context.data_dir / "temporal_wavenumber.npz"
+        np.savez_compressed(
+            temporal_path,
+            time_center_s=summary["time_center_s"],
+            wavenumber_rad_m=summary["wavenumber_rad_m"],
+            band_power=summary["band_power"],
+            relative_band_power_db=summary["relative_band_power_db"],
+            band_energy=summary["band_energy"],
+            relative_energy_db=summary["relative_energy_db"],
+            dominant_wavenumber_rad_m=summary["dominant_wavenumber_rad_m"],
+            dominant_frequency_hz=summary["dominant_frequency_hz"],
+            phase_speed_m_s=summary["phase_speed_m_s"],
+            wavelength_m=summary["wavelength_m"],
+            active_mask=summary["active_mask"],
+            valid_time_mask=summary["valid_time_mask"],
+            probe_x_m=summary["probe_x_m"],
+        )
+        temporal_provenance = {
+            "temporal_wavenumber": summary["preprocessing"],
+            "snapshot_roles": summary["snapshot_roles"].tolist(),
+            "snapshot_requested_time_s": summary["snapshot_requested_time_s"].tolist(),
+            "snapshot_time_s": snapshots["snapshot_time_s"].tolist(),
+            "valid_time_count": int(np.count_nonzero(summary["valid_time_mask"])),
+        }
+        context.register(
+            artifact_id="wave.temporal_wavenumber", path=temporal_path, kind="array",
+            variable=variable, units=f"({unit})^2",
+            coordinate_metadata={"time": "s", "wavenumber": "rad/m", "frequency": "Hz"},
+            interpretation="Sliding-window band-integrated signed wavenumber ridge for a transient probe aperture.",
+            provenance=temporal_provenance,
+        )
+        snapshot_path = context.data_dir / "komega_snapshots.npz"
+        np.savez_compressed(snapshot_path, **snapshots)
+        context.register(
+            artifact_id="wave.komega_snapshots", path=snapshot_path, kind="array",
+            variable=variable, units=f"({unit})^2",
+            coordinate_metadata={"snapshot_time": "s", "frequency": "Hz", "wavenumber": "rad/m"},
+            interpretation="Selected shared-scale time-localized signed f-k spectra.",
+            provenance=temporal_provenance,
+        )
+        register_temporal_wavenumber_figures(
+            context, values=values, time_s=time, x_m=x_m, variable=variable,
+            units=unit, summary=summary, snapshots=snapshots,
+        )
+        register_dispersion_figure(
+            context, variable=variable, units=unit,
+            frequency_hz=local["frequency_hz"],
+            phase_speed_m_s=local["phase_speed_m_per_s"],
+            wavelength_m=local["wavelength_m"],
+            phase_valid_mask=local["phase_valid_mask"],
+            x_center_m=local["x_center_m"],
+        )
     sensitivity = _komega_sensitivity(values, time, x_m, analysis, komega)
     sensitivity_path = context.data_dir / "komega_sensitivity.json"
     sensitivity_path.write_text(json.dumps(sensitivity, indent=2) + "\n", encoding="utf-8")

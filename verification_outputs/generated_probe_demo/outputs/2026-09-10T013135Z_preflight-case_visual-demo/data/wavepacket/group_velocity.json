@@ -1,0 +1,12 @@
+{
+  "group_velocity_m_s": 69.95336442371755,
+  "confidence_interval_95_m_s": [
+    41.730662346954425,
+    216.10962516980123
+  ],
+  "arrival_time_regression_r_squared": 0.5833032401875429,
+  "slope_s_m": 0.014295238095238092,
+  "slope_standard_error_s_m": 0.004932631082425857,
+  "probe_count": 8,
+  "interpretation": "Kinematic packet-envelope regression; not a causality claim."
+}

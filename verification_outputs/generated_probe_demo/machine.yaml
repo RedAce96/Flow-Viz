@@ -1,0 +1,10 @@
+compute:
+  memory_limit_gb: 8
+  workers: 2
+inputs:
+  probe_sets:
+    default:
+      compact_file: /Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/probes.h5
+outputs:
+  root: /Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/generated_probe_demo/outputs
+schema_version: 1

@@ -1,0 +1,14 @@
+schema_version: 1
+inputs:
+  probe_sets:
+    default:
+      compact_file: /Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5
+      binary_files: []
+  archived_runs: {}
+  baselines: {}
+outputs:
+  root: /Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/outputs
+compute:
+  workers: 2
+  memory_limit_gb: 8.0
+  fft_batch_size: 32

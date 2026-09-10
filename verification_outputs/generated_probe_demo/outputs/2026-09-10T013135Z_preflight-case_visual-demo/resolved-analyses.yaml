@@ -1,0 +1,89 @@
+schema_version: 1
+presentation:
+  preset: publication
+  figure:
+    formats:
+    - png
+    dpi: 300
+    width_in: 14.0
+    height_in: 4.5
+    transparent: false
+  typography:
+    font_family: DejaVu Sans
+    base_size: 14.0
+    axes_label_size: 16.0
+    tick_label_size: 14.0
+    legend_size: 13.0
+    colorbar_label_size: 13.0
+    colorbar_tick_label_size: 11.0
+    colorbar_label_pad: 2.0
+    colorbar_tick_pad: 2.0
+  contour_axes:
+    x_tick_format: auto
+    y_tick_format: auto
+  time_annotation:
+    enabled: true
+    position: top_left
+    boxed: true
+    precision: 4
+  contour_defaults:
+    colormap: viridis
+    normalization: linear
+    range:
+      mode: per_snapshot_percentile
+      lower_percentile: 1.0
+      upper_percentile: 99.0
+    colorbar:
+      position: top
+      length_fraction: 0.43
+      include_endpoints: false
+      tick_count: 4
+      tick_format: auto
+      label: auto
+    rendering:
+      mode: continuous
+    symmetric_about_zero: false
+  line_defaults:
+    linewidth: 2.0
+    linestyle: solid
+    marker: none
+    grid: true
+    legend_position: best
+    coordinate_scale: linear
+    value_scale: linear
+analyses:
+- id: spectrum
+  enabled: true
+  probe_set_id: default
+  probe_indices: []
+  time_grid_policy: resample_uniform
+  recipe: probe_spectrum
+  variable: pressure
+  frequency_max_hz: 400000.0
+  window: hann
+  detrend: mean
+  welch_segment_samples: 256
+  overlap_fraction: 0.5
+- id: wavepacket
+  enabled: true
+  probe_set_id: default
+  probe_indices: []
+  time_grid_policy: resample_uniform
+  recipe: transient_wavepacket
+  variable: pressure
+  band_min_hz: 1000.0
+  band_max_hz: 100000.0
+  stft_segment_samples: 2048
+  overlap_fraction: 0.75
+- id: directional
+  enabled: true
+  probe_set_id: default
+  probe_indices: []
+  time_grid_policy: resample_uniform
+  recipe: directional_wave
+  variable: pressure
+  frequency_min_hz: 1000.0
+  frequency_max_hz: 100000.0
+  minimum_coherence: 0.8
+  spatial_window: hann
+  temporal_window: rectangular

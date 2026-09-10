@@ -36,7 +36,7 @@ from pelecpost.runtime.context import WorkflowContext
 
 from .executors import executor
 from .fields import add_normalized_fields, resolve_freestream_reference
-from .spectral import load_compact_variable
+from .spectral import load_probe_variable, prepare_probe_time_grid
 from .surface_forces import fit_wall_quantities, integrate_surface_loads
 
 
@@ -1454,9 +1454,17 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
             "x": "force_x_n_m", "y": "force_y_n_m", "moment": "moment_n",
         }[linkage.force_component]
         force_signal = np.asarray([item[force_key] for item in ordered_history], dtype=float)
-        variable, probe_unit, probe_time, probe_x, probe_values, selected = load_compact_variable(
+        variable, probe_unit, probe_time, probe_x, probe_values, selected = load_probe_variable(
             context, linkage.variable.value, linkage.probe_indices,
+            probe_set_id=linkage.probe_set_id,
         )
+        probe_time, probe_values, _probe_dt, probe_resampled, probe_cleanup = (
+            prepare_probe_time_grid(
+                context, probe_time, probe_values, linkage.time_grid_policy,
+            )
+        )
+        if probe_cleanup is not None:
+            context.add_cleanup(probe_cleanup)
         linkage_result = fields_api.compute_probe_force_linkage(
             force_time, force_signal, probe_time, probe_values, probe_x,
             linkage.forcing_frequency_hz,
@@ -1492,5 +1500,7 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
                 "forcing_frequency_hz": linkage.forcing_frequency_hz,
                 "spectral_status": linkage_result["spectral_status"],
                 "anti_alias_filter": linkage_result["anti_alias_filter"],
+                "time_grid_policy": linkage.time_grid_policy,
+                "probe_resampled": probe_resampled,
             },
         )

@@ -71,7 +71,6 @@ def inspect_command(project_dir: Path, json_output: bool = typer.Option(False, "
     table.add_column("Input")
     table.add_column("Summary")
     plotfiles = inventory.plotfiles
-    probes = inventory.probes
     table.add_row(
         "Plotfiles",
         "not configured" if plotfiles is None else
@@ -94,37 +93,20 @@ def inspect_command(project_dir: Path, json_output: bool = typer.Option(False, "
             "Plot domain",
             f"{plotfiles.domain_bounds_m} m; solver units={plotfiles.solver_units}",
         )
-    table.add_row(
-        "Probes",
-        "not configured" if probes is None else
-        f"{probes.format}; {probes.sample_count} samples x {probes.probe_count} probes; "
-        f"fields={', '.join(probes.fields)}; time="
-        f"[{probes.time_min_s}, {probes.time_max_s}] s",
-    )
-    if probes is not None:
+    table.add_row("Probe sets", str(len(inventory.probe_sets)))
+    for probe_set_id, probes in inventory.probe_sets.items():
         table.add_row(
-            "Probe coordinates",
-            f"x=[{probes.x_min_m}, {probes.x_max_m}] m; "
-            f"y=[{probes.y_min_m}, {probes.y_max_m}] m",
+            f"Probe set: {probe_set_id}",
+            f"{probes.format}; {probes.sample_count} samples x {probes.probe_count} probes; "
+            f"fields={', '.join(probes.fields)}; time=[{probes.time_min_s}, {probes.time_max_s}] s",
         )
-        table.add_row(
-            "Probe sampling",
-            f"median dt={probes.median_timestep_s} s; std={probes.timestep_std_s} s; "
-            f"restart overlaps={probes.restart_overlap_count}",
-        )
-        table.add_row(
-            "Probe quality",
-            f"missing={sum(probes.missing_value_count.values())}; "
-            f"mapping epochs={probes.mapping_epoch_count}; "
-            f"approved={probes.quality_approved}; provenance={probes.provenance_present}",
-        )
-    table.add_row("Comparisons", f"{len(inventory.comparison_archives)} archive(s)")
-    for archive_id, products in inventory.comparison_products.items():
+    table.add_row("Archived runs", f"{len(inventory.archived_runs)} run(s)")
+    for archive_id, products in inventory.archived_products.items():
         detail = ", ".join(products) or "no registered products"
-        if archive_id in inventory.comparison_errors:
-            detail = f"unreadable: {inventory.comparison_errors[archive_id]}"
-        archive = Path(inventory.comparison_archives[archive_id])
-        table.add_row(f"Comparison: {archive_id} ({archive.name})", detail)
+        if archive_id in inventory.archived_errors:
+            detail = f"unreadable: {inventory.archived_errors[archive_id]}"
+        archive = Path(inventory.archived_runs[archive_id])
+        table.add_row(f"Archived run: {archive_id} ({archive.name})", detail)
     table.add_row(
         "Baselines",
         ", ".join(f"{name} ({len(files)} files)" for name, files in inventory.baselines.items())

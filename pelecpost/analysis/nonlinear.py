@@ -13,7 +13,8 @@ from pelecpost.config.models import NonlinearCouplingAnalysis
 from pelecpost.runtime.context import WorkflowContext
 
 from .executors import executor
-from .spectral import load_compact_signal
+from .probe_plotting import register_named_line_figure, register_probe_trace_figures
+from .spectral import load_probe_signal, prepare_probe_time_grid
 
 
 def _automatic_targets(signal: np.ndarray, fs: float, segment: int, maximum: float) -> tuple[np.ndarray, dict]:
@@ -38,7 +39,19 @@ def _automatic_targets(signal: np.ndarray, fs: float, segment: int, maximum: flo
 @executor("nonlinear_coupling")
 def run_nonlinear_coupling(context: WorkflowContext) -> None:
     analysis = cast(NonlinearCouplingAnalysis, context.analysis)
-    variable, unit, time, _x_m, values, _ = load_compact_signal(context)
+    variable, unit, raw_time, x_m, raw_values, selected = load_probe_signal(context)
+    time = raw_time
+    values = raw_values
+    time, values, _dt, resampled, cleanup = prepare_probe_time_grid(context, time, values)
+    if cleanup is not None:
+        context.add_cleanup(cleanup)
+    register_probe_trace_figures(
+        context, raw_time=raw_time, raw_values=raw_values,
+        prepared_time=time, prepared_values=values, x_m=x_m, selected=selected,
+        variable=variable, units=unit,
+        preprocessing={"time_grid_policy": analysis.time_grid_policy,
+                       "resampled": resampled, "method_aggregation": "probe median"},
+    )
     signal = np.median(values, axis=1)
     fs = 1.0 / float(np.median(np.diff(time)))
     segment = min(int(analysis.segment_samples), len(time) // 2)
@@ -55,14 +68,28 @@ def run_nonlinear_coupling(context: WorkflowContext) -> None:
         n_surrogates=analysis.surrogate_count, fdr_alpha=analysis.fdr_alpha,
         minimum_independent_segments=2,
     )
+    observed = np.asarray(significance["observed_bicoherence_squared"])
+    surrogate = np.asarray(significance["surrogate_median_bicoherence_squared"])
+    register_named_line_figure(
+        context, artifact_id="nonlinear.bicoherence.figure", filename="bicoherence",
+        x=np.arange(len(observed), dtype=float),
+        values=np.column_stack((observed, surrogate)),
+        labels=["Observed", "Surrogate median"], x_label="Triad index",
+        y_label="Squared bicoherence", variable=variable, units="dimensionless",
+        interpretation="Observed and surrogate-median bicoherence for the probe-median signal.",
+        provenance={"signal_scope": "probe median", "triad_count": len(observed)},
+    )
     path = context.data_dir / "triad_significance.npz"
-    np.savez_compressed(path, **significance)
+    np.savez_compressed(
+        path, **significance, probe_indices=selected, probe_x_m=x_m,
+    )
     context.register(
         artifact_id="nonlinear.bicoherence", path=path, kind="array", variable=variable,
         units="dimensionless squared bicoherence", coordinate_metadata={"frequency": "Hz"},
         interpretation="Surrogate-tested squared bicoherence; association does not prove causal transfer.",
         provenance={"selection": selection, "fdr_alpha": analysis.fdr_alpha,
-                    "surrogate_count": analysis.surrogate_count, "signal_scope": "probe median"},
+                    "surrogate_count": analysis.surrogate_count, "signal_scope": "probe median",
+                    "time_grid_policy": analysis.time_grid_policy, "resampled": resampled},
     )
     summary = {
         "selection": selection,

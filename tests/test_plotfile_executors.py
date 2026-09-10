@@ -279,6 +279,7 @@ class PlotfileExecutorTests(unittest.TestCase):
                 "dynamic_viscosity_pa_s": 1.0e-5,
                 "conductivity_w_m_k": 0.02,
                 "probe_linkage": {
+                    "probe_set_id": "default",
                     "variable": "pressure", "force_component": "x",
                     "forcing_frequency_hz": 25_000,
                     "minimum_forcing_periods": 0.1,
@@ -298,7 +299,7 @@ class PlotfileExecutorTests(unittest.TestCase):
             write_compact(compact)
             machine_path = root / "machine.yaml"
             machine = yaml.safe_load(machine_path.read_text())
-            machine["inputs"]["probes"] = {"compact_file": str(compact)}
+            machine["inputs"]["probe_sets"] = {"default": {"compact_file": str(compact)}}
             machine_path.write_text(yaml.safe_dump(machine), encoding="utf-8")
             edges = np.linspace(0.001, 0.099, 17)
             call = {"index": 0}

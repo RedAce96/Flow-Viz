@@ -1,0 +1,4270 @@
+{
+  "analyses.yaml": {
+    "$defs": {
+      "AerodynamicForcesAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline": {
+            "default": "none",
+            "enum": [
+              "none",
+              "static",
+              "paired"
+            ],
+            "title": "Baseline",
+            "type": "string"
+          },
+          "baseline_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Baseline Id"
+          },
+          "conductivity_w_m_k": {
+            "exclusiveMinimum": 0,
+            "title": "Conductivity W M K",
+            "type": "number"
+          },
+          "control_volume": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ControlVolumeConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "dynamic_viscosity_pa_s": {
+            "exclusiveMinimum": 0,
+            "title": "Dynamic Viscosity Pa S",
+            "type": "number"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "moment_origin_m": {
+            "default": [
+              0.0,
+              0.0
+            ],
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Moment Origin M",
+            "type": "array"
+          },
+          "normal_sample_distance_m": {
+            "default": 0.001,
+            "exclusiveMinimum": 0,
+            "title": "Normal Sample Distance M",
+            "type": "number"
+          },
+          "normal_sample_points": {
+            "default": 8,
+            "exclusiveMinimum": 0,
+            "title": "Normal Sample Points",
+            "type": "integer"
+          },
+          "presentation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PresentationOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "probe_linkage": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ForceProbeLinkageConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "recipe": {
+            "const": "aerodynamic_forces",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "reference_chord_m": {
+            "exclusiveMinimum": 0,
+            "title": "Reference Chord M",
+            "type": "number"
+          },
+          "reference_span_m": {
+            "default": 1.0,
+            "exclusiveMinimum": 0,
+            "title": "Reference Span M",
+            "type": "number"
+          },
+          "wall_temperature_k": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Wall Temperature K"
+          }
+        },
+        "required": [
+          "id",
+          "recipe",
+          "reference_chord_m",
+          "dynamic_viscosity_pa_s",
+          "conductivity_w_m_k"
+        ],
+        "title": "AerodynamicForcesAnalysis",
+        "type": "object"
+      },
+      "BoundaryLayerAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "conductivity_w_m_k": {
+            "exclusiveMinimum": 0,
+            "title": "Conductivity W M K",
+            "type": "number"
+          },
+          "dynamic_viscosity_pa_s": {
+            "exclusiveMinimum": 0,
+            "title": "Dynamic Viscosity Pa S",
+            "type": "number"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "laminar_reference": {
+            "const": true,
+            "default": true,
+            "title": "Laminar Reference",
+            "type": "boolean"
+          },
+          "maximum_height_m": {
+            "exclusiveMinimum": 0,
+            "title": "Maximum Height M",
+            "type": "number"
+          },
+          "presentation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PresentationOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "recipe": {
+            "const": "boundary_layer_reference",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "stations_x_m": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Stations X M",
+            "type": "array"
+          },
+          "wall_temperature_k": {
+            "exclusiveMinimum": 0,
+            "title": "Wall Temperature K",
+            "type": "number"
+          },
+          "zero_pressure_gradient": {
+            "const": true,
+            "default": true,
+            "title": "Zero Pressure Gradient",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "recipe",
+          "stations_x_m",
+          "maximum_height_m",
+          "wall_temperature_k",
+          "dynamic_viscosity_pa_s",
+          "conductivity_w_m_k"
+        ],
+        "title": "BoundaryLayerAnalysis",
+        "type": "object"
+      },
+      "CaseComparisonAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "alignment": {
+            "$ref": "#/$defs/ComparisonAlignment"
+          },
+          "baseline": {
+            "$ref": "#/$defs/ComparisonReference"
+          },
+          "comparison": {
+            "$ref": "#/$defs/ComparisonReference"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "presentation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PresentationOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "product_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Product Ids",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "recipe": {
+            "const": "case_comparison",
+            "title": "Recipe",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "recipe",
+          "baseline",
+          "comparison",
+          "product_ids"
+        ],
+        "title": "CaseComparisonAnalysis",
+        "type": "object"
+      },
+      "ColorbarOverride": {
+        "additionalProperties": false,
+        "properties": {
+          "include_endpoints": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Include Endpoints"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          },
+          "length_fraction": {
+            "anyOf": [
+              {
+                "maximum": 0.75,
+                "minimum": 0.2,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Length Fraction"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "enum": [
+                  "top",
+                  "bottom",
+                  "left",
+                  "right"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Position"
+          },
+          "thickness_fraction": {
+            "anyOf": [
+              {
+                "maximum": 0.75,
+                "minimum": 0.2,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Thickness Fraction"
+          },
+          "tick_count": {
+            "anyOf": [
+              {
+                "maximum": 12,
+                "minimum": 2,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tick Count"
+          },
+          "tick_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tick Format"
+          }
+        },
+        "title": "ColorbarOverride",
+        "type": "object"
+      },
+      "ColorbarPresentation": {
+        "additionalProperties": false,
+        "properties": {
+          "include_endpoints": {
+            "default": false,
+            "title": "Include Endpoints",
+            "type": "boolean"
+          },
+          "label": {
+            "default": "auto",
+            "title": "Label",
+            "type": "string"
+          },
+          "length_fraction": {
+            "default": 0.43,
+            "maximum": 0.75,
+            "minimum": 0.2,
+            "title": "Length Fraction",
+            "type": "number"
+          },
+          "position": {
+            "default": "top",
+            "enum": [
+              "top",
+              "bottom",
+              "left",
+              "right"
+            ],
+            "title": "Position",
+            "type": "string"
+          },
+          "thickness_fraction": {
+            "anyOf": [
+              {
+                "maximum": 0.75,
+                "minimum": 0.2,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Thickness Fraction"
+          },
+          "tick_count": {
+            "default": 4,
+            "maximum": 12,
+            "minimum": 2,
+            "title": "Tick Count",
+            "type": "integer"
+          },
+          "tick_format": {
+            "default": "auto",
+            "title": "Tick Format",
+            "type": "string"
+          }
+        },
+        "title": "ColorbarPresentation",
+        "type": "object"
+      },
+      "ComparisonAlignment": {
+        "additionalProperties": false,
+        "properties": {
+          "frequency": {
+            "default": "strict",
+            "enum": [
+              "strict",
+              "intersection",
+              "interpolate_to_baseline",
+              "interpolate_to_comparison"
+            ],
+            "title": "Frequency",
+            "type": "string"
+          },
+          "frequency_tolerance_hz": {
+            "default": 1e-09,
+            "minimum": 0.0,
+            "title": "Frequency Tolerance Hz",
+            "type": "number"
+          },
+          "space": {
+            "default": "strict",
+            "enum": [
+              "strict",
+              "intersection",
+              "interpolate_to_baseline",
+              "interpolate_to_comparison"
+            ],
+            "title": "Space",
+            "type": "string"
+          },
+          "space_tolerance_m": {
+            "default": 1e-12,
+            "minimum": 0.0,
+            "title": "Space Tolerance M",
+            "type": "number"
+          },
+          "time": {
+            "default": "strict",
+            "enum": [
+              "strict",
+              "intersection",
+              "interpolate_to_baseline",
+              "interpolate_to_comparison"
+            ],
+            "title": "Time",
+            "type": "string"
+          },
+          "time_tolerance_s": {
+            "default": 1e-15,
+            "minimum": 0.0,
+            "title": "Time Tolerance S",
+            "type": "number"
+          }
+        },
+        "title": "ComparisonAlignment",
+        "type": "object"
+      },
+      "ComparisonReference": {
+        "additionalProperties": false,
+        "description": "A product from this run or from a named archived run.",
+        "properties": {
+          "analysis_id": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Analysis Id",
+            "type": "string"
+          },
+          "archived_run_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Archived Run Id"
+          }
+        },
+        "required": [
+          "analysis_id"
+        ],
+        "title": "ComparisonReference",
+        "type": "object"
+      },
+      "ContourAxesPresentation": {
+        "additionalProperties": false,
+        "properties": {
+          "x_tick_format": {
+            "default": "auto",
+            "title": "X Tick Format",
+            "type": "string"
+          },
+          "y_tick_format": {
+            "default": "auto",
+            "title": "Y Tick Format",
+            "type": "string"
+          }
+        },
+        "title": "ContourAxesPresentation",
+        "type": "object"
+      },
+      "ContourAxesPresentationOverride": {
+        "additionalProperties": false,
+        "properties": {
+          "x_tick_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "X Tick Format"
+          },
+          "y_tick_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Y Tick Format"
+          }
+        },
+        "title": "ContourAxesPresentationOverride",
+        "type": "object"
+      },
+      "ContourConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/$defs/ContourStyleOverride"
+            },
+            "propertyNames": {
+              "$ref": "#/$defs/Variable"
+            },
+            "title": "Fields",
+            "type": "object"
+          }
+        },
+        "title": "ContourConfig",
+        "type": "object"
+      },
+      "ContourRange": {
+        "additionalProperties": false,
+        "properties": {
+          "lower_percentile": {
+            "default": 1.0,
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Lower Percentile",
+            "type": "number"
+          },
+          "maximum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Maximum"
+          },
+          "minimum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Minimum"
+          },
+          "mode": {
+            "default": "per_snapshot_percentile",
+            "enum": [
+              "fixed",
+              "per_snapshot_percentile",
+              "selected_snapshots_minmax",
+              "selected_snapshots_percentile"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "upper_percentile": {
+            "default": 99.0,
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Upper Percentile",
+            "type": "number"
+          }
+        },
+        "title": "ContourRange",
+        "type": "object"
+      },
+      "ContourRendering": {
+        "additionalProperties": false,
+        "properties": {
+          "levels": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Levels"
+          },
+          "mode": {
+            "default": "continuous",
+            "enum": [
+              "continuous",
+              "discrete"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "title": "ContourRendering",
+        "type": "object"
+      },
+      "ContourRenderingOverride": {
+        "additionalProperties": false,
+        "properties": {
+          "levels": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Levels"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "continuous",
+                  "discrete"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mode"
+          }
+        },
+        "title": "ContourRenderingOverride",
+        "type": "object"
+      },
+      "ContourStyle": {
+        "additionalProperties": false,
+        "properties": {
+          "colorbar": {
+            "$ref": "#/$defs/ColorbarPresentation",
+            "default": {
+              "include_endpoints": false,
+              "label": "auto",
+              "length_fraction": 0.43,
+              "position": "top",
+              "thickness_fraction": null,
+              "tick_count": 4,
+              "tick_format": "auto"
+            }
+          },
+          "colormap": {
+            "default": "viridis",
+            "title": "Colormap",
+            "type": "string"
+          },
+          "normalization": {
+            "default": "linear",
+            "enum": [
+              "linear",
+              "log",
+              "symlog"
+            ],
+            "title": "Normalization",
+            "type": "string"
+          },
+          "range": {
+            "$ref": "#/$defs/ContourRange",
+            "default": {
+              "lower_percentile": 1.0,
+              "maximum": null,
+              "minimum": null,
+              "mode": "per_snapshot_percentile",
+              "upper_percentile": 99.0
+            }
+          },
+          "rendering": {
+            "$ref": "#/$defs/ContourRendering",
+            "default": {
+              "levels": null,
+              "mode": "continuous"
+            }
+          },
+          "symlog_linear_threshold": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Symlog Linear Threshold"
+          },
+          "symmetric_about_zero": {
+            "default": false,
+            "title": "Symmetric About Zero",
+            "type": "boolean"
+          }
+        },
+        "title": "ContourStyle",
+        "type": "object"
+      },
+      "ContourStyleOverride": {
+        "additionalProperties": false,
+        "properties": {
+          "colorbar": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ColorbarOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "colormap": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Colormap"
+          },
+          "normalization": {
+            "anyOf": [
+              {
+                "enum": [
+                  "linear",
+                  "log",
+                  "symlog"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Normalization"
+          },
+          "range": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ContourRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "rendering": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ContourRenderingOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "symlog_linear_threshold": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Symlog Linear Threshold"
+          },
+          "symmetric_about_zero": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Symmetric About Zero"
+          }
+        },
+        "title": "ContourStyleOverride",
+        "type": "object"
+      },
+      "ControlVolumeConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "bulk_viscosity_pa_s": {
+            "default": 0.0,
+            "minimum": 0.0,
+            "title": "Bulk Viscosity Pa S",
+            "type": "number"
+          },
+          "x_range_m": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "X Range M",
+            "type": "array"
+          },
+          "y_top_m": {
+            "exclusiveMinimum": 0,
+            "title": "Y Top M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x_range_m",
+          "y_top_m"
+        ],
+        "title": "ControlVolumeConfig",
+        "type": "object"
+      },
+      "DirectionalWaveAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "end_time_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Time S"
+          },
+          "expected_speed_max_m_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Speed Max M S"
+          },
+          "expected_speed_min_m_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Speed Min M S"
+          },
+          "frequency_max_hz": {
+            "exclusiveMinimum": 0,
+            "title": "Frequency Max Hz",
+            "type": "number"
+          },
+          "frequency_min_hz": {
+            "default": 0.0,
+            "minimum": 0.0,
+            "title": "Frequency Min Hz",
+            "type": "number"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "minimum_coherence": {
+            "default": 0.8,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Minimum Coherence",
+            "type": "number"
+          },
+          "presentation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PresentationOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "probe_indices": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Probe Indices",
+            "type": "array"
+          },
+          "probe_plotting": {
+            "$ref": "#/$defs/ProbePlottingConfig"
+          },
+          "probe_set_id": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Probe Set Id",
+            "type": "string"
+          },
+          "recipe": {
+            "const": "directional_wave",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "record_start_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Start Time S"
+          },
+          "spatial_window": {
+            "default": "hann",
+            "enum": [
+              "hann",
+              "hamming",
+              "blackman",
+              "rectangular"
+            ],
+            "title": "Spatial Window",
+            "type": "string"
+          },
+          "temporal_window": {
+            "default": "rectangular",
+            "enum": [
+              "hann",
+              "hamming",
+              "blackman",
+              "rectangular"
+            ],
+            "title": "Temporal Window",
+            "type": "string"
+          },
+          "time_grid_policy": {
+            "default": "resample_uniform",
+            "enum": [
+              "resample_uniform",
+              "require_uniform"
+            ],
+            "title": "Time Grid Policy",
+            "type": "string"
+          },
+          "variable": {
+            "$ref": "#/$defs/Variable"
+          }
+        },
+        "required": [
+          "id",
+          "probe_set_id",
+          "recipe",
+          "variable",
+          "frequency_max_hz"
+        ],
+        "title": "DirectionalWaveAnalysis",
+        "type": "object"
+      },
+      "FigurePresentation": {
+        "additionalProperties": false,
+        "properties": {
+          "dpi": {
+            "default": 300,
+            "exclusiveMinimum": 0,
+            "title": "Dpi",
+            "type": "integer"
+          },
+          "formats": {
+            "default": [
+              "png"
+            ],
+            "items": {
+              "enum": [
+                "png",
+                "pdf",
+                "svg"
+              ],
+              "type": "string"
+            },
+            "title": "Formats",
+            "type": "array"
+          },
+          "height_in": {
+            "default": 4.5,
+            "exclusiveMinimum": 0,
+            "title": "Height In",
+            "type": "number"
+          },
+          "transparent": {
+            "default": false,
+            "title": "Transparent",
+            "type": "boolean"
+          },
+          "width_in": {
+            "default": 14.0,
+            "exclusiveMinimum": 0,
+            "title": "Width In",
+            "type": "number"
+          }
+        },
+        "title": "FigurePresentation",
+        "type": "object"
+      },
+      "FigurePresentationOverride": {
+        "additionalProperties": false,
+        "properties": {
+          "dpi": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Dpi"
+          },
+          "formats": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "png",
+                    "pdf",
+                    "svg"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Formats"
+          },
+          "height_in": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Height In"
+          },
+          "transparent": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Transparent"
+          },
+          "width_in": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Width In"
+          }
+        },
+        "title": "FigurePresentationOverride",
+        "type": "object"
+      },
+      "FlowOverviewAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "contours": {
+            "$ref": "#/$defs/ContourConfig",
+            "default": {
+              "fields": {}
+            }
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "fields": {
+            "default": [
+              "temperature",
+              "pressure"
+            ],
+            "items": {
+              "$ref": "#/$defs/Variable"
+            },
+            "minItems": 1,
+            "title": "Fields",
+            "type": "array"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "line_profiles": {
+            "$ref": "#/$defs/LineProfileConfig",
+            "default": {
+              "coordinate_limits": null,
+              "coordinate_range_m": null,
+              "coordinate_scale": null,
+              "fields": {},
+              "grid": null,
+              "interpolation": "linear",
+              "layout": "separate_fields",
+              "legend_position": null,
+              "normalize_values": false,
+              "sample_points": null,
+              "value_limits": null,
+              "value_scale": null
+            }
+          },
+          "line_stations_x_m": {
+            "default": [],
+            "items": {
+              "type": "number"
+            },
+            "title": "Line Stations X M",
+            "type": "array"
+          },
+          "presentation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PresentationOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "recipe": {
+            "const": "flow_overview",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "snapshot_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Snapshot End"
+          },
+          "snapshot_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Snapshot Start"
+          },
+          "snapshot_step": {
+            "default": 1,
+            "exclusiveMinimum": 0,
+            "title": "Snapshot Step",
+            "type": "integer"
+          },
+          "streamlines": {
+            "default": false,
+            "title": "Streamlines",
+            "type": "boolean"
+          },
+          "x_limits_m": {
+            "anyOf": [
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "X Limits M"
+          },
+          "y_limits_m": {
+            "anyOf": [
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Y Limits M"
+          }
+        },
+        "required": [
+          "id",
+          "recipe"
+        ],
+        "title": "FlowOverviewAnalysis",
+        "type": "object"
+      },
+      "ForceProbeLinkageConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "force_component": {
+            "default": "y",
+            "enum": [
+              "x",
+              "y",
+              "moment"
+            ],
+            "title": "Force Component",
+            "type": "string"
+          },
+          "forcing_frequency_hz": {
+            "exclusiveMinimum": 0,
+            "title": "Forcing Frequency Hz",
+            "type": "number"
+          },
+          "minimum_forcing_periods": {
+            "default": 10.0,
+            "exclusiveMinimum": 0,
+            "title": "Minimum Forcing Periods",
+            "type": "number"
+          },
+          "minimum_segments": {
+            "default": 8,
+            "exclusiveMinimum": 0,
+            "title": "Minimum Segments",
+            "type": "integer"
+          },
+          "overlap_fraction": {
+            "default": 0.5,
+            "exclusiveMaximum": 1.0,
+            "minimum": 0.0,
+            "title": "Overlap Fraction",
+            "type": "number"
+          },
+          "probe_indices": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Probe Indices",
+            "type": "array"
+          },
+          "probe_set_id": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Probe Set Id",
+            "type": "string"
+          },
+          "time_grid_policy": {
+            "default": "resample_uniform",
+            "enum": [
+              "resample_uniform",
+              "require_uniform"
+            ],
+            "title": "Time Grid Policy",
+            "type": "string"
+          },
+          "variable": {
+            "$ref": "#/$defs/Variable",
+            "default": "pressure"
+          },
+          "welch_segment_samples": {
+            "default": 16384,
+            "exclusiveMinimum": 0,
+            "title": "Welch Segment Samples",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "probe_set_id",
+          "forcing_frequency_hz"
+        ],
+        "title": "ForceProbeLinkageConfig",
+        "type": "object"
+      },
+      "LineProfileConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "coordinate_limits": {
+            "anyOf": [
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Coordinate Limits"
+          },
+          "coordinate_range_m": {
+            "anyOf": [
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Coordinate Range M"
+          },
+          "coordinate_scale": {
+            "anyOf": [
+              {
+                "enum": [
+                  "linear",
+                  "log",
+                  "symlog"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Coordinate Scale"
+          },
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/$defs/LineStyleOverride"
+            },
+            "propertyNames": {
+              "$ref": "#/$defs/Variable"
+            },
+            "title": "Fields",
+            "type": "object"
+          },
+          "grid": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Grid"
+          },
+          "interpolation": {
+            "default": "linear",
+            "enum": [
+              "linear",
+              "nearest"
+            ],
+            "title": "Interpolation",
+            "type": "string"
+          },
+          "layout": {
+            "default": "separate_fields",
+            "enum": [
+              "separate_fields",
+              "combined"
+            ],
+            "title": "Layout",
+            "type": "string"
+          },
+          "legend_position": {
+            "anyOf": [
+              {
+                "enum": [
+                  "best",
+                  "upper_left",
+                  "upper_right",
+                  "lower_left",
+                  "lower_right"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Legend Position"
+          },
+          "normalize_values": {
+            "default": false,
+            "title": "Normalize Values",
+            "type": "boolean"
+          },
+          "sample_points": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sample Points"
+          },
+          "value_limits": {
+            "anyOf": [
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Value Limits"
+          },
+          "value_scale": {
+            "anyOf": [
+              {
+                "enum": [
+                  "linear",
+                  "log",
+                  "symlog"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Value Scale"
+          }
+        },
+        "title": "LineProfileConfig",
+        "type": "object"
+      },
+      "LineStyle": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Color"
+          },
+          "coordinate_scale": {
+            "default": "linear",
+            "enum": [
+              "linear",
+              "log",
+              "symlog"
+            ],
+            "title": "Coordinate Scale",
+            "type": "string"
+          },
+          "grid": {
+            "default": true,
+            "title": "Grid",
+            "type": "boolean"
+          },
+          "legend_position": {
+            "default": "best",
+            "enum": [
+              "best",
+              "upper_left",
+              "upper_right",
+              "lower_left",
+              "lower_right"
+            ],
+            "title": "Legend Position",
+            "type": "string"
+          },
+          "linestyle": {
+            "default": "solid",
+            "enum": [
+              "solid",
+              "dashed",
+              "dashdot",
+              "dotted"
+            ],
+            "title": "Linestyle",
+            "type": "string"
+          },
+          "linewidth": {
+            "default": 2.0,
+            "exclusiveMinimum": 0,
+            "title": "Linewidth",
+            "type": "number"
+          },
+          "marker": {
+            "default": "none",
+            "enum": [
+              "none",
+              "circle",
+              "square",
+              "triangle",
+              "diamond"
+            ],
+            "title": "Marker",
+            "type": "string"
+          },
+          "value_scale": {
+            "default": "linear",
+            "enum": [
+              "linear",
+              "log",
+              "symlog"
+            ],
+            "title": "Value Scale",
+            "type": "string"
+          }
+        },
+        "title": "LineStyle",
+        "type": "object"
+      },
+      "LineStyleOverride": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Color"
+          },
+          "coordinate_scale": {
+            "anyOf": [
+              {
+                "enum": [
+                  "linear",
+                  "log",
+                  "symlog"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Coordinate Scale"
+          },
+          "grid": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Grid"
+          },
+          "legend_position": {
+            "anyOf": [
+              {
+                "enum": [
+                  "best",
+                  "upper_left",
+                  "upper_right",
+                  "lower_left",
+                  "lower_right"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Legend Position"
+          },
+          "linestyle": {
+            "anyOf": [
+              {
+                "enum": [
+                  "solid",
+                  "dashed",
+                  "dashdot",
+                  "dotted"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Linestyle"
+          },
+          "linewidth": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Linewidth"
+          },
+          "marker": {
+            "anyOf": [
+              {
+                "enum": [
+                  "none",
+                  "circle",
+                  "square",
+                  "triangle",
+                  "diamond"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Marker"
+          },
+          "value_scale": {
+            "anyOf": [
+              {
+                "enum": [
+                  "linear",
+                  "log",
+                  "symlog"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Value Scale"
+          }
+        },
+        "title": "LineStyleOverride",
+        "type": "object"
+      },
+      "ModalScreeningAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "dmd_ranks": {
+            "default": [
+              2,
+              4,
+              8
+            ],
+            "items": {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            "title": "Dmd Ranks",
+            "type": "array"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "end_time_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Time S"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "mode_count": {
+            "default": 4,
+            "exclusiveMinimum": 0,
+            "title": "Mode Count",
+            "type": "integer"
+          },
+          "presentation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PresentationOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "probe_indices": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Probe Indices",
+            "type": "array"
+          },
+          "probe_plotting": {
+            "$ref": "#/$defs/ProbePlottingConfig"
+          },
+          "probe_set_id": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Probe Set Id",
+            "type": "string"
+          },
+          "probe_stride": {
+            "default": 1,
+            "exclusiveMinimum": 0,
+            "title": "Probe Stride",
+            "type": "integer"
+          },
+          "recipe": {
+            "const": "modal_screening",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "record_start_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Start Time S"
+          },
+          "sensitivity_windows": {
+            "default": [
+              [
+                0.0,
+                0.5
+              ],
+              [
+                0.5,
+                1.0
+              ]
+            ],
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "title": "Sensitivity Windows",
+            "type": "array"
+          },
+          "spod_segment_samples": {
+            "default": 2048,
+            "exclusiveMinimum": 0,
+            "title": "Spod Segment Samples",
+            "type": "integer"
+          },
+          "time_grid_policy": {
+            "default": "resample_uniform",
+            "enum": [
+              "resample_uniform",
+              "require_uniform"
+            ],
+            "title": "Time Grid Policy",
+            "type": "string"
+          },
+          "variable": {
+            "$ref": "#/$defs/Variable"
+          }
+        },
+        "required": [
+          "id",
+          "probe_set_id",
+          "recipe",
+          "variable"
+        ],
+        "title": "ModalScreeningAnalysis",
+        "type": "object"
+      },
+      "NonlinearCouplingAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_frequency_selection": {
+            "default": false,
+            "title": "Automatic Frequency Selection",
+            "type": "boolean"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "end_time_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Time S"
+          },
+          "fdr_alpha": {
+            "default": 0.05,
+            "exclusiveMaximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Fdr Alpha",
+            "type": "number"
+          },
+          "frequency_max_hz": {
+            "exclusiveMinimum": 0,
+            "title": "Frequency Max Hz",
+            "type": "number"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "overlap_fraction": {
+            "default": 0.5,
+            "exclusiveMaximum": 1.0,
+            "minimum": 0.0,
+            "title": "Overlap Fraction",
+            "type": "number"
+          },
+          "presentation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PresentationOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "probe_indices": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Probe Indices",
+            "type": "array"
+          },
+          "probe_plotting": {
+            "$ref": "#/$defs/ProbePlottingConfig"
+          },
+          "probe_set_id": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Probe Set Id",
+            "type": "string"
+          },
+          "recipe": {
+            "const": "nonlinear_coupling",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "record_start_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Start Time S"
+          },
+          "segment_samples": {
+            "default": 8192,
+            "exclusiveMinimum": 0,
+            "title": "Segment Samples",
+            "type": "integer"
+          },
+          "surrogate_count": {
+            "default": 499,
+            "minimum": 19,
+            "title": "Surrogate Count",
+            "type": "integer"
+          },
+          "target_frequencies_hz": {
+            "default": [],
+            "items": {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            "title": "Target Frequencies Hz",
+            "type": "array"
+          },
+          "time_grid_policy": {
+            "default": "resample_uniform",
+            "enum": [
+              "resample_uniform",
+              "require_uniform"
+            ],
+            "title": "Time Grid Policy",
+            "type": "string"
+          },
+          "variable": {
+            "$ref": "#/$defs/Variable"
+          }
+        },
+        "required": [
+          "id",
+          "probe_set_id",
+          "recipe",
+          "variable",
+          "frequency_max_hz"
+        ],
+        "title": "NonlinearCouplingAnalysis",
+        "type": "object"
+      },
+      "PresentationConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "contour_axes": {
+            "$ref": "#/$defs/ContourAxesPresentation",
+            "default": {
+              "x_tick_format": "auto",
+              "y_tick_format": "auto"
+            }
+          },
+          "contour_defaults": {
+            "$ref": "#/$defs/ContourStyle",
+            "default": {
+              "colorbar": {
+                "include_endpoints": false,
+                "label": "auto",
+                "length_fraction": 0.43,
+                "position": "top",
+                "thickness_fraction": null,
+                "tick_count": 4,
+                "tick_format": "auto"
+              },
+              "colormap": "viridis",
+              "normalization": "linear",
+              "range": {
+                "lower_percentile": 1.0,
+                "maximum": null,
+                "minimum": null,
+                "mode": "per_snapshot_percentile",
+                "upper_percentile": 99.0
+              },
+              "rendering": {
+                "levels": null,
+                "mode": "continuous"
+              },
+              "symlog_linear_threshold": null,
+              "symmetric_about_zero": false
+            }
+          },
+          "figure": {
+            "$ref": "#/$defs/FigurePresentation",
+            "default": {
+              "dpi": 300,
+              "formats": [
+                "png"
+              ],
+              "height_in": 4.5,
+              "transparent": false,
+              "width_in": 14.0
+            }
+          },
+          "line_defaults": {
+            "$ref": "#/$defs/LineStyle",
+            "default": {
+              "color": null,
+              "coordinate_scale": "linear",
+              "grid": true,
+              "legend_position": "best",
+              "linestyle": "solid",
+              "linewidth": 2.0,
+              "marker": "none",
+              "value_scale": "linear"
+            }
+          },
+          "preset": {
+            "const": "publication",
+            "default": "publication",
+            "title": "Preset",
+            "type": "string"
+          },
+          "time_annotation": {
+            "$ref": "#/$defs/TimeAnnotationPresentation",
+            "default": {
+              "boxed": true,
+              "enabled": true,
+              "position": "top_left",
+              "precision": 4
+            }
+          },
+          "typography": {
+            "$ref": "#/$defs/TypographyPresentation",
+            "default": {
+              "axes_label_size": 16.0,
+              "base_size": 14.0,
+              "colorbar_label_pad": 2.0,
+              "colorbar_label_size": 13.0,
+              "colorbar_tick_label_size": 11.0,
+              "colorbar_tick_pad": 2.0,
+              "font_family": "DejaVu Sans",
+              "legend_size": 13.0,
+              "tick_label_size": 14.0
+            }
+          }
+        },
+        "title": "PresentationConfig",
+        "type": "object"
+      },
+      "PresentationOverride": {
+        "additionalProperties": false,
+        "properties": {
+          "contour_axes": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ContourAxesPresentationOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "contour_defaults": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ContourStyleOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "figure": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/FigurePresentationOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "line_defaults": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LineStyleOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "time_annotation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TimeAnnotationOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "typography": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TypographyPresentationOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "title": "PresentationOverride",
+        "type": "object"
+      },
+      "ProbePlottingConfig": {
+        "additionalProperties": false,
+        "description": "Controls visual treatment of selected probe traces.",
+        "properties": {
+          "label": {
+            "default": "index_coordinates",
+            "enum": [
+              "index_coordinates",
+              "coordinates",
+              "index"
+            ],
+            "title": "Label",
+            "type": "string"
+          },
+          "mode": {
+            "default": "both",
+            "enum": [
+              "overlay",
+              "panels",
+              "both"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "normalization": {
+            "default": "none",
+            "enum": [
+              "none",
+              "per_probe_peak"
+            ],
+            "title": "Normalization",
+            "type": "string"
+          }
+        },
+        "title": "ProbePlottingConfig",
+        "type": "object"
+      },
+      "ProbeSpectrumAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "detrend": {
+            "default": "mean",
+            "enum": [
+              "mean",
+              "linear",
+              "none"
+            ],
+            "title": "Detrend",
+            "type": "string"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "end_time_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Time S"
+          },
+          "frequency_max_hz": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Frequency Max Hz"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "overlap_fraction": {
+            "default": 0.5,
+            "exclusiveMaximum": 1.0,
+            "minimum": 0.0,
+            "title": "Overlap Fraction",
+            "type": "number"
+          },
+          "presentation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PresentationOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "probe_indices": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Probe Indices",
+            "type": "array"
+          },
+          "probe_plotting": {
+            "$ref": "#/$defs/ProbePlottingConfig"
+          },
+          "probe_set_id": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Probe Set Id",
+            "type": "string"
+          },
+          "recipe": {
+            "const": "probe_spectrum",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "record_start_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Start Time S"
+          },
+          "time_grid_policy": {
+            "default": "resample_uniform",
+            "enum": [
+              "resample_uniform",
+              "require_uniform"
+            ],
+            "title": "Time Grid Policy",
+            "type": "string"
+          },
+          "variable": {
+            "$ref": "#/$defs/Variable"
+          },
+          "welch_segment_samples": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Welch Segment Samples"
+          },
+          "window": {
+            "default": "hann",
+            "enum": [
+              "hann",
+              "hamming",
+              "blackman",
+              "rectangular"
+            ],
+            "title": "Window",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "probe_set_id",
+          "recipe",
+          "variable"
+        ],
+        "title": "ProbeSpectrumAnalysis",
+        "type": "object"
+      },
+      "SinglePulseAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline_end_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Baseline End Time S"
+          },
+          "cutoff_sigma": {
+            "default": 4.0,
+            "exclusiveMinimum": 0,
+            "title": "Cutoff Sigma",
+            "type": "number"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "end_time_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Time S"
+          },
+          "energy_per_pulse_j_m": {
+            "exclusiveMinimum": 0,
+            "title": "Energy Per Pulse J M",
+            "type": "number"
+          },
+          "frequency_max_hz": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Frequency Max Hz"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "minimum_baseline_samples": {
+            "default": 8,
+            "exclusiveMinimum": 0,
+            "title": "Minimum Baseline Samples",
+            "type": "integer"
+          },
+          "minimum_relative_source_amplitude": {
+            "default": 0.001,
+            "exclusiveMaximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Minimum Relative Source Amplitude",
+            "type": "number"
+          },
+          "presentation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PresentationOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "probe_indices": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Probe Indices",
+            "type": "array"
+          },
+          "probe_plotting": {
+            "$ref": "#/$defs/ProbePlottingConfig"
+          },
+          "probe_set_id": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Probe Set Id",
+            "type": "string"
+          },
+          "pulse_fwhm_s": {
+            "exclusiveMinimum": 0,
+            "title": "Pulse Fwhm S",
+            "type": "number"
+          },
+          "pulse_period_s": {
+            "exclusiveMinimum": 0,
+            "title": "Pulse Period S",
+            "type": "number"
+          },
+          "recipe": {
+            "const": "single_pulse_response",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "record_start_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Start Time S"
+          },
+          "start_time_s": {
+            "default": 0.0,
+            "title": "Start Time S",
+            "type": "number"
+          },
+          "time_grid_policy": {
+            "default": "resample_uniform",
+            "enum": [
+              "resample_uniform",
+              "require_uniform"
+            ],
+            "title": "Time Grid Policy",
+            "type": "string"
+          },
+          "variable": {
+            "$ref": "#/$defs/Variable"
+          }
+        },
+        "required": [
+          "id",
+          "probe_set_id",
+          "recipe",
+          "variable",
+          "energy_per_pulse_j_m",
+          "pulse_fwhm_s",
+          "pulse_period_s"
+        ],
+        "title": "SinglePulseAnalysis",
+        "type": "object"
+      },
+      "SurfaceArcLocation": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "const": "arc_length",
+            "default": "arc_length",
+            "title": "Type",
+            "type": "string"
+          },
+          "value_m": {
+            "minimum": 0.0,
+            "title": "Value M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "value_m"
+        ],
+        "title": "SurfaceArcLocation",
+        "type": "object"
+      },
+      "SurfaceDiagnosticsAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "geometry_figure": {
+            "$ref": "#/$defs/SurfaceGeometryFigure",
+            "default": {
+              "maximum_normal_arrows": 40,
+              "normal_arrow_length": "sample_distance",
+              "normal_color": "tab:orange",
+              "surface_color": "black"
+            }
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "normal_profiles": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SurfaceNormalProfiles"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "normal_sample_distance_m": {
+            "default": 0.001,
+            "exclusiveMinimum": 0,
+            "title": "Normal Sample Distance M",
+            "type": "number"
+          },
+          "normal_sample_points": {
+            "default": 8,
+            "exclusiveMinimum": 0,
+            "title": "Normal Sample Points",
+            "type": "integer"
+          },
+          "presentation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PresentationOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "recipe": {
+            "const": "surface_diagnostics",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "snapshot_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Snapshot End"
+          },
+          "snapshot_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Snapshot Start"
+          }
+        },
+        "required": [
+          "id",
+          "recipe"
+        ],
+        "title": "SurfaceDiagnosticsAnalysis",
+        "type": "object"
+      },
+      "SurfaceGeometryFigure": {
+        "additionalProperties": false,
+        "properties": {
+          "maximum_normal_arrows": {
+            "default": 40,
+            "exclusiveMinimum": 0,
+            "title": "Maximum Normal Arrows",
+            "type": "integer"
+          },
+          "normal_arrow_length": {
+            "anyOf": [
+              {
+                "const": "sample_distance",
+                "type": "string"
+              },
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              }
+            ],
+            "default": "sample_distance",
+            "title": "Normal Arrow Length"
+          },
+          "normal_color": {
+            "default": "tab:orange",
+            "title": "Normal Color",
+            "type": "string"
+          },
+          "surface_color": {
+            "default": "black",
+            "title": "Surface Color",
+            "type": "string"
+          }
+        },
+        "title": "SurfaceGeometryFigure",
+        "type": "object"
+      },
+      "SurfaceNormalProfiles": {
+        "additionalProperties": false,
+        "properties": {
+          "clustering_exponent": {
+            "default": 2.0,
+            "exclusiveMinimum": 0,
+            "title": "Clustering Exponent",
+            "type": "number"
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/$defs/Variable"
+            },
+            "minItems": 1,
+            "title": "Fields",
+            "type": "array"
+          },
+          "figure": {
+            "$ref": "#/$defs/SurfaceProfileFigure",
+            "default": {
+              "coordinate_scale": "linear",
+              "grid": true,
+              "layout": "separate_fields",
+              "normalize_values": false,
+              "value_scale": "linear"
+            }
+          },
+          "include_wall_extrapolation": {
+            "default": true,
+            "title": "Include Wall Extrapolation",
+            "type": "boolean"
+          },
+          "interpolation": {
+            "default": "linear",
+            "enum": [
+              "linear",
+              "nearest"
+            ],
+            "title": "Interpolation",
+            "type": "string"
+          },
+          "spacing": {
+            "default": "uniform",
+            "enum": [
+              "uniform",
+              "wall_clustered"
+            ],
+            "title": "Spacing",
+            "type": "string"
+          },
+          "stations": {
+            "items": {
+              "$ref": "#/$defs/SurfaceNormalStation"
+            },
+            "minItems": 1,
+            "title": "Stations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "fields",
+          "stations"
+        ],
+        "title": "SurfaceNormalProfiles",
+        "type": "object"
+      },
+      "SurfaceNormalStation": {
+        "additionalProperties": false,
+        "properties": {
+          "component_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Component Id"
+          },
+          "distance_m": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Distance M"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "location": {
+            "discriminator": {
+              "mapping": {
+                "arc_length": "#/$defs/SurfaceArcLocation",
+                "x": "#/$defs/SurfaceXLocation"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/SurfaceXLocation"
+              },
+              {
+                "$ref": "#/$defs/SurfaceArcLocation"
+              }
+            ],
+            "title": "Location"
+          },
+          "sample_points": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sample Points"
+          },
+          "side_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Side Id"
+          }
+        },
+        "required": [
+          "id",
+          "location"
+        ],
+        "title": "SurfaceNormalStation",
+        "type": "object"
+      },
+      "SurfaceProfileFigure": {
+        "additionalProperties": false,
+        "properties": {
+          "coordinate_scale": {
+            "default": "linear",
+            "enum": [
+              "linear",
+              "log",
+              "symlog"
+            ],
+            "title": "Coordinate Scale",
+            "type": "string"
+          },
+          "grid": {
+            "default": true,
+            "title": "Grid",
+            "type": "boolean"
+          },
+          "layout": {
+            "default": "separate_fields",
+            "enum": [
+              "separate_fields",
+              "combined"
+            ],
+            "title": "Layout",
+            "type": "string"
+          },
+          "normalize_values": {
+            "default": false,
+            "title": "Normalize Values",
+            "type": "boolean"
+          },
+          "value_scale": {
+            "default": "linear",
+            "enum": [
+              "linear",
+              "log",
+              "symlog"
+            ],
+            "title": "Value Scale",
+            "type": "string"
+          }
+        },
+        "title": "SurfaceProfileFigure",
+        "type": "object"
+      },
+      "SurfaceXLocation": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "const": "x",
+            "default": "x",
+            "title": "Type",
+            "type": "string"
+          },
+          "value_m": {
+            "title": "Value M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "value_m"
+        ],
+        "title": "SurfaceXLocation",
+        "type": "object"
+      },
+      "TimeAnnotationOverride": {
+        "additionalProperties": false,
+        "properties": {
+          "boxed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Boxed"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Enabled"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "enum": [
+                  "top_left",
+                  "top_center",
+                  "top_right",
+                  "bottom_left",
+                  "bottom_center",
+                  "bottom_right"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Position"
+          },
+          "precision": {
+            "anyOf": [
+              {
+                "maximum": 12,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Precision"
+          }
+        },
+        "title": "TimeAnnotationOverride",
+        "type": "object"
+      },
+      "TimeAnnotationPresentation": {
+        "additionalProperties": false,
+        "properties": {
+          "boxed": {
+            "default": true,
+            "title": "Boxed",
+            "type": "boolean"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "position": {
+            "default": "top_left",
+            "enum": [
+              "top_left",
+              "top_center",
+              "top_right",
+              "bottom_left",
+              "bottom_center",
+              "bottom_right"
+            ],
+            "title": "Position",
+            "type": "string"
+          },
+          "precision": {
+            "default": 4,
+            "maximum": 12,
+            "minimum": 1,
+            "title": "Precision",
+            "type": "integer"
+          }
+        },
+        "title": "TimeAnnotationPresentation",
+        "type": "object"
+      },
+      "TransientWavepacketAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "band_max_hz": {
+            "exclusiveMinimum": 0,
+            "title": "Band Max Hz",
+            "type": "number"
+          },
+          "band_min_hz": {
+            "minimum": 0.0,
+            "title": "Band Min Hz",
+            "type": "number"
+          },
+          "baseline_end_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Baseline End Time S"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "end_time_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Time S"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "overlap_fraction": {
+            "default": 0.75,
+            "exclusiveMaximum": 1.0,
+            "minimum": 0.0,
+            "title": "Overlap Fraction",
+            "type": "number"
+          },
+          "presentation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PresentationOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "probe_indices": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Probe Indices",
+            "type": "array"
+          },
+          "probe_plotting": {
+            "$ref": "#/$defs/ProbePlottingConfig"
+          },
+          "probe_set_id": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Probe Set Id",
+            "type": "string"
+          },
+          "recipe": {
+            "const": "transient_wavepacket",
+            "title": "Recipe",
+            "type": "string"
+          },
+          "record_start_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Start Time S"
+          },
+          "stft_segment_samples": {
+            "default": 2048,
+            "exclusiveMinimum": 0,
+            "title": "Stft Segment Samples",
+            "type": "integer"
+          },
+          "time_grid_policy": {
+            "default": "resample_uniform",
+            "enum": [
+              "resample_uniform",
+              "require_uniform"
+            ],
+            "title": "Time Grid Policy",
+            "type": "string"
+          },
+          "variable": {
+            "$ref": "#/$defs/Variable"
+          }
+        },
+        "required": [
+          "id",
+          "probe_set_id",
+          "recipe",
+          "variable",
+          "band_min_hz",
+          "band_max_hz"
+        ],
+        "title": "TransientWavepacketAnalysis",
+        "type": "object"
+      },
+      "TypographyPresentation": {
+        "additionalProperties": false,
+        "properties": {
+          "axes_label_size": {
+            "default": 16.0,
+            "exclusiveMinimum": 0,
+            "title": "Axes Label Size",
+            "type": "number"
+          },
+          "base_size": {
+            "default": 14.0,
+            "exclusiveMinimum": 0,
+            "title": "Base Size",
+            "type": "number"
+          },
+          "colorbar_label_pad": {
+            "default": 2.0,
+            "maximum": 24.0,
+            "minimum": 0.0,
+            "title": "Colorbar Label Pad",
+            "type": "number"
+          },
+          "colorbar_label_size": {
+            "default": 13.0,
+            "exclusiveMinimum": 0,
+            "title": "Colorbar Label Size",
+            "type": "number"
+          },
+          "colorbar_tick_label_size": {
+            "default": 11.0,
+            "exclusiveMinimum": 0,
+            "title": "Colorbar Tick Label Size",
+            "type": "number"
+          },
+          "colorbar_tick_pad": {
+            "default": 2.0,
+            "maximum": 24.0,
+            "minimum": 0.0,
+            "title": "Colorbar Tick Pad",
+            "type": "number"
+          },
+          "font_family": {
+            "default": "DejaVu Sans",
+            "title": "Font Family",
+            "type": "string"
+          },
+          "legend_size": {
+            "default": 13.0,
+            "exclusiveMinimum": 0,
+            "title": "Legend Size",
+            "type": "number"
+          },
+          "tick_label_size": {
+            "default": 14.0,
+            "exclusiveMinimum": 0,
+            "title": "Tick Label Size",
+            "type": "number"
+          }
+        },
+        "title": "TypographyPresentation",
+        "type": "object"
+      },
+      "TypographyPresentationOverride": {
+        "additionalProperties": false,
+        "properties": {
+          "axes_label_size": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Axes Label Size"
+          },
+          "base_size": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Base Size"
+          },
+          "colorbar_label_pad": {
+            "anyOf": [
+              {
+                "maximum": 24.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Colorbar Label Pad"
+          },
+          "colorbar_label_size": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Colorbar Label Size"
+          },
+          "colorbar_tick_label_size": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Colorbar Tick Label Size"
+          },
+          "colorbar_tick_pad": {
+            "anyOf": [
+              {
+                "maximum": 24.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Colorbar Tick Pad"
+          },
+          "font_family": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Font Family"
+          },
+          "legend_size": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Legend Size"
+          },
+          "tick_label_size": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tick Label Size"
+          }
+        },
+        "title": "TypographyPresentationOverride",
+        "type": "object"
+      },
+      "Variable": {
+        "enum": [
+          "density",
+          "x_velocity",
+          "y_velocity",
+          "pressure",
+          "temperature",
+          "vorticity",
+          "vorticity_magnitude",
+          "mach_number",
+          "schlieren"
+        ],
+        "title": "Variable",
+        "type": "string"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "analyses": {
+        "default": [],
+        "items": {
+          "discriminator": {
+            "mapping": {
+              "aerodynamic_forces": "#/$defs/AerodynamicForcesAnalysis",
+              "boundary_layer_reference": "#/$defs/BoundaryLayerAnalysis",
+              "case_comparison": "#/$defs/CaseComparisonAnalysis",
+              "directional_wave": "#/$defs/DirectionalWaveAnalysis",
+              "flow_overview": "#/$defs/FlowOverviewAnalysis",
+              "modal_screening": "#/$defs/ModalScreeningAnalysis",
+              "nonlinear_coupling": "#/$defs/NonlinearCouplingAnalysis",
+              "probe_spectrum": "#/$defs/ProbeSpectrumAnalysis",
+              "single_pulse_response": "#/$defs/SinglePulseAnalysis",
+              "surface_diagnostics": "#/$defs/SurfaceDiagnosticsAnalysis",
+              "transient_wavepacket": "#/$defs/TransientWavepacketAnalysis"
+            },
+            "propertyName": "recipe"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/FlowOverviewAnalysis"
+            },
+            {
+              "$ref": "#/$defs/BoundaryLayerAnalysis"
+            },
+            {
+              "$ref": "#/$defs/SurfaceDiagnosticsAnalysis"
+            },
+            {
+              "$ref": "#/$defs/AerodynamicForcesAnalysis"
+            },
+            {
+              "$ref": "#/$defs/ProbeSpectrumAnalysis"
+            },
+            {
+              "$ref": "#/$defs/SinglePulseAnalysis"
+            },
+            {
+              "$ref": "#/$defs/DirectionalWaveAnalysis"
+            },
+            {
+              "$ref": "#/$defs/TransientWavepacketAnalysis"
+            },
+            {
+              "$ref": "#/$defs/NonlinearCouplingAnalysis"
+            },
+            {
+              "$ref": "#/$defs/ModalScreeningAnalysis"
+            },
+            {
+              "$ref": "#/$defs/CaseComparisonAnalysis"
+            }
+          ]
+        },
+        "title": "Analyses",
+        "type": "array"
+      },
+      "presentation": {
+        "$ref": "#/$defs/PresentationConfig",
+        "default": {
+          "contour_axes": {
+            "x_tick_format": "auto",
+            "y_tick_format": "auto"
+          },
+          "contour_defaults": {
+            "colorbar": {
+              "include_endpoints": false,
+              "label": "auto",
+              "length_fraction": 0.43,
+              "position": "top",
+              "thickness_fraction": null,
+              "tick_count": 4,
+              "tick_format": "auto"
+            },
+            "colormap": "viridis",
+            "normalization": "linear",
+            "range": {
+              "lower_percentile": 1.0,
+              "maximum": null,
+              "minimum": null,
+              "mode": "per_snapshot_percentile",
+              "upper_percentile": 99.0
+            },
+            "rendering": {
+              "levels": null,
+              "mode": "continuous"
+            },
+            "symlog_linear_threshold": null,
+            "symmetric_about_zero": false
+          },
+          "figure": {
+            "dpi": 300,
+            "formats": [
+              "png"
+            ],
+            "height_in": 4.5,
+            "transparent": false,
+            "width_in": 14.0
+          },
+          "line_defaults": {
+            "color": null,
+            "coordinate_scale": "linear",
+            "grid": true,
+            "legend_position": "best",
+            "linestyle": "solid",
+            "linewidth": 2.0,
+            "marker": "none",
+            "value_scale": "linear"
+          },
+          "preset": "publication",
+          "time_annotation": {
+            "boxed": true,
+            "enabled": true,
+            "position": "top_left",
+            "precision": 4
+          },
+          "typography": {
+            "axes_label_size": 16.0,
+            "base_size": 14.0,
+            "colorbar_label_pad": 2.0,
+            "colorbar_label_size": 13.0,
+            "colorbar_tick_label_size": 11.0,
+            "colorbar_tick_pad": 2.0,
+            "font_family": "DejaVu Sans",
+            "legend_size": 13.0,
+            "tick_label_size": 14.0
+          }
+        }
+      },
+      "schema_version": {
+        "const": 1,
+        "default": 1,
+        "title": "Schema Version",
+        "type": "integer"
+      }
+    },
+    "title": "AnalysesFile",
+    "type": "object"
+  },
+  "case.yaml": {
+    "$defs": {
+      "CaseIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "dimensionality": {
+            "default": 2,
+            "enum": [
+              2,
+              3
+            ],
+            "title": "Dimensionality",
+            "type": "integer"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "solver": {
+            "const": "pelec",
+            "default": "pelec",
+            "title": "Solver",
+            "type": "string"
+          },
+          "solver_units": {
+            "$ref": "#/$defs/SolverUnits",
+            "default": "cgs"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "CaseIdentity",
+        "type": "object"
+      },
+      "ExplicitFreestream": {
+        "additionalProperties": false,
+        "properties": {
+          "density_kg_m3": {
+            "exclusiveMinimum": 0,
+            "title": "Density Kg M3",
+            "type": "number"
+          },
+          "pressure_pa": {
+            "exclusiveMinimum": 0,
+            "title": "Pressure Pa",
+            "type": "number"
+          },
+          "source": {
+            "const": "explicit",
+            "default": "explicit",
+            "title": "Source",
+            "type": "string"
+          },
+          "temperature_k": {
+            "exclusiveMinimum": 0,
+            "title": "Temperature K",
+            "type": "number"
+          },
+          "velocity_m_s": {
+            "exclusiveMinimum": 0,
+            "title": "Velocity M S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "density_kg_m3",
+          "velocity_m_s",
+          "pressure_pa",
+          "temperature_k"
+        ],
+        "title": "ExplicitFreestream",
+        "type": "object"
+      },
+      "FlatPlateGeometry": {
+        "additionalProperties": false,
+        "properties": {
+          "fluid_side": {
+            "default": "above",
+            "enum": [
+              "above",
+              "below"
+            ],
+            "title": "Fluid Side",
+            "type": "string"
+          },
+          "leading_edge_x_m": {
+            "default": 0.0,
+            "title": "Leading Edge X M",
+            "type": "number"
+          },
+          "trailing_edge_x_m": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Trailing Edge X M"
+          },
+          "type": {
+            "const": "flat_plate",
+            "default": "flat_plate",
+            "title": "Type",
+            "type": "string"
+          },
+          "wall_y_m": {
+            "default": 0.0,
+            "title": "Wall Y M",
+            "type": "number"
+          }
+        },
+        "title": "FlatPlateGeometry",
+        "type": "object"
+      },
+      "GasConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "gamma": {
+            "default": 1.4,
+            "exclusiveMinimum": 1.0,
+            "title": "Gamma",
+            "type": "number"
+          },
+          "gas_constant_j_kg_k": {
+            "default": 287.05,
+            "exclusiveMinimum": 0,
+            "title": "Gas Constant J Kg K",
+            "type": "number"
+          }
+        },
+        "title": "GasConfig",
+        "type": "object"
+      },
+      "PolylineGeometry": {
+        "additionalProperties": false,
+        "properties": {
+          "closed": {
+            "default": false,
+            "title": "Closed",
+            "type": "boolean"
+          },
+          "fluid_side": {
+            "enum": [
+              "left",
+              "right",
+              "outside",
+              "inside"
+            ],
+            "title": "Fluid Side",
+            "type": "string"
+          },
+          "points_m": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "title": "Points M",
+            "type": "array"
+          },
+          "type": {
+            "const": "polyline",
+            "default": "polyline",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "points_m",
+          "fluid_side"
+        ],
+        "title": "PolylineGeometry",
+        "type": "object"
+      },
+      "RegionBounds": {
+        "additionalProperties": false,
+        "properties": {
+          "x_m": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "X M",
+            "type": "array"
+          },
+          "y_m": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Y M",
+            "type": "array"
+          }
+        },
+        "required": [
+          "x_m",
+          "y_m"
+        ],
+        "title": "RegionBounds",
+        "type": "object"
+      },
+      "RegionFreestream": {
+        "additionalProperties": false,
+        "properties": {
+          "bounds": {
+            "$ref": "#/$defs/RegionBounds"
+          },
+          "source": {
+            "const": "region",
+            "default": "region",
+            "title": "Source",
+            "type": "string"
+          },
+          "statistic": {
+            "default": "median",
+            "enum": [
+              "median",
+              "mean"
+            ],
+            "title": "Statistic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bounds"
+        ],
+        "title": "RegionFreestream",
+        "type": "object"
+      },
+      "SolverUnits": {
+        "enum": [
+          "cgs",
+          "si"
+        ],
+        "title": "SolverUnits",
+        "type": "string"
+      },
+      "VolumeFractionGeometry": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "default": "volume_fraction",
+            "title": "Field",
+            "type": "string"
+          },
+          "fluid_value": {
+            "default": 1,
+            "enum": [
+              0,
+              1
+            ],
+            "title": "Fluid Value",
+            "type": "integer"
+          },
+          "iso_value": {
+            "default": 0.5,
+            "exclusiveMaximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Iso Value",
+            "type": "number"
+          },
+          "minimum_component_points": {
+            "default": 8,
+            "exclusiveMinimum": 0,
+            "title": "Minimum Component Points",
+            "type": "integer"
+          },
+          "smoothing_window": {
+            "default": 1,
+            "exclusiveMinimum": 0,
+            "title": "Smoothing Window",
+            "type": "integer"
+          },
+          "type": {
+            "const": "volume_fraction",
+            "default": "volume_fraction",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "title": "VolumeFractionGeometry",
+        "type": "object"
+      },
+      "WedgeGeometry": {
+        "additionalProperties": false,
+        "properties": {
+          "fluid_side": {
+            "default": "outside",
+            "enum": [
+              "outside",
+              "inside"
+            ],
+            "title": "Fluid Side",
+            "type": "string"
+          },
+          "half_angle_deg": {
+            "exclusiveMaximum": 90.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Half Angle Deg",
+            "type": "number"
+          },
+          "leading_edge_x_m": {
+            "title": "Leading Edge X M",
+            "type": "number"
+          },
+          "leading_edge_y_m": {
+            "title": "Leading Edge Y M",
+            "type": "number"
+          },
+          "length_m": {
+            "exclusiveMinimum": 0,
+            "title": "Length M",
+            "type": "number"
+          },
+          "type": {
+            "const": "wedge",
+            "default": "wedge",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "leading_edge_x_m",
+          "leading_edge_y_m",
+          "length_m",
+          "half_angle_deg"
+        ],
+        "title": "WedgeGeometry",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "case": {
+        "$ref": "#/$defs/CaseIdentity"
+      },
+      "field_aliases": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "title": "Field Aliases",
+        "type": "object"
+      },
+      "freestream": {
+        "discriminator": {
+          "mapping": {
+            "explicit": "#/$defs/ExplicitFreestream",
+            "region": "#/$defs/RegionFreestream"
+          },
+          "propertyName": "source"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/ExplicitFreestream"
+          },
+          {
+            "$ref": "#/$defs/RegionFreestream"
+          }
+        ],
+        "title": "Freestream"
+      },
+      "gas": {
+        "$ref": "#/$defs/GasConfig",
+        "default": {
+          "gamma": 1.4,
+          "gas_constant_j_kg_k": 287.05
+        }
+      },
+      "geometry": {
+        "discriminator": {
+          "mapping": {
+            "flat_plate": "#/$defs/FlatPlateGeometry",
+            "polyline": "#/$defs/PolylineGeometry",
+            "volume_fraction": "#/$defs/VolumeFractionGeometry",
+            "wedge": "#/$defs/WedgeGeometry"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/FlatPlateGeometry"
+          },
+          {
+            "$ref": "#/$defs/WedgeGeometry"
+          },
+          {
+            "$ref": "#/$defs/PolylineGeometry"
+          },
+          {
+            "$ref": "#/$defs/VolumeFractionGeometry"
+          }
+        ],
+        "title": "Geometry"
+      },
+      "schema_version": {
+        "const": 1,
+        "default": 1,
+        "title": "Schema Version",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "case",
+      "freestream",
+      "geometry"
+    ],
+    "title": "CaseFile",
+    "type": "object"
+  },
+  "machine.yaml": {
+    "$defs": {
+      "ComputeConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "fft_batch_size": {
+            "default": 32,
+            "exclusiveMinimum": 0,
+            "title": "Fft Batch Size",
+            "type": "integer"
+          },
+          "memory_limit_gb": {
+            "default": 8.0,
+            "exclusiveMinimum": 0,
+            "title": "Memory Limit Gb",
+            "type": "number"
+          },
+          "scratch_directory": {
+            "anyOf": [
+              {
+                "format": "path",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scratch Directory"
+          },
+          "workers": {
+            "default": 1,
+            "exclusiveMinimum": 0,
+            "title": "Workers",
+            "type": "integer"
+          }
+        },
+        "title": "ComputeConfig",
+        "type": "object"
+      },
+      "InputConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "archived_runs": {
+            "additionalProperties": {
+              "format": "path",
+              "type": "string"
+            },
+            "title": "Archived Runs",
+            "type": "object"
+          },
+          "baselines": {
+            "additionalProperties": {
+              "$ref": "#/$defs/PlotfileInput"
+            },
+            "title": "Baselines",
+            "type": "object"
+          },
+          "plotfiles": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlotfileInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "probe_sets": {
+            "additionalProperties": {
+              "$ref": "#/$defs/ProbeInput"
+            },
+            "title": "Probe Sets",
+            "type": "object"
+          }
+        },
+        "title": "InputConfig",
+        "type": "object"
+      },
+      "OutputConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "root": {
+            "format": "path",
+            "title": "Root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "root"
+        ],
+        "title": "OutputConfig",
+        "type": "object"
+      },
+      "PlotfileInput": {
+        "additionalProperties": false,
+        "properties": {
+          "prefix": {
+            "default": "plt",
+            "title": "Prefix",
+            "type": "string"
+          },
+          "source": {
+            "format": "path",
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "PlotfileInput",
+        "type": "object"
+      },
+      "ProbeInput": {
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "properties": {
+              "binary_files": {
+                "maxItems": 0
+              },
+              "compact_file": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "compact_file"
+            ]
+          },
+          {
+            "properties": {
+              "binary_files": {
+                "minItems": 1
+              },
+              "compact_file": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "binary_files"
+            ]
+          }
+        ],
+        "properties": {
+          "binary_files": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Binary Files",
+            "type": "array"
+          },
+          "compact_file": {
+            "anyOf": [
+              {
+                "format": "path",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Compact File"
+          }
+        },
+        "title": "ProbeInput",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "compute": {
+        "$ref": "#/$defs/ComputeConfig",
+        "default": {
+          "fft_batch_size": 32,
+          "memory_limit_gb": 8.0,
+          "scratch_directory": null,
+          "workers": 1
+        }
+      },
+      "inputs": {
+        "$ref": "#/$defs/InputConfig",
+        "default": {
+          "archived_runs": {},
+          "baselines": {},
+          "plotfiles": null,
+          "probe_sets": {}
+        }
+      },
+      "outputs": {
+        "$ref": "#/$defs/OutputConfig"
+      },
+      "schema_version": {
+        "const": 1,
+        "default": 1,
+        "title": "Schema Version",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "outputs"
+    ],
+    "title": "MachineFile",
+    "type": "object"
+  }
+}

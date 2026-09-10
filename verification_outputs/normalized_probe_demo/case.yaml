@@ -1,0 +1,17 @@
+case:
+  dimensionality: 2
+  id: preflight-case
+  solver: pelec
+  solver_units: cgs
+freestream:
+  density_kg_m3: 0.02
+  pressure_pa: 1000.0
+  source: explicit
+  temperature_k: 175.0
+  velocity_m_s: 1000.0
+gas:
+  gamma: 1.4
+  gas_constant_j_kg_k: 287.05
+geometry:
+  type: flat_plate
+schema_version: 1

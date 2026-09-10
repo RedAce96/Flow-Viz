@@ -1,0 +1,84 @@
+{
+  "case_id": "preflight-case",
+  "completed_utc": "2026-09-10T03:06:37.386313+00:00",
+  "created_utc": "2026-09-10T03:06:31.954584+00:00",
+  "provenance": {
+    "git": {
+      "commit": "648f787c181ded3ae06717b1cb1b4b28737ad6c8",
+      "dirty": true
+    },
+    "host": "Seths-MacBook-M2-Pro.local",
+    "input_fingerprints": [
+      {
+        "checksum": "32fdcda26fae6e2b20b560c1b2f08b2f15959eb6f2515f2e80dbeead4e157f79",
+        "checksum_algorithm": "sha256",
+        "input_id": "case.yaml",
+        "mtime_ns": 1789009530390258357,
+        "path": "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/case.yaml",
+        "size_bytes": 299
+      },
+      {
+        "checksum": "6fb9833244cbdf07d97407ffb70dd51f01fe72de7f6df3615695c63affd272d6",
+        "checksum_algorithm": "sha256",
+        "input_id": "analyses.yaml",
+        "mtime_ns": 1789009584594827652,
+        "path": "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/analyses.yaml",
+        "size_bytes": 1247
+      },
+      {
+        "checksum": "0f07e5ffd0212997b37b8f800f36714f6fb50d07cf5cffb1c92ac90b17f69226",
+        "checksum_algorithm": "sha256",
+        "input_id": "machine.yaml",
+        "mtime_ns": 1789009542344263550,
+        "path": "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/machine.yaml",
+        "size_bytes": 409
+      },
+      {
+        "checksum": "67a40293c3abba4a45252fc1172b3500adb11b9447cc4f464ff74e0adb036eba",
+        "checksum_algorithm": "sha256",
+        "input_id": "inputs.probe_sets.default",
+        "mtime_ns": 1789009530393498775,
+        "path": "/Users/sbrollia/Documents/Programming/My-CFD/Flow-Viz/Flow-Viz-postprocessor-refactor/verification_outputs/normalized_probe_demo/probes.h5",
+        "size_bytes": 161488
+      }
+    ],
+    "packages": {
+      "h5py": "3.16.0",
+      "matplotlib": "3.11.1",
+      "numpy": "2.5.3",
+      "pydantic": "2.13.5",
+      "rich": "15.0.0",
+      "scipy": "1.18.1",
+      "typer": "0.27.2",
+      "yt": "4.4.2"
+    },
+    "python": "3.14.7",
+    "slurm": {}
+  },
+  "run_id": "2026-09-10T030631Z_preflight-case_normalized-multi-probe",
+  "schema": "pelecpost.run-manifest",
+  "schema_version": 1,
+  "status": "completed",
+  "workflows": {
+    "analysis.modes": {
+      "message": "",
+      "status": "completed"
+    },
+    "analysis.spectrum": {
+      "message": "",
+      "status": "completed"
+    },
+    "analysis.triads": {
+      "message": "",
+      "status": "completed"
+    },
+    "analysis.wavepacket": {
+      "message": "",
+      "status": "completed"
+    },
+    "input.probe_sets": {
+      "message": "preflight-validated shared resource",
+      "status": "completed"
+    }
+  }
+}

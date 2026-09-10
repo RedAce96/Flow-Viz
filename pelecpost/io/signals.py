@@ -24,7 +24,7 @@ DEFAULT_READ_BLOCK_BYTES = 16 * 1024**2
 
 
 @dataclass
-class CompactSignalWorkspace:
+class ProbeSignalWorkspace:
     """One SI-valued probe matrix with explicit storage and cleanup metadata."""
 
     time_s: np.ndarray
@@ -71,7 +71,7 @@ def open_compact_signal_workspace(
     spill_threshold_bytes: int | None = None,
     read_block_bytes: int = DEFAULT_READ_BLOCK_BYTES,
     scratch_directory: Path | None = None,
-) -> CompactSignalWorkspace:
+) -> ProbeSignalWorkspace:
     """Load selected probes with a bounded resident allocation.
 
     ``spill_threshold_bytes`` is exposed for deterministic allocation tests.
@@ -145,7 +145,7 @@ def open_compact_signal_workspace(
             if isinstance(values, np.memmap):
                 values.flush()
         assert values is not None
-        return CompactSignalWorkspace(
+        return ProbeSignalWorkspace(
             time_s=time_s,
             x_m=x_m,
             values=values,
@@ -179,7 +179,7 @@ def open_probe_v2_signal_workspace(
     spill_threshold_bytes: int | None = None,
     read_block_bytes: int = DEFAULT_READ_BLOCK_BYTES,
     scratch_directory: Path | None = None,
-) -> CompactSignalWorkspace:
+) -> ProbeSignalWorkspace:
     """Stage selected raw probe-v2 data with the compact-reader memory contract."""
     selected = np.asarray(probe_indices, dtype=np.int64)
     if selected.ndim != 1 or selected.size == 0:
@@ -235,7 +235,7 @@ def open_probe_v2_signal_workspace(
             if isinstance(values, np.memmap):
                 values.flush()
         assert values is not None
-        return CompactSignalWorkspace(
+        return ProbeSignalWorkspace(
             time_s=time_s,
             x_m=x_m,
             values=values,
@@ -257,3 +257,36 @@ def open_probe_v2_signal_workspace(
             except FileNotFoundError:
                 pass
         raise
+
+
+def open_probe_signal_workspace(
+    source: Path | tuple[str, ...],
+    field: str,
+    probe_indices: np.ndarray,
+    *,
+    si_factor: float,
+    memory_limit_gb: float,
+    spill_threshold_bytes: int | None = None,
+    read_block_bytes: int = DEFAULT_READ_BLOCK_BYTES,
+    scratch_directory: Path | None = None,
+) -> ProbeSignalWorkspace:
+    """Open either supported probe format under one bounded workspace API."""
+    if isinstance(source, Path):
+        return open_compact_signal_workspace(
+            source, field, probe_indices, si_factor=si_factor,
+            memory_limit_gb=memory_limit_gb,
+            spill_threshold_bytes=spill_threshold_bytes,
+            read_block_bytes=read_block_bytes,
+            scratch_directory=scratch_directory,
+        )
+    return open_probe_v2_signal_workspace(
+        tuple(source), field, probe_indices, si_factor=si_factor,
+        memory_limit_gb=memory_limit_gb,
+        spill_threshold_bytes=spill_threshold_bytes,
+        read_block_bytes=read_block_bytes,
+        scratch_directory=scratch_directory,
+    )
+
+
+# Compatibility names for low-level callers; recipe code uses the generic API.
+CompactSignalWorkspace = ProbeSignalWorkspace

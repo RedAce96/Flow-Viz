@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "frequency_band_hz": [
+    1000.0,
+    100000.0
+  ],
+  "configured_temporal_window": "rectangular",
+  "alternate_temporal_window": "hann",
+  "full_record_sample_count": 1024,
+  "block_sample_count": 512,
+  "window_sensitivity": {
+    "compared_frequency_count": 101,
+    "median_absolute_ridge_difference_rad_m": 0.0,
+    "percentile_90_absolute_ridge_difference_rad_m": 0.0,
+    "maximum_absolute_ridge_difference_rad_m": 0.0
+  },
+  "first_vs_second_half_block_sensitivity": {
+    "compared_frequency_count": 50,
+    "median_absolute_ridge_difference_rad_m": 0.0,
+    "percentile_90_absolute_ridge_difference_rad_m": 0.0,
+    "maximum_absolute_ridge_difference_rad_m": 0.0
+  },
+  "interpretation": "Dominant-ridge changes under temporal-window and half-record perturbations; large differences limit directional-wave interpretation."
+}

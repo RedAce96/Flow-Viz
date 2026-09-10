@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 import yaml
 
 from pelecpost.analysis.executors import EXECUTORS
@@ -19,6 +20,65 @@ from tests.test_preflight import PreflightTests
 class RuntimeTests(unittest.TestCase):
     def make_project(self, root: Path, analyses: list[dict]):
         return PreflightTests().project(root, analyses)
+
+    def test_multi_probe_overlays_and_per_probe_stft_are_registered(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = self.make_project(root, [
+                {
+                    "id": "spectrum", "recipe": "probe_spectrum", "variable": "pressure",
+                    "probe_indices": [0, 2, 5], "frequency_max_hz": 400_000,
+                    "welch_segment_samples": 256,
+                    "probe_plotting": {"normalization": "per_probe_peak"},
+                },
+                {
+                    "id": "packet", "recipe": "transient_wavepacket", "variable": "pressure",
+                    "probe_indices": [0, 2, 5], "band_min_hz": 1_000,
+                    "band_max_hz": 100_000, "stft_segment_samples": 256,
+                },
+            ])
+            result = run_project(project, "overlay")
+            self.assertEqual(result.status, "completed")
+            artifacts = json.loads((result.run_dir / "artifacts.json").read_text())["artifacts"]
+            ids = {item["id"] for item in artifacts}
+            for suffix in (
+                "probe.raw_history.figure", "probe.method_ready.figure",
+                "spectral.fft_overlay.figure", "spectral.psd_overlay.figure",
+            ):
+                self.assertIn(f"spectrum.{suffix}", ids)
+            for suffix in (
+                "probe.raw_history.figure", "probe.method_ready.figure",
+                "transient.filtered_overlay.figure", "transient.envelope_overlay.figure",
+                "transient.stft_figure",
+            ):
+                self.assertIn(f"packet.{suffix}", ids)
+            raw = next(item for item in artifacts if item["id"] == "spectrum.probe.raw_history.figure")
+            self.assertEqual(raw["provenance"]["normalization"], "per_probe_peak")
+            self.assertEqual(raw["provenance"]["selected_probe_indices"], [0, 2, 5])
+            self.assertEqual(len(raw["provenance"]["normalization_scales"]), 3)
+            figure_paths = [result.run_dir / item["path"] for item in artifacts if item["kind"] == "figure"]
+            self.assertTrue(all(path.is_file() and path.stat().st_size > 0 for path in figure_paths))
+            with np.load(result.run_dir / "data/packet/packet_stft.npz", allow_pickle=False) as arrays:
+                self.assertEqual(arrays["complex_stft"].ndim, 2)
+                self.assertEqual(arrays["probe_complex_stft"].shape[2], 3)
+                self.assertEqual(arrays["representative"].item(), "probe median")
+
+    def test_probe_plotting_panels_mode_omits_overlay_artifacts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.make_project(Path(temporary), [{
+                "id": "spectrum", "recipe": "probe_spectrum", "variable": "pressure",
+                "probe_plotting": {"mode": "panels"},
+                "welch_segment_samples": 256,
+            }])
+            result = run_project(project, "panels")
+            self.assertEqual(result.status, "completed")
+            ids = {
+                item["id"]
+                for item in json.loads((result.run_dir / "artifacts.json").read_text())["artifacts"]
+            }
+            self.assertIn("spectrum.spectral.probe_figure", ids)
+            self.assertNotIn("spectrum.probe.raw_history.figure", ids)
+            self.assertNotIn("spectrum.spectral.fft_overlay.figure", ids)
 
     def test_probe_spectrum_creates_isolated_registered_run(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -172,6 +232,38 @@ class RuntimeTests(unittest.TestCase):
             self.assertIn("window_sensitivity", sensitivity)
             self.assertIn("first_vs_second_half_block_sensitivity", sensitivity)
 
+    def test_directional_executor_registers_time_localized_wavenumber_outputs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = self.make_project(root, [{
+                "id": "wave", "recipe": "directional_wave", "variable": "pressure",
+                "frequency_min_hz": 1_000, "frequency_max_hz": 400_000,
+                "minimum_coherence": 0.0,
+                "temporal_wavenumber": {
+                    "enabled": True, "window_duration_s": 128.0e-6,
+                    "snapshot_times_s": [256.0e-6, 512.0e-6, 768.0e-6],
+                },
+            }])
+            result = run_project(project, "localized-wave")
+            self.assertEqual(result.status, "completed")
+            artifacts = json.loads((result.run_dir / "artifacts.json").read_text())["artifacts"]
+            ids = {item["id"] for item in artifacts}
+            for suffix in (
+                "wave.temporal_wavenumber", "wave.komega_snapshots",
+                "wave.space_time.figure", "wave.temporal_wavenumber.figure",
+                "wave.wavenumber_history.figure", "wave.komega_snapshots.figure",
+                "wave.dispersion.figure",
+            ):
+                self.assertIn(f"wave.{suffix}", ids)
+            with np.load(result.run_dir / "data/wave/temporal_wavenumber.npz", allow_pickle=False) as arrays:
+                self.assertEqual(arrays["band_power"].ndim, 2)
+                self.assertEqual(arrays["time_center_s"].shape, arrays["valid_time_mask"].shape)
+                self.assertEqual(arrays["relative_band_power_db"].shape, arrays["band_power"].shape)
+            with np.load(result.run_dir / "data/wave/komega_snapshots.npz", allow_pickle=False) as arrays:
+                self.assertEqual(arrays["power"].ndim, 3)
+                self.assertEqual(arrays["power"].shape[0], 3)
+                self.assertEqual(arrays["power"].shape, arrays["relative_power_db"].shape)
+
     def test_modal_executor_registers_products_by_artifact_id(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -187,7 +279,13 @@ class RuntimeTests(unittest.TestCase):
             modal_ids = {item for item in ids if item.startswith("modes.")}
             self.assertEqual(
                 modal_ids,
-                {"modes.modal.pod", "modes.modal.spod", "modes.modal.dmd", "modes.modal.sensitivity"},
+                {
+                    "modes.modal.pod", "modes.modal.spod", "modes.modal.dmd",
+                    "modes.modal.sensitivity", "modes.probe.raw_history.figure",
+                    "modes.probe.method_ready.figure",
+                    "modes.modal.pod.figure", "modes.modal.spod.figure",
+                    "modes.modal.dmd.figure",
+                },
             )
 
     def test_nonlinear_executor_records_explicit_frequency_selection(self):
@@ -219,13 +317,13 @@ class RuntimeTests(unittest.TestCase):
             case = yaml.safe_load((source_project.root / "case.yaml").read_text())
             analyses = {"schema_version": 1, "analyses": [{
                 "id": "compare", "recipe": "case_comparison",
-                "baseline_id": "baseline",
-                "comparison_id": "comparison",
-                "artifact_ids": ["spectrum.spectral.psd", "spectrum.spectral.confidence"],
+                "baseline": {"archived_run_id": "baseline", "analysis_id": "spectrum"},
+                "comparison": {"archived_run_id": "comparison", "analysis_id": "spectrum"},
+                "product_ids": ["spectral.psd", "spectral.confidence"],
             }]}
             machine = {
                 "schema_version": 1,
-                "inputs": {"comparison_archives": {
+                "inputs": {"archived_runs": {
                     "baseline": str(baseline.run_dir),
                     "comparison": str(comparison.run_dir),
                 }},
@@ -242,9 +340,43 @@ class RuntimeTests(unittest.TestCase):
             metrics = json.loads((result.run_dir / "data/compare/comparison_metrics.json").read_text())
             self.assertTrue(metrics["metrics"])
             self.assertTrue(any(
-                item["artifact_id"] == "spectrum.spectral.confidence"
+                item["product_id"] == "spectral.confidence"
                 for item in metrics["metrics"]
             ))
+            fingerprints = json.loads((result.run_dir / "manifest.json").read_text())[
+                "provenance"
+            ]["input_fingerprints"]
+            self.assertTrue(any(
+                item["path"].endswith("stationary_spectrum.npz")
+                for item in fingerprints
+            ))
+
+    def test_case_comparison_can_use_local_analysis_dependencies(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = self.make_project(root, [
+                {
+                    "id": "asym", "recipe": "probe_spectrum", "variable": "pressure",
+                    "welch_segment_samples": 256,
+                },
+                {
+                    "id": "gaus", "recipe": "probe_spectrum", "variable": "pressure",
+                    "welch_segment_samples": 256,
+                },
+                {
+                    "id": "compare", "recipe": "case_comparison",
+                    "baseline": {"analysis_id": "asym"},
+                    "comparison": {"analysis_id": "gaus"},
+                    "product_ids": ["spectral.psd"],
+                },
+            ])
+            result = run_project(project)
+            self.assertEqual(result.status, "completed")
+            metrics = json.loads(
+                (result.run_dir / "data/compare/comparison_metrics.json").read_text()
+            )
+            self.assertEqual(metrics["baseline"], {"analysis_id": "asym", "archived_run_id": None})
+            self.assertTrue(metrics["metrics"])
 
     def test_interruption_is_atomic_and_reportable(self):
         with tempfile.TemporaryDirectory() as temporary:

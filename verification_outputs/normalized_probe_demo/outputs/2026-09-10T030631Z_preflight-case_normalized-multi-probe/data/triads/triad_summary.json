@@ -1,0 +1,18 @@
+{
+  "selection": {
+    "method": "explicit target_frequencies_hz from analyses.yaml",
+    "selected_frequency_hz": [
+      25000.0
+    ]
+  },
+  "triad_labels": [
+    "b\u00b2(2.500e+04, 2.500e+04)"
+  ],
+  "significant_fdr": [
+    false
+  ],
+  "fdr_adjusted_p_value": [
+    1.0
+  ],
+  "interpretation": "Only FDR-significant entries are retained as measured coupling candidates."
+}

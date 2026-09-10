@@ -99,11 +99,11 @@ One-sided FFT/Welch spectra, coherence, and confidence summaries.
 
 - Dimensions: 2-D
 - Geometries: flat_plate, wedge, polyline, volume_fraction
-- Required inputs: probes
+- Required inputs: probe_sets
 - Required plotfile fields: none
 - Dependencies: none
 - Conflicts: none
-- Artifact IDs: spectral.psd, spectral.coherence, spectral.confidence, spectral.figure, spectral.probe_signals, spectral.probe_figure
+- Artifact IDs: spectral.psd, spectral.coherence, spectral.confidence, spectral.figure, spectral.probe_signals, spectral.probe_figure, spectral.fft_overlay.figure, spectral.psd_overlay.figure, probe.raw_history.figure, probe.method_ready.figure
 
 Assumptions:
 
@@ -121,11 +121,11 @@ Quiescent-baseline and finite-record source/response deconvolution.
 
 - Dimensions: 2-D
 - Geometries: flat_plate, wedge, polyline, volume_fraction
-- Required inputs: probes
+- Required inputs: probe_sets
 - Required plotfile fields: none
 - Dependencies: none
 - Conflicts: none
-- Artifact IDs: pulse.source_spectrum, pulse.transfer, pulse.validity
+- Artifact IDs: pulse.source_spectrum, pulse.transfer, pulse.validity, pulse.transfer_magnitude.figure, pulse.transfer_phase.figure, probe.raw_history.figure, probe.method_ready.figure
 
 Assumptions:
 
@@ -139,15 +139,15 @@ Interpretation limits:
 
 Physical question: What direction, wavelength, phase speed, and amplification are measured?
 
-Spatial FFT, coherence-gated complex wavenumber, amplification, and k-omega.
+Spatial FFT, coherence-gated complex wavenumber, amplification, k-omega, and optional time-localized pulse ridges.
 
 - Dimensions: 2-D
 - Geometries: flat_plate, wedge, polyline, volume_fraction
-- Required inputs: probes
+- Required inputs: probe_sets
 - Required plotfile fields: none
 - Dependencies: none
 - Conflicts: none
-- Artifact IDs: wave.spatial_spectrum, wave.wavenumber, wave.komega, wave.komega_sensitivity, wave.komega.figure
+- Artifact IDs: wave.spatial_spectrum, wave.wavenumber, wave.komega, wave.komega_sensitivity, wave.komega.figure, wave.temporal_wavenumber, wave.komega_snapshots, wave.space_time.figure, wave.temporal_wavenumber.figure, wave.wavenumber_history.figure, wave.komega_snapshots.figure, wave.dispersion.figure, probe.raw_history.figure, probe.method_ready.figure
 
 Assumptions:
 
@@ -165,11 +165,11 @@ STFT, filtered envelopes, arrival times, group velocity, and uncertainty.
 
 - Dimensions: 2-D
 - Geometries: flat_plate, wedge, polyline, volume_fraction
-- Required inputs: probes
+- Required inputs: probe_sets
 - Required plotfile fields: none
 - Dependencies: none
 - Conflicts: none
-- Artifact IDs: transient.stft, transient.envelope, transient.group_velocity
+- Artifact IDs: transient.stft, transient.envelope, transient.group_velocity, transient.filtered_overlay.figure, transient.envelope_overlay.figure, transient.stft_figure, probe.raw_history.figure, probe.method_ready.figure
 
 Assumptions:
 
@@ -187,11 +187,11 @@ Surrogate and FDR-controlled bicoherence and triad screening.
 
 - Dimensions: 2-D
 - Geometries: flat_plate, wedge, polyline, volume_fraction
-- Required inputs: probes
+- Required inputs: probe_sets
 - Required plotfile fields: none
 - Dependencies: none
 - Conflicts: none
-- Artifact IDs: nonlinear.bicoherence, nonlinear.triads
+- Artifact IDs: nonlinear.bicoherence, nonlinear.triads, nonlinear.bicoherence.figure, probe.raw_history.figure, probe.method_ready.figure
 
 Assumptions:
 
@@ -209,11 +209,11 @@ Weighted POD, SPOD, DMD, and rank/window conditioning sensitivity.
 
 - Dimensions: 2-D
 - Geometries: flat_plate, wedge, polyline, volume_fraction
-- Required inputs: probes
+- Required inputs: probe_sets
 - Required plotfile fields: none
 - Dependencies: none
 - Conflicts: none
-- Artifact IDs: modal.pod, modal.spod, modal.dmd, modal.sensitivity
+- Artifact IDs: modal.pod, modal.spod, modal.dmd, modal.sensitivity, modal.pod.figure, modal.spod.figure, modal.dmd.figure, probe.raw_history.figure, probe.method_ready.figure
 
 Assumptions:
 
@@ -231,7 +231,7 @@ Schema- and provenance-checked comparison of existing artifacts.
 
 - Dimensions: 2-D
 - Geometries: flat_plate, wedge, polyline, volume_fraction
-- Required inputs: comparison_archives
+- Required inputs: local analysis dependencies and/or archived_runs
 - Required plotfile fields: none
 - Dependencies: none
 - Conflicts: none

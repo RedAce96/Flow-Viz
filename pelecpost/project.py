@@ -37,7 +37,7 @@ ANALYSES_TEMPLATE = {"schema_version": 1, "analyses": []}
 
 MACHINE_TEMPLATE = {
     "schema_version": 1,
-    "inputs": {},
+    "inputs": {"probe_sets": {}, "archived_runs": {}},
     "outputs": {"root": "runs"},
     "compute": {"workers": 1, "memory_limit_gb": 8.0, "fft_batch_size": 32},
 }
@@ -58,4 +58,3 @@ def initialize_project(project_dir: str | Path) -> Path:
     write_project_schema(root / "project.schema.json")
     load_project(root)
     return root
-

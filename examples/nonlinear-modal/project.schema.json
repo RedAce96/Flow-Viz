@@ -233,95 +233,24 @@
       "CaseComparisonAnalysis": {
         "additionalProperties": false,
         "properties": {
-          "artifact_ids": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Artifact Ids",
-            "type": "array"
+          "alignment": {
+            "$ref": "#/$defs/ComparisonAlignment"
           },
-          "baseline_id": {
-            "title": "Baseline Id",
-            "type": "string"
+          "baseline": {
+            "$ref": "#/$defs/ComparisonReference"
           },
-          "comparison_id": {
-            "title": "Comparison Id",
-            "type": "string"
-          },
-          "detrend": {
-            "anyOf": [
-              {
-                "enum": [
-                  "mean",
-                  "linear",
-                  "none"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Detrend"
+          "comparison": {
+            "$ref": "#/$defs/ComparisonReference"
           },
           "enabled": {
             "default": true,
             "title": "Enabled",
             "type": "boolean"
           },
-          "end_time_s": {
-            "anyOf": [
-              {
-                "exclusiveMinimum": 0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "End Time S"
-          },
-          "frequency_max_hz": {
-            "anyOf": [
-              {
-                "exclusiveMinimum": 0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Frequency Max Hz"
-          },
           "id": {
             "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
             "title": "Id",
             "type": "string"
-          },
-          "overlap_fraction": {
-            "anyOf": [
-              {
-                "exclusiveMaximum": 1.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Overlap Fraction"
-          },
-          "overlay_probes": {
-            "default": [],
-            "items": {
-              "type": "integer"
-            },
-            "title": "Overlay Probes",
-            "type": "array"
           },
           "presentation": {
             "anyOf": [
@@ -334,83 +263,27 @@
             ],
             "default": null
           },
-          "probe_indices": {
-            "default": [],
+          "product_ids": {
             "items": {
-              "type": "integer"
+              "type": "string"
             },
-            "title": "Probe Indices",
-            "type": "array"
+            "minItems": 1,
+            "title": "Product Ids",
+            "type": "array",
+            "uniqueItems": true
           },
           "recipe": {
             "const": "case_comparison",
             "title": "Recipe",
             "type": "string"
-          },
-          "time_grid_policy": {
-            "anyOf": [
-              {
-                "enum": [
-                  "resample_uniform",
-                  "require_uniform"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Time Grid Policy"
-          },
-          "variable": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Variable"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "welch_segment_samples": {
-            "anyOf": [
-              {
-                "exclusiveMinimum": 0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Welch Segment Samples"
-          },
-          "window": {
-            "anyOf": [
-              {
-                "enum": [
-                  "hann",
-                  "hamming",
-                  "blackman",
-                  "rectangular"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Window"
           }
         },
         "required": [
           "id",
           "recipe",
-          "baseline_id",
-          "comparison_id"
+          "baseline",
+          "comparison",
+          "product_ids"
         ],
         "title": "CaseComparisonAnalysis",
         "type": "object"
@@ -577,6 +450,112 @@
           }
         },
         "title": "ColorbarPresentation",
+        "type": "object"
+      },
+      "ComparisonAlignment": {
+        "additionalProperties": false,
+        "properties": {
+          "frequency": {
+            "default": "strict",
+            "enum": [
+              "strict",
+              "intersection",
+              "interpolate_to_baseline",
+              "interpolate_to_comparison"
+            ],
+            "title": "Frequency",
+            "type": "string"
+          },
+          "frequency_tolerance_hz": {
+            "default": 1e-09,
+            "minimum": 0.0,
+            "title": "Frequency Tolerance Hz",
+            "type": "number"
+          },
+          "space": {
+            "default": "strict",
+            "enum": [
+              "strict",
+              "intersection",
+              "interpolate_to_baseline",
+              "interpolate_to_comparison"
+            ],
+            "title": "Space",
+            "type": "string"
+          },
+          "space_tolerance_m": {
+            "default": 1e-12,
+            "minimum": 0.0,
+            "title": "Space Tolerance M",
+            "type": "number"
+          },
+          "time": {
+            "default": "strict",
+            "enum": [
+              "strict",
+              "intersection",
+              "interpolate_to_baseline",
+              "interpolate_to_comparison"
+            ],
+            "title": "Time",
+            "type": "string"
+          },
+          "time_tolerance_s": {
+            "default": 1e-15,
+            "minimum": 0.0,
+            "title": "Time Tolerance S",
+            "type": "number"
+          },
+          "wavenumber": {
+            "default": "strict",
+            "enum": [
+              "strict",
+              "intersection",
+              "interpolate_to_baseline",
+              "interpolate_to_comparison"
+            ],
+            "title": "Wavenumber",
+            "type": "string"
+          },
+          "wavenumber_tolerance_rad_m": {
+            "default": 1e-09,
+            "minimum": 0.0,
+            "title": "Wavenumber Tolerance Rad M",
+            "type": "number"
+          }
+        },
+        "title": "ComparisonAlignment",
+        "type": "object"
+      },
+      "ComparisonReference": {
+        "additionalProperties": false,
+        "description": "A product from this run or from a named archived run.",
+        "properties": {
+          "analysis_id": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Analysis Id",
+            "type": "string"
+          },
+          "archived_run_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Archived Run Id"
+          }
+        },
+        "required": [
+          "analysis_id"
+        ],
+        "title": "ComparisonReference",
         "type": "object"
       },
       "ContourAxesPresentation": {
@@ -984,6 +963,19 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "end_time_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Time S"
+          },
           "expected_speed_max_m_s": {
             "anyOf": [
               {
@@ -1052,10 +1044,31 @@
             "title": "Probe Indices",
             "type": "array"
           },
+          "probe_plotting": {
+            "$ref": "#/$defs/ProbePlottingConfig"
+          },
+          "probe_set_id": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Probe Set Id",
+            "type": "string"
+          },
           "recipe": {
             "const": "directional_wave",
             "title": "Recipe",
             "type": "string"
+          },
+          "record_start_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Start Time S"
           },
           "spatial_window": {
             "default": "hann",
@@ -1068,6 +1081,24 @@
             "title": "Spatial Window",
             "type": "string"
           },
+          "temporal_wavenumber": {
+            "discriminator": {
+              "mapping": {
+                "False": "#/$defs/TemporalWavenumberDisabled",
+                "True": "#/$defs/TemporalWavenumberEnabled"
+              },
+              "propertyName": "enabled"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/TemporalWavenumberDisabled"
+              },
+              {
+                "$ref": "#/$defs/TemporalWavenumberEnabled"
+              }
+            ],
+            "title": "Temporal Wavenumber"
+          },
           "temporal_window": {
             "default": "rectangular",
             "enum": [
@@ -1079,12 +1110,22 @@
             "title": "Temporal Window",
             "type": "string"
           },
+          "time_grid_policy": {
+            "default": "resample_uniform",
+            "enum": [
+              "resample_uniform",
+              "require_uniform"
+            ],
+            "title": "Time Grid Policy",
+            "type": "string"
+          },
           "variable": {
             "$ref": "#/$defs/Variable"
           }
         },
         "required": [
           "id",
+          "probe_set_id",
           "recipe",
           "variable",
           "frequency_max_hz"
@@ -1419,6 +1460,21 @@
             "title": "Probe Indices",
             "type": "array"
           },
+          "probe_set_id": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Probe Set Id",
+            "type": "string"
+          },
+          "time_grid_policy": {
+            "default": "resample_uniform",
+            "enum": [
+              "resample_uniform",
+              "require_uniform"
+            ],
+            "title": "Time Grid Policy",
+            "type": "string"
+          },
           "variable": {
             "$ref": "#/$defs/Variable",
             "default": "pressure"
@@ -1431,6 +1487,7 @@
           }
         },
         "required": [
+          "probe_set_id",
           "forcing_frequency_hz"
         ],
         "title": "ForceProbeLinkageConfig",
@@ -1860,6 +1917,19 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "end_time_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Time S"
+          },
           "id": {
             "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
             "title": "Id",
@@ -1890,6 +1960,15 @@
             "title": "Probe Indices",
             "type": "array"
           },
+          "probe_plotting": {
+            "$ref": "#/$defs/ProbePlottingConfig"
+          },
+          "probe_set_id": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Probe Set Id",
+            "type": "string"
+          },
           "probe_stride": {
             "default": 1,
             "exclusiveMinimum": 0,
@@ -1900,6 +1979,18 @@
             "const": "modal_screening",
             "title": "Recipe",
             "type": "string"
+          },
+          "record_start_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Start Time S"
           },
           "sensitivity_windows": {
             "default": [
@@ -1934,12 +2025,22 @@
             "title": "Spod Segment Samples",
             "type": "integer"
           },
+          "time_grid_policy": {
+            "default": "resample_uniform",
+            "enum": [
+              "resample_uniform",
+              "require_uniform"
+            ],
+            "title": "Time Grid Policy",
+            "type": "string"
+          },
           "variable": {
             "$ref": "#/$defs/Variable"
           }
         },
         "required": [
           "id",
+          "probe_set_id",
           "recipe",
           "variable"
         ],
@@ -1958,6 +2059,19 @@
             "default": true,
             "title": "Enabled",
             "type": "boolean"
+          },
+          "end_time_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Time S"
           },
           "fdr_alpha": {
             "default": 0.05,
@@ -2002,10 +2116,31 @@
             "title": "Probe Indices",
             "type": "array"
           },
+          "probe_plotting": {
+            "$ref": "#/$defs/ProbePlottingConfig"
+          },
+          "probe_set_id": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Probe Set Id",
+            "type": "string"
+          },
           "recipe": {
             "const": "nonlinear_coupling",
             "title": "Recipe",
             "type": "string"
+          },
+          "record_start_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Start Time S"
           },
           "segment_samples": {
             "default": 8192,
@@ -2028,12 +2163,22 @@
             "title": "Target Frequencies Hz",
             "type": "array"
           },
+          "time_grid_policy": {
+            "default": "resample_uniform",
+            "enum": [
+              "resample_uniform",
+              "require_uniform"
+            ],
+            "title": "Time Grid Policy",
+            "type": "string"
+          },
           "variable": {
             "$ref": "#/$defs/Variable"
           }
         },
         "required": [
           "id",
+          "probe_set_id",
           "recipe",
           "variable",
           "frequency_max_hz"
@@ -2211,6 +2356,43 @@
         "title": "PresentationOverride",
         "type": "object"
       },
+      "ProbePlottingConfig": {
+        "additionalProperties": false,
+        "description": "Controls visual treatment of selected probe traces.",
+        "properties": {
+          "label": {
+            "default": "index_coordinates",
+            "enum": [
+              "index_coordinates",
+              "coordinates",
+              "index"
+            ],
+            "title": "Label",
+            "type": "string"
+          },
+          "mode": {
+            "default": "both",
+            "enum": [
+              "overlay",
+              "panels",
+              "both"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "normalization": {
+            "default": "none",
+            "enum": [
+              "none",
+              "per_probe_peak"
+            ],
+            "title": "Normalization",
+            "type": "string"
+          }
+        },
+        "title": "ProbePlottingConfig",
+        "type": "object"
+      },
       "ProbeSpectrumAnalysis": {
         "additionalProperties": false,
         "properties": {
@@ -2286,10 +2468,31 @@
             "title": "Probe Indices",
             "type": "array"
           },
+          "probe_plotting": {
+            "$ref": "#/$defs/ProbePlottingConfig"
+          },
+          "probe_set_id": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Probe Set Id",
+            "type": "string"
+          },
           "recipe": {
             "const": "probe_spectrum",
             "title": "Recipe",
             "type": "string"
+          },
+          "record_start_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Start Time S"
           },
           "time_grid_policy": {
             "default": "resample_uniform",
@@ -2330,6 +2533,7 @@
         },
         "required": [
           "id",
+          "probe_set_id",
           "recipe",
           "variable"
         ],
@@ -2361,6 +2565,19 @@
             "default": true,
             "title": "Enabled",
             "type": "boolean"
+          },
+          "end_time_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Time S"
           },
           "energy_per_pulse_j_m": {
             "exclusiveMinimum": 0,
@@ -2417,6 +2634,15 @@
             "title": "Probe Indices",
             "type": "array"
           },
+          "probe_plotting": {
+            "$ref": "#/$defs/ProbePlottingConfig"
+          },
+          "probe_set_id": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Probe Set Id",
+            "type": "string"
+          },
           "pulse_fwhm_s": {
             "exclusiveMinimum": 0,
             "title": "Pulse Fwhm S",
@@ -2432,10 +2658,31 @@
             "title": "Recipe",
             "type": "string"
           },
+          "record_start_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Start Time S"
+          },
           "start_time_s": {
             "default": 0.0,
             "title": "Start Time S",
             "type": "number"
+          },
+          "time_grid_policy": {
+            "default": "resample_uniform",
+            "enum": [
+              "resample_uniform",
+              "require_uniform"
+            ],
+            "title": "Time Grid Policy",
+            "type": "string"
           },
           "variable": {
             "$ref": "#/$defs/Variable"
@@ -2443,6 +2690,7 @@
         },
         "required": [
           "id",
+          "probe_set_id",
           "recipe",
           "variable",
           "energy_per_pulse_j_m",
@@ -2822,6 +3070,78 @@
         "title": "SurfaceXLocation",
         "type": "object"
       },
+      "TemporalWavenumberDisabled": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "const": false,
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "title": "TemporalWavenumberDisabled",
+        "type": "object"
+      },
+      "TemporalWavenumberEnabled": {
+        "additionalProperties": false,
+        "properties": {
+          "display_floor_db": {
+            "default": -60.0,
+            "maximum": 0.0,
+            "title": "Display Floor Db",
+            "type": "number"
+          },
+          "enabled": {
+            "const": true,
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "minimum_relative_energy_db": {
+            "default": -30.0,
+            "maximum": 0.0,
+            "title": "Minimum Relative Energy Db",
+            "type": "number"
+          },
+          "overlap_fraction": {
+            "default": 0.75,
+            "exclusiveMaximum": 1.0,
+            "minimum": 0.0,
+            "title": "Overlap Fraction",
+            "type": "number"
+          },
+          "snapshot_times_s": {
+            "default": [],
+            "items": {
+              "type": "number"
+            },
+            "title": "Snapshot Times S",
+            "type": "array"
+          },
+          "window": {
+            "default": "hann",
+            "enum": [
+              "hann",
+              "hamming",
+              "blackman",
+              "rectangular"
+            ],
+            "title": "Window",
+            "type": "string"
+          },
+          "window_duration_s": {
+            "exclusiveMinimum": 0,
+            "title": "Window Duration S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "window_duration_s"
+        ],
+        "title": "TemporalWavenumberEnabled",
+        "type": "object"
+      },
       "TimeAnnotationOverride": {
         "additionalProperties": false,
         "properties": {
@@ -2954,6 +3274,19 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "end_time_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Time S"
+          },
           "id": {
             "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
             "title": "Id",
@@ -2985,10 +3318,31 @@
             "title": "Probe Indices",
             "type": "array"
           },
+          "probe_plotting": {
+            "$ref": "#/$defs/ProbePlottingConfig"
+          },
+          "probe_set_id": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Probe Set Id",
+            "type": "string"
+          },
           "recipe": {
             "const": "transient_wavepacket",
             "title": "Recipe",
             "type": "string"
+          },
+          "record_start_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Start Time S"
           },
           "stft_segment_samples": {
             "default": 2048,
@@ -2996,12 +3350,22 @@
             "title": "Stft Segment Samples",
             "type": "integer"
           },
+          "time_grid_policy": {
+            "default": "resample_uniform",
+            "enum": [
+              "resample_uniform",
+              "require_uniform"
+            ],
+            "title": "Time Grid Policy",
+            "type": "string"
+          },
           "variable": {
             "$ref": "#/$defs/Variable"
           }
         },
         "required": [
           "id",
+          "probe_set_id",
           "recipe",
           "variable",
           "band_min_hz",
@@ -3845,26 +4209,19 @@
       "InputConfig": {
         "additionalProperties": false,
         "properties": {
+          "archived_runs": {
+            "additionalProperties": {
+              "format": "path",
+              "type": "string"
+            },
+            "title": "Archived Runs",
+            "type": "object"
+          },
           "baselines": {
             "additionalProperties": {
               "$ref": "#/$defs/PlotfileInput"
             },
             "title": "Baselines",
-            "type": "object"
-          },
-          "comparison_archives": {
-            "additionalProperties": {
-              "format": "path",
-              "type": "string"
-            },
-            "title": "Comparison Archives",
-            "type": "object"
-          },
-          "comparison_probe_sets": {
-            "additionalProperties": {
-              "$ref": "#/$defs/ProbeInput"
-            },
-            "title": "Comparison Probe Sets",
             "type": "object"
           },
           "plotfiles": {
@@ -3878,16 +4235,12 @@
             ],
             "default": null
           },
-          "probes": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/ProbeInput"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
+          "probe_sets": {
+            "additionalProperties": {
+              "$ref": "#/$defs/ProbeInput"
+            },
+            "title": "Probe Sets",
+            "type": "object"
           }
         },
         "title": "InputConfig",
@@ -3930,6 +4283,34 @@
       },
       "ProbeInput": {
         "additionalProperties": false,
+        "oneOf": [
+          {
+            "properties": {
+              "binary_files": {
+                "maxItems": 0
+              },
+              "compact_file": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "compact_file"
+            ]
+          },
+          {
+            "properties": {
+              "binary_files": {
+                "minItems": 1
+              },
+              "compact_file": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "binary_files"
+            ]
+          }
+        ],
         "properties": {
           "binary_files": {
             "default": [],
@@ -3971,11 +4352,10 @@
       "inputs": {
         "$ref": "#/$defs/InputConfig",
         "default": {
+          "archived_runs": {},
           "baselines": {},
-          "comparison_archives": {},
-          "comparison_probe_sets": {},
           "plotfiles": null,
-          "probes": null
+          "probe_sets": {}
         }
       },
       "outputs": {

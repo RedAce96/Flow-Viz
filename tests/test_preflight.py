@@ -64,15 +64,24 @@ class PreflightTests(unittest.TestCase):
             },
             "geometry": {"type": "flat_plate"},
         }
+        probe_recipes = {
+            "probe_spectrum", "single_pulse_response", "directional_wave",
+            "transient_wavepacket", "nonlinear_coupling", "modal_screening",
+        }
+        normalized_analyses = [
+            ({**item, "probe_set_id": "default"} if item.get("recipe") in probe_recipes
+             and "probe_set_id" not in item else item)
+            for item in analyses
+        ]
         machine = {
             "schema_version": 1,
-            "inputs": {"probes": {"compact_file": str(compact)}},
+            "inputs": {"probe_sets": {"default": {"compact_file": str(compact)}}},
             "outputs": {"root": str(root / "outputs")},
             "compute": {"workers": 2, "memory_limit_gb": 8},
         }
         for name, value in (
             ("case.yaml", case),
-            ("analyses.yaml", {"schema_version": 1, "analyses": analyses}),
+            ("analyses.yaml", {"schema_version": 1, "analyses": normalized_analyses}),
             ("machine.yaml", machine),
         ):
             (root / name).write_text(yaml.safe_dump(value), encoding="utf-8")
@@ -87,10 +96,10 @@ class PreflightTests(unittest.TestCase):
         self.assertTrue(all(item.artifact_declarations for item in WORKFLOWS.values()))
         self.assertEqual(
             INTERNAL_WORKFLOWS,
-            {"input.plotfiles", "input.probes", "input.comparison_archives", "geometry.surface"},
+            {"input.plotfiles", "input.probe_sets", "input.archived_runs", "geometry.surface"},
         )
 
-    def test_inspection_lists_registered_comparison_products(self):
+    def test_inspection_lists_registered_archived_products(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             run = root / "existing-run"
@@ -103,14 +112,14 @@ class PreflightTests(unittest.TestCase):
             self.project(root, [])
             machine_path = root / "machine.yaml"
             machine = yaml.safe_load(machine_path.read_text())
-            machine["inputs"]["comparison_archives"] = {"existing": str(run)}
+            machine["inputs"]["archived_runs"] = {"existing": str(run)}
             machine_path.write_text(yaml.safe_dump(machine), encoding="utf-8")
             inventory = inspect_project(load_project(root))
             self.assertEqual(
-                inventory.comparison_products["existing"],
+                inventory.archived_products["existing"],
                 ("spectrum.spectral.psd", "spectrum.spectral.confidence"),
             )
-            self.assertFalse(inventory.comparison_errors)
+            self.assertFalse(inventory.archived_errors)
 
     def test_case_comparison_missing_product_is_a_preflight_blocker(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -123,19 +132,20 @@ class PreflightTests(unittest.TestCase):
                 )
             self.project(root, [{
                 "id": "compare", "recipe": "case_comparison",
-                "baseline_id": "baseline", "comparison_id": "candidate",
-                "artifact_ids": ["missing.product"],
+                "baseline": {"archived_run_id": "baseline", "analysis_id": "spectrum"},
+                "comparison": {"archived_run_id": "candidate", "analysis_id": "spectrum"},
+                "product_ids": ["missing.product"],
             }])
             machine_path = root / "machine.yaml"
             machine = yaml.safe_load(machine_path.read_text())
-            machine["inputs"]["comparison_archives"] = {
+            machine["inputs"]["archived_runs"] = {
                 "baseline": str(root / "baseline"),
                 "candidate": str(root / "candidate"),
             }
             machine_path.write_text(yaml.safe_dump(machine), encoding="utf-8")
             plan = create_plan(load_project(root))
             self.assertIn(
-                "MISSING_COMPARISON_ARTIFACT", {item.code for item in plan.blockers}
+                "MISSING_COMPARISON_PRODUCT", {item.code for item in plan.blockers}
             )
 
     def test_case_comparison_unknown_archive_is_a_preflight_blocker(self):
@@ -143,12 +153,13 @@ class PreflightTests(unittest.TestCase):
             root = Path(temporary)
             self.project(root, [{
                 "id": "compare", "recipe": "case_comparison",
-                "baseline_id": "missing-baseline", "comparison_id": "missing-candidate",
-                "artifact_ids": ["shared.product"],
+                "baseline": {"archived_run_id": "missing-baseline", "analysis_id": "spectrum"},
+                "comparison": {"archived_run_id": "missing-candidate", "analysis_id": "spectrum"},
+                "product_ids": ["shared.product"],
             }])
             plan = create_plan(load_project(root))
             self.assertIn(
-                "UNKNOWN_COMPARISON_ARCHIVE", {item.code for item in plan.blockers}
+                "UNKNOWN_ARCHIVED_RUN", {item.code for item in plan.blockers}
             )
 
     def test_case_comparison_incompatible_units_are_a_preflight_blocker(self):
@@ -167,19 +178,20 @@ class PreflightTests(unittest.TestCase):
                 )
             self.project(root, [{
                 "id": "compare", "recipe": "case_comparison",
-                "baseline_id": "baseline", "comparison_id": "candidate",
-                "artifact_ids": ["shared.product"],
+                "baseline": {"archived_run_id": "baseline", "analysis_id": "shared"},
+                "comparison": {"archived_run_id": "candidate", "analysis_id": "shared"},
+                "product_ids": ["product"],
             }])
             machine_path = root / "machine.yaml"
             machine = yaml.safe_load(machine_path.read_text())
-            machine["inputs"]["comparison_archives"] = {
+            machine["inputs"]["archived_runs"] = {
                 "baseline": str(root / "baseline"),
                 "candidate": str(root / "candidate"),
             }
             machine_path.write_text(yaml.safe_dump(machine), encoding="utf-8")
             plan = create_plan(load_project(root))
             self.assertIn(
-                "INCOMPATIBLE_COMPARISON_ARTIFACT", {item.code for item in plan.blockers}
+                "INCOMPATIBLE_COMPARISON_PRODUCT", {item.code for item in plan.blockers}
             )
 
     def test_every_public_workflow_has_a_lazy_executor_registration(self):
@@ -196,7 +208,7 @@ class PreflightTests(unittest.TestCase):
                 [{"id": "spectrum", "recipe": "probe_spectrum", "variable": "temperature"}],
             )
             graph = build_workflow_graph(project)
-            self.assertEqual(graph.order, ("input.probes", "analysis.spectrum"))
+            self.assertEqual(graph.order, ("input.probe_sets", "analysis.spectrum"))
             plan = create_plan(project)
             self.assertFalse(plan.blockers)
             contract = plan.analysis_contracts["spectrum"]
@@ -212,7 +224,7 @@ class PreflightTests(unittest.TestCase):
                 "dynamic_viscosity_pa_s": 1.0e-5,
                 "conductivity_w_m_k": 0.02,
                 "probe_linkage": {
-                    "variable": "pressure", "force_component": "x",
+                    "probe_set_id": "default", "variable": "pressure", "force_component": "x",
                     "forcing_frequency_hz": 25_000,
                 },
             }])
@@ -234,7 +246,7 @@ class PreflightTests(unittest.TestCase):
             graph = build_workflow_graph(project)
             self.assertEqual(
                 set(graph.node("analysis.loads").dependencies),
-                {"input.plotfiles", "input.probes", "geometry.surface"},
+                {"input.plotfiles", "input.probe_sets", "geometry.surface"},
             )
             plan = create_plan(project)
             self.assertIn(

@@ -169,19 +169,10 @@ after each workflow and are not run artifacts.
 | `enabled` | no | `boolean` | `true` | — |
 | `presentation` | no | `PresentationOverride \| null` | `null` | — |
 | `recipe` | yes | `'case_comparison'` | — | — |
-| `baseline_id` | yes | `string` | — | — |
-| `comparison_id` | yes | `string` | — | — |
-| `artifact_ids` | no | `array[string]` | — | — |
-| `variable` | no | `Variable \| null` | `null` | — |
-| `probe_indices` | no | `array[integer]` | `[]` | — |
-| `end_time_s` | no | `number \| null` | `null` | — |
-| `window` | no | `'hann' \| 'hamming' \| 'blackman' \| 'rectangular' \| null` | `null` | — |
-| `detrend` | no | `'mean' \| 'linear' \| 'none' \| null` | `null` | — |
-| `welch_segment_samples` | no | `integer \| null` | `null` | — |
-| `overlap_fraction` | no | `number \| null` | `null` | — |
-| `time_grid_policy` | no | `'resample_uniform' \| 'require_uniform' \| null` | `null` | — |
-| `frequency_max_hz` | no | `number \| null` | `null` | — |
-| `overlay_probes` | no | `array[integer]` | `[]` | — |
+| `baseline` | yes | `ComparisonReference` | — | — |
+| `comparison` | yes | `ComparisonReference` | — | — |
+| `product_ids` | yes | `array[string]` | — | minimum items: `1` |
+| `alignment` | no | `ComparisonAlignment` | — | — |
 
 ### `ColorbarOverride`
 
@@ -206,6 +197,26 @@ after each workflow and are not run artifacts.
 | `tick_count` | no | `integer` | `4` | minimum: `2`; maximum: `12` |
 | `tick_format` | no | `string` | `"auto"` | — |
 | `label` | no | `string` | `"auto"` | — |
+
+### `ComparisonAlignment`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `time` | no | `'strict' \| 'intersection' \| 'interpolate_to_baseline' \| 'interpolate_to_comparison'` | `"strict"` | — |
+| `frequency` | no | `'strict' \| 'intersection' \| 'interpolate_to_baseline' \| 'interpolate_to_comparison'` | `"strict"` | — |
+| `space` | no | `'strict' \| 'intersection' \| 'interpolate_to_baseline' \| 'interpolate_to_comparison'` | `"strict"` | — |
+| `wavenumber` | no | `'strict' \| 'intersection' \| 'interpolate_to_baseline' \| 'interpolate_to_comparison'` | `"strict"` | — |
+| `time_tolerance_s` | no | `number` | `1e-15` | minimum: `0.0` |
+| `frequency_tolerance_hz` | no | `number` | `1e-09` | minimum: `0.0` |
+| `space_tolerance_m` | no | `number` | `1e-12` | minimum: `0.0` |
+| `wavenumber_tolerance_rad_m` | no | `number` | `1e-09` | minimum: `0.0` |
+
+### `ComparisonReference`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `analysis_id` | yes | `string` | — | minimum length: `1`; pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
+| `archived_run_id` | no | `string \| null` | `null` | — |
 
 ### `ContourAxesPresentation`
 
@@ -290,7 +301,12 @@ after each workflow and are not run artifacts.
 | `id` | yes | `string` | — | pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `enabled` | no | `boolean` | `true` | — |
 | `presentation` | no | `PresentationOverride \| null` | `null` | — |
+| `probe_set_id` | yes | `string` | — | minimum length: `1`; pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `probe_indices` | no | `array[integer]` | `[]` | — |
+| `probe_plotting` | no | `ProbePlottingConfig` | — | — |
+| `record_start_time_s` | no | `number \| null` | `null` | — |
+| `end_time_s` | no | `number \| null` | `null` | — |
+| `time_grid_policy` | no | `'resample_uniform' \| 'require_uniform'` | `"resample_uniform"` | — |
 | `recipe` | yes | `'directional_wave'` | — | — |
 | `variable` | yes | `Variable` | — | — |
 | `frequency_min_hz` | no | `number` | `0.0` | minimum: `0.0` |
@@ -300,6 +316,7 @@ after each workflow and are not run artifacts.
 | `minimum_coherence` | no | `number` | `0.8` | minimum: `0.0`; maximum: `1.0` |
 | `spatial_window` | no | `'hann' \| 'hamming' \| 'blackman' \| 'rectangular'` | `"hann"` | — |
 | `temporal_window` | no | `'hann' \| 'hamming' \| 'blackman' \| 'rectangular'` | `"rectangular"` | — |
+| `temporal_wavenumber` | no | `TemporalWavenumberDisabled \| TemporalWavenumberEnabled` | — | discriminator: `enabled` |
 
 ### `FigurePresentation`
 
@@ -344,6 +361,8 @@ after each workflow and are not run artifacts.
 
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
+| `probe_set_id` | yes | `string` | — | minimum length: `1`; pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
+| `time_grid_policy` | no | `'resample_uniform' \| 'require_uniform'` | `"resample_uniform"` | — |
 | `variable` | no | `Variable` | `"pressure"` | — |
 | `force_component` | no | `'x' \| 'y' \| 'moment'` | `"y"` | — |
 | `forcing_frequency_hz` | yes | `number` | — | greater than: `0` |
@@ -403,7 +422,12 @@ after each workflow and are not run artifacts.
 | `id` | yes | `string` | — | pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `enabled` | no | `boolean` | `true` | — |
 | `presentation` | no | `PresentationOverride \| null` | `null` | — |
+| `probe_set_id` | yes | `string` | — | minimum length: `1`; pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `probe_indices` | no | `array[integer]` | `[]` | — |
+| `probe_plotting` | no | `ProbePlottingConfig` | — | — |
+| `record_start_time_s` | no | `number \| null` | `null` | — |
+| `end_time_s` | no | `number \| null` | `null` | — |
+| `time_grid_policy` | no | `'resample_uniform' \| 'require_uniform'` | `"resample_uniform"` | — |
 | `recipe` | yes | `'modal_screening'` | — | — |
 | `variable` | yes | `Variable` | — | — |
 | `mode_count` | no | `integer` | `4` | greater than: `0` |
@@ -419,7 +443,12 @@ after each workflow and are not run artifacts.
 | `id` | yes | `string` | — | pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `enabled` | no | `boolean` | `true` | — |
 | `presentation` | no | `PresentationOverride \| null` | `null` | — |
+| `probe_set_id` | yes | `string` | — | minimum length: `1`; pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `probe_indices` | no | `array[integer]` | `[]` | — |
+| `probe_plotting` | no | `ProbePlottingConfig` | — | — |
+| `record_start_time_s` | no | `number \| null` | `null` | — |
+| `end_time_s` | no | `number \| null` | `null` | — |
+| `time_grid_policy` | no | `'resample_uniform' \| 'require_uniform'` | `"resample_uniform"` | — |
 | `recipe` | yes | `'nonlinear_coupling'` | — | — |
 | `variable` | yes | `Variable` | — | — |
 | `segment_samples` | no | `integer` | `8192` | greater than: `0` |
@@ -453,6 +482,14 @@ after each workflow and are not run artifacts.
 | `contour_defaults` | no | `ContourStyleOverride \| null` | `null` | — |
 | `line_defaults` | no | `LineStyleOverride \| null` | `null` | — |
 
+### `ProbePlottingConfig`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `mode` | no | `'overlay' \| 'panels' \| 'both'` | `"both"` | — |
+| `normalization` | no | `'none' \| 'per_probe_peak'` | `"none"` | — |
+| `label` | no | `'index_coordinates' \| 'coordinates' \| 'index'` | `"index_coordinates"` | — |
+
 ### `ProbeSpectrumAnalysis`
 
 | Field | Required | Type | Default | Rules |
@@ -460,16 +497,19 @@ after each workflow and are not run artifacts.
 | `id` | yes | `string` | — | pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `enabled` | no | `boolean` | `true` | — |
 | `presentation` | no | `PresentationOverride \| null` | `null` | — |
+| `probe_set_id` | yes | `string` | — | minimum length: `1`; pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `probe_indices` | no | `array[integer]` | `[]` | — |
+| `probe_plotting` | no | `ProbePlottingConfig` | — | — |
+| `record_start_time_s` | no | `number \| null` | `null` | — |
+| `end_time_s` | no | `number \| null` | `null` | — |
+| `time_grid_policy` | no | `'resample_uniform' \| 'require_uniform'` | `"resample_uniform"` | — |
 | `recipe` | yes | `'probe_spectrum'` | — | — |
 | `variable` | yes | `Variable` | — | — |
 | `frequency_max_hz` | no | `number \| null` | `null` | — |
-| `end_time_s` | no | `number \| null` | `null` | — |
 | `window` | no | `'hann' \| 'hamming' \| 'blackman' \| 'rectangular'` | `"hann"` | — |
 | `detrend` | no | `'mean' \| 'linear' \| 'none'` | `"mean"` | — |
 | `welch_segment_samples` | no | `integer \| null` | `null` | — |
 | `overlap_fraction` | no | `number` | `0.5` | minimum: `0.0`; less than: `1.0` |
-| `time_grid_policy` | no | `'resample_uniform' \| 'require_uniform'` | `"resample_uniform"` | — |
 
 ### `SinglePulseAnalysis`
 
@@ -478,7 +518,12 @@ after each workflow and are not run artifacts.
 | `id` | yes | `string` | — | pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `enabled` | no | `boolean` | `true` | — |
 | `presentation` | no | `PresentationOverride \| null` | `null` | — |
+| `probe_set_id` | yes | `string` | — | minimum length: `1`; pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `probe_indices` | no | `array[integer]` | `[]` | — |
+| `probe_plotting` | no | `ProbePlottingConfig` | — | — |
+| `record_start_time_s` | no | `number \| null` | `null` | — |
+| `end_time_s` | no | `number \| null` | `null` | — |
+| `time_grid_policy` | no | `'resample_uniform' \| 'require_uniform'` | `"resample_uniform"` | — |
 | `recipe` | yes | `'single_pulse_response'` | — | — |
 | `variable` | yes | `Variable` | — | — |
 | `energy_per_pulse_j_m` | yes | `number` | — | greater than: `0` |
@@ -562,6 +607,24 @@ after each workflow and are not run artifacts.
 | `type` | no | `'x'` | `"x"` | — |
 | `value_m` | yes | `number` | — | — |
 
+### `TemporalWavenumberDisabled`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `enabled` | no | `False` | `false` | — |
+
+### `TemporalWavenumberEnabled`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `enabled` | no | `True` | `true` | — |
+| `window_duration_s` | yes | `number` | — | greater than: `0` |
+| `overlap_fraction` | no | `number` | `0.75` | minimum: `0.0`; less than: `1.0` |
+| `window` | no | `'hann' \| 'hamming' \| 'blackman' \| 'rectangular'` | `"hann"` | — |
+| `snapshot_times_s` | no | `array[number]` | `[]` | — |
+| `minimum_relative_energy_db` | no | `number` | `-30.0` | maximum: `0.0` |
+| `display_floor_db` | no | `number` | `-60.0` | maximum: `0.0` |
+
 ### `TimeAnnotationOverride`
 
 | Field | Required | Type | Default | Rules |
@@ -587,7 +650,12 @@ after each workflow and are not run artifacts.
 | `id` | yes | `string` | — | pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `enabled` | no | `boolean` | `true` | — |
 | `presentation` | no | `PresentationOverride \| null` | `null` | — |
+| `probe_set_id` | yes | `string` | — | minimum length: `1`; pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
 | `probe_indices` | no | `array[integer]` | `[]` | — |
+| `probe_plotting` | no | `ProbePlottingConfig` | — | — |
+| `record_start_time_s` | no | `number \| null` | `null` | — |
+| `end_time_s` | no | `number \| null` | `null` | — |
+| `time_grid_policy` | no | `'resample_uniform' \| 'require_uniform'` | `"resample_uniform"` | — |
 | `recipe` | yes | `'transient_wavepacket'` | — | — |
 | `variable` | yes | `Variable` | — | — |
 | `band_min_hz` | yes | `number` | — | minimum: `0.0` |
@@ -636,7 +704,7 @@ after each workflow and are not run artifacts.
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
 | `schema_version` | no | `1` | `1` | — |
-| `inputs` | no | `InputConfig` | `{"baselines": {}, "comparison_archives": {}, "comparison_probe_sets": {}, "plotfiles": null, "probes": null}` | — |
+| `inputs` | no | `InputConfig` | `{"archived_runs": {}, "baselines": {}, "plotfiles": null, "probe_sets": {}}` | — |
 | `outputs` | yes | `OutputConfig` | — | — |
 | `compute` | no | `ComputeConfig` | `{"fft_batch_size": 32, "memory_limit_gb": 8.0, "scratch_directory": null, "workers": 1}` | — |
 
@@ -654,9 +722,8 @@ after each workflow and are not run artifacts.
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
 | `plotfiles` | no | `PlotfileInput \| null` | `null` | — |
-| `probes` | no | `ProbeInput \| null` | `null` | — |
-| `comparison_archives` | no | `mapping[string, string]` | — | — |
-| `comparison_probe_sets` | no | `mapping[string, ProbeInput]` | — | — |
+| `probe_sets` | no | `mapping[string, ProbeInput]` | — | — |
+| `archived_runs` | no | `mapping[string, string]` | — | — |
 | `baselines` | no | `mapping[string, PlotfileInput]` | — | — |
 
 ### `OutputConfig`

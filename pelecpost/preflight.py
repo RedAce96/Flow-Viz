@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from math import pi
 import re
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -112,18 +113,35 @@ def _spatial_sampling(probes: Any, probe_indices: tuple[int, ...] = ()) -> dict[
     }
 
 
-def _sampling_summary(project: ResolvedProject, inventory: InputInventory) -> dict[str, Any]:
-    probes = inventory.probes
+def _probe_sampling(probes: Any, analysis: Any | None = None) -> dict[str, Any]:
     if probes is None or probes.median_timestep_s is None or probes.median_timestep_s <= 0:
         return {}
     dt = probes.median_timestep_s
+    start = probes.time_min_s
+    stop = probes.time_max_s
+    if analysis is not None:
+        configured_start = getattr(analysis, "record_start_time_s", None)
+        configured_stop = getattr(analysis, "end_time_s", None)
+        if configured_start is not None:
+            start = max(start, float(configured_start)) if start is not None else float(configured_start)
+        if configured_stop is not None:
+            stop = min(stop, float(configured_stop)) if stop is not None else float(configured_stop)
     duration = (
-        probes.time_max_s - probes.time_min_s
-        if probes.time_max_s is not None and probes.time_min_s is not None
+        stop - start
+        if stop is not None and start is not None
         else None
     )
+    sample_count = probes.sample_count
+    if analysis is not None and start is not None and stop is not None:
+        native_count = max(0, int(np.floor(duration / dt)) + 1) if duration is not None else 0
+        native_count = min(native_count, probes.sample_count)
+        selected_count = max(0, native_count)
+        if selected_count >= 2:
+            sample_count = selected_count
+        if getattr(analysis, "time_grid_policy", "resample_uniform") == "resample_uniform":
+            sample_count = max(sample_count, native_count)
     result: dict[str, Any] = {
-        "sample_count": probes.sample_count,
+        "sample_count": sample_count,
         "probe_count": probes.probe_count,
         "median_timestep_s": dt,
         "sampling_frequency_hz": 1.0 / dt,
@@ -132,33 +150,46 @@ def _sampling_summary(project: ResolvedProject, inventory: InputInventory) -> di
         "native_frequency_resolution_hz": 1.0 / duration if duration and duration > 0 else None,
     }
     if len(probes.requested_x_m) > 1:
-        result.update(_spatial_sampling(probes))
+        result.update(_spatial_sampling(probes, _selected_probe_indices(analysis) if analysis else ()))
+    return result
+
+
+def _sampling_summary(project: ResolvedProject, inventory: InputInventory) -> dict[str, Any]:
+    probes = next(
+        (
+            item for item in inventory.probe_sets.values()
+            if item.median_timestep_s is not None and item.median_timestep_s > 0
+        ),
+        None,
+    )
+    result = _probe_sampling(probes)
+    if not result:
+        return {}
     segments: dict[str, Any] = {}
+    per_analysis: dict[str, Any] = {}
     for analysis in project.enabled_analyses:
-        sample_count = probes.sample_count
-        if (
-            analysis.recipe == "probe_spectrum"
-            and getattr(analysis, "time_grid_policy", "resample_uniform") == "resample_uniform"
-            and probes.time_min_s is not None
-            and probes.time_max_s is not None
-        ):
-            resampled_count = int(
-                np.floor((probes.time_max_s - probes.time_min_s) / dt)
-            ) + 1
-            sample_count = max(sample_count, resampled_count)
+        selected_probes = inventory.probe_sets.get(
+            getattr(analysis, "probe_set_id", ""), probes
+        )
+        analysis_summary = _probe_sampling(selected_probes, analysis)
+        per_analysis[analysis.id] = analysis_summary
+        sample_count = analysis_summary.get("sample_count", probes.sample_count)
         segment = _segment_samples(analysis, sample_count)
         if segment:
             overlap = float(getattr(analysis, "overlap_fraction", 0.5))
             step = max(1, int(round(segment * (1.0 - overlap))))
             count = 1 + max(0, (sample_count - segment) // step)
-            segments[analysis.id] = {
+            segment_summary = {
                 "sample_count": sample_count,
                 "segment_samples": segment,
                 "segment_count": count,
-                "effective_frequency_resolution_hz": 1.0 / (segment * dt),
+                "effective_frequency_resolution_hz": 1.0 / (segment * analysis_summary["median_timestep_s"]),
                 "approximate_degrees_of_freedom": 2 * count,
             }
+            segments[analysis.id] = segment_summary
+            analysis_summary["segmented_estimator"] = segment_summary
     result["segmented_estimators"] = segments
+    result["by_analysis"] = per_analysis
     return result
 
 
@@ -191,6 +222,11 @@ def _selected_probe_indices(analysis: Any) -> tuple[int, ...]:
         linkage.probe_indices if linkage is not None
         else getattr(analysis, "probe_indices", ())
     )
+
+
+def _analysis_probe_inventory(inventory: InputInventory, analysis: Any) -> Any:
+    probe_set_id = getattr(analysis, "probe_set_id", None)
+    return inventory.probe_sets.get(probe_set_id) if probe_set_id else None
 
 
 def _geometry_points(project: ResolvedProject) -> np.ndarray | None:
@@ -228,6 +264,7 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
         findings.append(Finding(Severity.INFO, "NO_ANALYSES", "No analyses are enabled."))
 
     for analysis in project.enabled_analyses:
+        analysis_probes = _analysis_probe_inventory(inventory, analysis)
         workflow = workflow_for(analysis.recipe)
         analysis_contracts[analysis.id] = {
             "recipe": analysis.recipe,
@@ -242,134 +279,159 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
             findings.append(Finding(
                 Severity(validation.level), validation.code, validation.message, analysis.id,
             ))
+        if workflow.metadata.name in {
+            "probe_spectrum", "single_pulse_response", "directional_wave",
+            "transient_wavepacket", "nonlinear_coupling", "modal_screening",
+        } and analysis_probes is None:
+            findings.append(Finding(
+                Severity.BLOCKER, "UNKNOWN_PROBE_SET",
+                f"Probe set {analysis.probe_set_id!r} is not defined in machine.yaml.",
+                analysis.id,
+            ))
         if analysis.recipe == "case_comparison":
-            selected_archives = (analysis.baseline_id, analysis.comparison_id)
-            # Direct probe mode: probe binaries in comparison_probe_sets.
-            if getattr(analysis, "variable", None) is not None:
-                for archive_id in selected_archives:
-                    if archive_id not in inventory.comparison_probe_sets:
+            references = (analysis.baseline, analysis.comparison)
+            for side_name in ("baseline", "comparison"):
+                reference = getattr(analysis, side_name)
+                if reference.archived_run_id is None:
+                    if reference.analysis_id == analysis.id:
                         findings.append(Finding(
-                            Severity.BLOCKER, "UNKNOWN_COMPARISON_ARCHIVE",
-                            f"Comparison probe set {archive_id!r} is not defined "
-                            f"in machine.yaml:comparison_probe_sets.",
+                            Severity.BLOCKER, "SELF_ANALYSIS_REFERENCE",
+                            "A case_comparison analysis cannot compare one of its own products.",
                             analysis.id,
                         ))
-                    elif archive_id in inventory.comparison_probe_errors:
+                        continue
+                    source_analysis = next(
+                        (item for item in project.enabled_analyses if item.id == reference.analysis_id),
+                        None,
+                    )
+                    if source_analysis is None:
                         findings.append(Finding(
-                            Severity.BLOCKER, "COMPARISON_INSPECTION",
-                            f"Comparison probe set {archive_id!r} is unreadable: "
-                            f"{inventory.comparison_probe_errors[archive_id]}", analysis.id,
+                            Severity.BLOCKER, "UNKNOWN_ANALYSIS_REFERENCE",
+                            f"Comparison {side_name} references unknown analysis "
+                            f"{reference.analysis_id!r}.", analysis.id,
                         ))
                     else:
-                        inv = inventory.comparison_probe_sets[archive_id]
-                        val = getattr(analysis, "variable")
-                        vname = val.value if hasattr(val, "value") else str(val)
-                        if not _has_probe_field(vname, inv.fields):
+                        declared = workflow_for(source_analysis.recipe).artifact_declarations_for(source_analysis)
+                        missing = [item for item in analysis.product_ids if item not in declared]
+                        if missing:
                             findings.append(Finding(
-                                Severity.BLOCKER, "MISSING_PROBE_FIELD",
-                                f"Probe variable {vname!r} absent in comparison set "
-                                f"{archive_id!r}; available: {inv.fields}.",
-                                analysis.id,
+                                Severity.BLOCKER, "MISSING_COMPARISON_PRODUCT",
+                                f"Analysis {reference.analysis_id!r} does not declare product(s): "
+                                f"{', '.join(missing)}.", analysis.id,
                             ))
-                        probes = tuple(getattr(analysis, "probe_indices", ())) or tuple(getattr(analysis, "overlay_probes", ()))
-                        if probes and max(probes) >= inv.probe_count:
-                            findings.append(Finding(
-                                Severity.BLOCKER, "INVALID_PROBE_SELECTION",
-                                f"probe indices exceed probe_count {inv.probe_count} "
-                                f"in comparison set {archive_id!r}.", analysis.id,
-                            ))
-                probe_sets = [
-                    inv for key, inv in inventory.comparison_probe_sets.items()
-                    if key in selected_archives
+                    continue
+                archive_id = reference.archived_run_id
+                if archive_id not in inventory.archived_runs:
+                    findings.append(Finding(
+                        Severity.BLOCKER, "UNKNOWN_ARCHIVED_RUN",
+                        f"Archived run {archive_id!r} is not defined in machine.yaml.", analysis.id,
+                    ))
+                    continue
+                if archive_id in inventory.archived_errors:
+                    findings.append(Finding(
+                        Severity.BLOCKER, "ARCHIVED_RUN_INSPECTION",
+                        f"Archived run {archive_id!r} is unreadable: "
+                        f"{inventory.archived_errors[archive_id]}", analysis.id,
+                    ))
+                    continue
+                missing = [
+                    product_id for product_id in analysis.product_ids
+                    if f"{reference.analysis_id}.{product_id}" not in
+                    inventory.archived_products.get(archive_id, ())
                 ]
-                if probe_sets:
-                    dt_values = [
-                        inv.median_timestep_s for inv in probe_sets
-                        if inv.median_timestep_s
-                    ]
-                    dt = min(dt_values) if dt_values else None
-                    if dt and dt > 0:
-                        record = analysis.end_time_s or max(
-                            (inv.time_max_s or 0) for inv in probe_sets
-                        )
-                        if record and analysis.frequency_max_hz and analysis.frequency_max_hz > 0.5 / dt:
-                            findings.append(Finding(
-                                Severity.BLOCKER, "ABOVE_NYQUIST",
-                                f"Requested frequency_max {analysis.frequency_max_hz:.6g} exceeds "
-                                f"Nyquist {0.5/dt:.6g}.", analysis.id,
-                            ))
-            else:
-                for archive_id in selected_archives:
-                    if archive_id not in inventory.comparison_archives:
+                if missing:
+                    findings.append(Finding(
+                        Severity.BLOCKER, "MISSING_COMPARISON_PRODUCT",
+                        f"Archived run {archive_id!r} is missing product(s): "
+                        f"{', '.join(missing)}.", analysis.id,
+                    ))
+                for product_id in analysis.product_ids:
+                    item = inventory.archived_metadata.get(archive_id, {}).get(
+                        f"{reference.analysis_id}.{product_id}"
+                    )
+                    if item is None:
+                        continue
+                    if item.get("kind") not in {"array", "json"} or not item.get("path"):
                         findings.append(Finding(
-                            Severity.BLOCKER, "UNKNOWN_COMPARISON_ARCHIVE",
-                            f"Comparison archive {archive_id!r} is not defined in machine.yaml.",
+                            Severity.BLOCKER, "INVALID_COMPARISON_PRODUCT",
+                            f"Archived product {reference.analysis_id}.{product_id!s} in "
+                            f"run {archive_id!r} must declare a numerical kind and path.",
                             analysis.id,
                         ))
-                    elif archive_id in inventory.comparison_errors:
-                        findings.append(Finding(
-                            Severity.BLOCKER, "COMPARISON_INSPECTION",
-                            f"Comparison archive {archive_id!r} is unreadable: "
-                            f"{inventory.comparison_errors[archive_id]}", analysis.id,
-                        ))
-                for artifact_id in analysis.artifact_ids:
-                    if not all(
-                        archive_id in inventory.comparison_archives
-                        for archive_id in selected_archives
-                    ):
                         continue
-                    missing = [
-                        archive_id for archive_id in selected_archives
-                        if archive_id in inventory.comparison_archives
-                        and artifact_id not in inventory.comparison_products.get(archive_id, ())
-                    ]
-                    if missing:
+                    run_dir = Path(inventory.archived_runs[archive_id]).resolve()
+                    product_path = (run_dir / str(item["path"])).resolve()
+                    try:
+                        product_path.relative_to(run_dir)
+                    except ValueError:
                         findings.append(Finding(
-                            Severity.BLOCKER, "MISSING_COMPARISON_ARTIFACT",
-                            f"Artifact {artifact_id!r} is not registered in comparison archive(s): "
-                            f"{', '.join(missing)}.", analysis.id,
+                            Severity.BLOCKER, "INVALID_COMPARISON_PRODUCT_PATH",
+                            f"Archived product {reference.analysis_id}.{product_id!s} in "
+                            f"run {archive_id!r} points outside the archived run.", analysis.id,
                         ))
+                    else:
+                        if not product_path.is_file():
+                            findings.append(Finding(
+                                Severity.BLOCKER, "MISSING_COMPARISON_PRODUCT_FILE",
+                                f"Archived product {reference.analysis_id}.{product_id!s} in "
+                                f"run {archive_id!r} is missing at {product_path}.", analysis.id,
+                            ))
+            if all(
+                reference.archived_run_id is not None
+                and reference.archived_run_id in inventory.archived_metadata
+                for reference in references
+            ):
+                left_ref, right_ref = references
+                left_meta = inventory.archived_metadata[left_ref.archived_run_id]
+                right_meta = inventory.archived_metadata[right_ref.archived_run_id]
+                for product_id in analysis.product_ids:
+                    left_item = left_meta.get(f"{left_ref.analysis_id}.{product_id}")
+                    right_item = right_meta.get(f"{right_ref.analysis_id}.{product_id}")
+                    if left_item is None or right_item is None:
                         continue
-                    first = inventory.comparison_metadata[analysis.baseline_id][artifact_id]
-                    second = inventory.comparison_metadata[analysis.comparison_id][artifact_id]
                     differences = [
-                        key for key in (
-                            "schema_version", "variable", "units", "coordinate_metadata", "kind"
-                        )
-                        if first.get(key) != second.get(key)
+                        key for key in ("schema_version", "variable", "units", "kind")
+                        if left_item.get(key) != right_item.get(key)
                     ]
-                    first_preprocessing = first.get("provenance", {}).get("preprocessing")
-                    second_preprocessing = second.get("provenance", {}).get("preprocessing")
-                    if first_preprocessing is None or second_preprocessing is None:
-                        differences.append("preprocessing provenance (missing)")
-                    elif first_preprocessing != second_preprocessing:
-                        differences.append("preprocessing provenance")
                     if differences:
                         findings.append(Finding(
-                            Severity.BLOCKER, "INCOMPATIBLE_COMPARISON_ARTIFACT",
-                            f"Artifact {artifact_id!r} differs between the selected runs in: "
+                            Severity.BLOCKER, "INCOMPATIBLE_COMPARISON_PRODUCT",
+                            f"Product {product_id!r} differs between archived runs in: "
                             f"{', '.join(differences)}.", analysis.id,
                         ))
+            continue
         variable = getattr(analysis, "variable", None)
-        if variable is not None and inventory.probes is not None:
+        analysis_sampling = sampling.get("by_analysis", {}).get(analysis.id, sampling)
+        if variable is not None and analysis_probes is not None:
             value = str(variable.value if hasattr(variable, "value") else variable)
-            if not _has_probe_field(value, inventory.probes.fields):
+            if not _has_probe_field(value, analysis_probes.fields):
                 findings.append(Finding(
                     Severity.BLOCKER, "MISSING_PROBE_FIELD",
-                    f"Probe variable {value!r} is absent; available: {inventory.probes.fields}.",
+                    f"Probe variable {value!r} is absent from probe set {analysis.probe_set_id!r}; "
+                    f"available: {analysis_probes.fields}.",
                     analysis.id,
                 ))
             selected_indices = getattr(analysis, "probe_indices", ())
-            if selected_indices and max(selected_indices) >= inventory.probes.probe_count:
+            if selected_indices and max(selected_indices) >= analysis_probes.probe_count:
                 findings.append(Finding(
                     Severity.BLOCKER, "INVALID_PROBE_SELECTION",
                     f"probe_indices must lie below discovered probe count "
-                    f"{inventory.probes.probe_count}.", analysis.id,
+                    f"{analysis_probes.probe_count}.", analysis.id,
                 ))
         linkage = getattr(analysis, "probe_linkage", None)
-        if linkage is not None and inventory.probes is not None:
+        linkage_probes = (
+            inventory.probe_sets.get(linkage.probe_set_id)
+            if linkage is not None else None
+        )
+        if linkage is not None and linkage_probes is None:
+            findings.append(Finding(
+                Severity.BLOCKER, "UNKNOWN_PROBE_SET",
+                f"Force–probe linkage references probe set {linkage.probe_set_id!r}, "
+                "which is not defined in machine.yaml.", analysis.id,
+            ))
+        if linkage is not None and linkage_probes is not None:
             value = linkage.variable.value
-            if not _has_probe_field(value, inventory.probes.fields):
+            if not _has_probe_field(value, linkage_probes.fields):
                 findings.append(Finding(
                     Severity.BLOCKER, "MISSING_LINKAGE_PROBE_FIELD",
                     f"Force–probe linkage variable {value!r} is absent from the archive.",
@@ -379,7 +441,7 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
             if selected_indices and (
                 len(set(selected_indices)) != len(selected_indices)
                 or min(selected_indices) < 0
-                or max(selected_indices) >= inventory.probes.probe_count
+                or max(selected_indices) >= linkage_probes.probe_count
             ):
                 findings.append(Finding(
                     Severity.BLOCKER, "INVALID_LINKAGE_PROBES",
@@ -387,7 +449,7 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                     analysis.id,
                 ))
 
-        nyquist = sampling.get("nyquist_frequency_hz")
+        nyquist = analysis_sampling.get("nyquist_frequency_hz")
         maximum = getattr(analysis, "frequency_max_hz", None)
         maximum = maximum or getattr(analysis, "band_max_hz", None)
         if maximum is not None and nyquist is not None and maximum > nyquist:
@@ -396,14 +458,113 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                 f"Requested maximum {maximum:.6g} Hz exceeds Nyquist {nyquist:.6g} Hz.",
                 analysis.id,
             ))
-        native_resolution = sampling.get("native_frequency_resolution_hz")
+        native_resolution = analysis_sampling.get("native_frequency_resolution_hz")
         if maximum is not None and native_resolution is not None and maximum < native_resolution:
             findings.append(Finding(
                 Severity.BLOCKER, "NO_RESOLVABLE_FREQUENCY_BIN",
                 f"Requested maximum {maximum:.6g} Hz is below the finite-record "
                 f"resolution {native_resolution:.6g} Hz.", analysis.id,
             ))
-        segment = sampling.get("segmented_estimators", {}).get(analysis.id)
+        temporal_wavenumber = getattr(analysis, "temporal_wavenumber", None)
+        if (
+            analysis.recipe == "directional_wave"
+            and temporal_wavenumber is not None
+            and getattr(temporal_wavenumber, "enabled", False)
+            and analysis_probes is not None
+        ):
+            dt = analysis_sampling.get("median_timestep_s")
+            sample_count = int(analysis_sampling.get("sample_count", 0))
+            if dt is None or dt <= 0.0:
+                findings.append(Finding(
+                    Severity.BLOCKER, "TEMPORAL_WAVENUMBER_NO_TIMING",
+                    "Time-localized wavenumber analysis requires a positive probe timestep.",
+                    analysis.id,
+                ))
+            else:
+                n_window = int(round(temporal_wavenumber.window_duration_s / dt))
+                if n_window < 8:
+                    findings.append(Finding(
+                        Severity.BLOCKER, "TEMPORAL_WAVENUMBER_SHORT_WINDOW",
+                        "temporal_wavenumber.window_duration_s must span at least 8 samples.",
+                        analysis.id,
+                    ))
+                if n_window > sample_count:
+                    findings.append(Finding(
+                        Severity.BLOCKER, "TEMPORAL_WAVENUMBER_LONG_WINDOW",
+                        "temporal_wavenumber.window_duration_s exceeds the selected record.",
+                        analysis.id,
+                    ))
+                if n_window <= sample_count:
+                    hop = max(1, int(round(n_window * (1.0 - temporal_wavenumber.overlap_fraction))))
+                    window_count = 1 + max(0, (sample_count - n_window) // hop)
+                    sampling.setdefault("temporal_wavenumber", {})[analysis.id] = {
+                        "window_samples": n_window,
+                        "window_count": window_count,
+                        "hop_samples": hop,
+                        "frequency_resolution_hz": 1.0 / (n_window * dt),
+                    }
+                    if window_count < 2:
+                        findings.append(Finding(
+                            Severity.BLOCKER, "TEMPORAL_WAVENUMBER_FEW_WINDOWS",
+                            "Time-localized wavenumber analysis requires at least two complete windows.",
+                            analysis.id,
+                        ))
+                    spatial_coordinates = np.asarray(analysis_probes.requested_x_m, dtype=float)
+                    selected_probe_indices = getattr(analysis, "probe_indices", ())
+                    valid_probe_indices = (
+                        not selected_probe_indices
+                        or min(selected_probe_indices) >= 0
+                        and max(selected_probe_indices) < len(spatial_coordinates)
+                    )
+                    if selected_probe_indices and valid_probe_indices:
+                        spatial_coordinates = spatial_coordinates[np.asarray(analysis.probe_indices, dtype=int)]
+                    spatial_coordinates = np.unique(np.sort(spatial_coordinates))
+                    if len(spatial_coordinates) >= 2:
+                        spacing = np.diff(spatial_coordinates)
+                        median_spacing = float(np.median(spacing))
+                        if not np.allclose(
+                            spacing, median_spacing, rtol=1.0e-5,
+                            atol=1.0e-12,
+                        ):
+                            findings.append(Finding(
+                                Severity.BLOCKER, "TEMPORAL_WAVENUMBER_NONUNIFORM_SPATIAL_GRID",
+                                "Time-localized f-k analysis requires uniformly spaced selected probes; "
+                                "the signed spatial FFT does not silently interpolate probe coordinates.",
+                                analysis.id,
+                            ))
+                    frequency_resolution = 1.0 / (n_window * dt)
+                    first_positive_bin = max(
+                        1, int(np.ceil(analysis.frequency_min_hz / frequency_resolution - 1.0e-12))
+                    )
+                    if maximum is not None and first_positive_bin * frequency_resolution > maximum:
+                        findings.append(Finding(
+                            Severity.BLOCKER, "TEMPORAL_WAVENUMBER_NO_BIN",
+                            "The localized frequency band contains no positive FFT bin; increase the window duration or frequency maximum.",
+                            analysis.id,
+                        ))
+                    if temporal_wavenumber.snapshot_times_s:
+                        record_start = analysis_probes.time_min_s
+                        record_end = analysis_probes.time_max_s
+                        if record_start is not None and analysis.record_start_time_s is not None:
+                            record_start = max(record_start, analysis.record_start_time_s)
+                        if record_end is not None and analysis.end_time_s is not None:
+                            record_end = min(record_end, analysis.end_time_s)
+                        half_window = 0.5 * n_window * dt
+                        outside = [
+                            value for value in temporal_wavenumber.snapshot_times_s
+                            if record_start is not None and record_end is not None
+                            and not (record_start + half_window <= value <= record_end - half_window)
+                        ]
+                        if outside:
+                            findings.append(Finding(
+                                Severity.BLOCKER, "TEMPORAL_WAVENUMBER_SNAPSHOT_OUTSIDE_RECORD",
+                                f"Requested snapshot times are outside complete temporal windows: {outside}.",
+                                analysis.id,
+                            ))
+        segment = analysis_sampling.get(
+            "segmented_estimator",
+            sampling.get("segmented_estimators", {}).get(analysis.id),
+        )
         if segment and segment["segment_count"] < 4:
             findings.append(Finding(
                 Severity.WARNING, "FEW_SEGMENTS",
@@ -422,12 +583,12 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                         f"resolution {segment['effective_frequency_resolution_hz']:.6g} Hz.",
                         analysis.id,
                     ))
-        if analysis.recipe == "single_pulse_response" and inventory.probes is not None:
+        if analysis.recipe == "single_pulse_response" and analysis_probes is not None:
             end = analysis.baseline_end_time_s
             if end is None:
                 end = analysis.start_time_s
-            start = inventory.probes.time_min_s
-            dt = inventory.probes.median_timestep_s
+            start = analysis_probes.time_min_s
+            dt = analysis_probes.median_timestep_s
             count = int(max(0, (end - start) / dt)) if end is not None and start is not None and dt else 0
             sampling.setdefault("quiescent_baselines", {})[analysis.id] = {
                 "baseline_end_time_s": end,
@@ -486,7 +647,7 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                         "Force–probe linkage requires at least four selected force snapshots.",
                         analysis.id,
                     ))
-                if inventory.plotfiles and inventory.probes:
+                if inventory.plotfiles and linkage_probes:
                     time_by_name = dict(zip(
                         inventory.plotfiles.names, inventory.plotfiles.times_s
                     ))
@@ -524,16 +685,16 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                         ))
                     start = max(
                         inventory.plotfiles.time_min_s or 0.0,
-                        inventory.probes.time_min_s or 0.0,
+                        linkage_probes.time_min_s or 0.0,
                     )
                     stop = min(
                         inventory.plotfiles.time_max_s or 0.0,
-                        inventory.probes.time_max_s or 0.0,
+                        linkage_probes.time_max_s or 0.0,
                     )
                     periods = max(0.0, stop - start) * linkage.forcing_frequency_hz
                     target_dt = max(
                         force_dt or 0.0,
-                        inventory.probes.median_timestep_s or 0.0,
+                        linkage_probes.median_timestep_s or 0.0,
                     )
                     synchronized_samples = (
                         int(np.floor((stop - start) / target_dt + 1.0e-9)) + 1
@@ -669,8 +830,8 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                     ))
         if analysis.recipe == "directional_wave":
             directional_sampling = (
-                _spatial_sampling(inventory.probes, analysis.probe_indices)
-                if inventory.probes is not None else {}
+                _spatial_sampling(analysis_probes, analysis.probe_indices)
+                if analysis_probes is not None else {}
             )
             sampling.setdefault("directional_wave", {})[analysis.id] = directional_sampling
             if directional_sampling.get("distinct_x_count", 0) < 5:
@@ -715,9 +876,9 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                         Severity.WARNING, "LOW_SPATIAL_RESOLUTION",
                         f"Only {samples:.2f} samples per shortest expected wavelength.", analysis.id,
                     ))
-        if analysis.recipe == "transient_wavepacket" and inventory.probes is not None:
+        if analysis.recipe == "transient_wavepacket" and analysis_probes is not None:
             transient_sampling = _spatial_sampling(
-                inventory.probes, analysis.probe_indices
+                analysis_probes, analysis.probe_indices
             )
             sampling.setdefault("transient_wavepacket", {})[analysis.id] = transient_sampling
             if transient_sampling.get("distinct_x_count", 0) < 3:
@@ -727,78 +888,65 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                     "streamwise probe coordinates.", analysis.id,
                 ))
 
-    for label, item in (("plotfile", inventory.plotfiles), ("probe", inventory.probes)):
+    for label, item in (("plotfile", inventory.plotfiles),):
         if item is not None:
             for message in item.errors:
                 findings.append(Finding(Severity.BLOCKER, f"{label.upper()}_INSPECTION", message))
-    if inventory.probes is not None:
-        if inventory.probes.sample_count < 2:
+    for probe_set_id, probes in inventory.probe_sets.items():
+        for message in probes.errors:
+            findings.append(Finding(
+                Severity.BLOCKER, "PROBE_INSPECTION",
+                f"Probe set {probe_set_id!r}: {message}",
+            ))
+        if probes.sample_count < 2:
             findings.append(Finding(
                 Severity.BLOCKER, "INSUFFICIENT_PROBE_SAMPLES",
-                "Probe input must contain at least two time samples.",
+                f"Probe set {probe_set_id!r} must contain at least two time samples.",
             ))
-        if inventory.probes.nonfinite_time_count:
-            findings.append(Finding(Severity.BLOCKER, "NONFINITE_TIME", "Probe time contains nonfinite values."))
-        if inventory.probes.nonpositive_timestep_count:
+        if probes.nonfinite_time_count:
+            findings.append(Finding(
+                Severity.BLOCKER, "NONFINITE_TIME",
+                f"Probe set {probe_set_id!r} contains nonfinite time values.",
+            ))
+        if probes.nonpositive_timestep_count:
             findings.append(Finding(
                 Severity.BLOCKER, "INVALID_TIME_ORDER",
-                "Probe time must be strictly increasing; nonpositive timestep(s) were found.",
+                f"Probe set {probe_set_id!r} time must be strictly increasing.",
             ))
-        missing_total = sum(inventory.probes.missing_value_count.values())
+        missing_total = sum(probes.missing_value_count.values())
         if missing_total:
             details = ", ".join(
-                f"{name}={count}" for name, count in inventory.probes.missing_value_count.items()
-                if count
+                f"{name}={count}" for name, count in probes.missing_value_count.items() if count
             )
             findings.append(Finding(
                 Severity.BLOCKER, "MISSING_PROBE_VALUES",
-                f"Probe fields contain {missing_total} nonfinite value(s): {details}.",
+                f"Probe set {probe_set_id!r} contains {missing_total} nonfinite value(s): {details}.",
             ))
-        if inventory.probes.restart_overlap_count:
+        if probes.restart_overlap_count:
             findings.append(Finding(
                 Severity.WARNING, "RESTART_OVERLAP",
-                f"Probe inventory reports {inventory.probes.restart_overlap_count} restart overlap(s).",
+                f"Probe set {probe_set_id!r} reports {probes.restart_overlap_count} restart overlap(s).",
             ))
-        dt = inventory.probes.median_timestep_s
-        timestep_deviation = inventory.probes.timestep_max_deviation_s
-        uniform_tolerance = (
-            abs(dt) * 1.0e-9 + max(abs(dt) * 1.0e-9, 1.0e-15)
-            if dt and dt > 0.0 else None
-        )
+        dt = probes.median_timestep_s
+        deviation = probes.timestep_max_deviation_s
+        tolerance = abs(dt) * 1.0e-9 + max(abs(dt) * 1.0e-9, 1.0e-15) if dt and dt > 0 else None
         nonuniform = (
-            timestep_deviation is not None
-            and uniform_tolerance is not None
-            and timestep_deviation > uniform_tolerance
-        )
-        if not nonuniform and dt and inventory.probes.timestep_std_s:
-            nonuniform = inventory.probes.timestep_std_s / dt > 1e-3
+            deviation is not None and tolerance is not None and deviation > tolerance
+        ) or (bool(dt and probes.timestep_std_s) and probes.timestep_std_s / dt > 1.0e-3)
         if nonuniform:
-            spectrum_analyses = [
-                analysis for analysis in project.enabled_analyses
-                if analysis.recipe == "probe_spectrum"
-            ]
-            strict_spectrum = [
-                analysis for analysis in spectrum_analyses
-                if getattr(analysis, "time_grid_policy", None) == "require_uniform"
-            ]
-            if strict_spectrum:
-                findings.append(Finding(
-                    Severity.BLOCKER, "NONUNIFORM_TIME",
-                    "Probe sampling is nonuniform; probe_spectrum analysis configured "
-                    "time_grid_policy=require_uniform.", strict_spectrum[0].id,
-                ))
-            elif spectrum_analyses:
-                findings.append(Finding(
-                    Severity.WARNING, "NONUNIFORM_TIME",
-                    "Probe sampling is nonuniform; probe_spectrum will resample to a "
-                    "uniform grid using the median timestep.",
-                ))
-            else:
-                findings.append(Finding(
-                    Severity.WARNING, "NONUNIFORM_TIME",
-                    "Probe sampling is nonuniform; FFT recipes require an explicit "
-                    "coordinate policy.",
-                ))
+            for related in project.enabled_analyses:
+                related_policy = None
+                if getattr(related, "probe_set_id", None) == probe_set_id:
+                    related_policy = getattr(related, "time_grid_policy", "resample_uniform")
+                linkage = getattr(related, "probe_linkage", None)
+                if linkage is not None and linkage.probe_set_id == probe_set_id:
+                    related_policy = linkage.time_grid_policy
+                if related_policy == "require_uniform":
+                    findings.append(Finding(
+                        Severity.BLOCKER, "NONUNIFORM_TIME",
+                        f"Probe set {probe_set_id!r} is nonuniform but analysis requires a uniform grid.",
+                        related.id,
+                    ))
 
     estimate_items = []
     for analysis in project.enabled_analyses:
@@ -839,10 +987,10 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
             for analysis in project.enabled_analyses
             if "plotfiles" in workflow_for(analysis.recipe).required_inputs_for(analysis)
         },
-        "probes": {
+        "probe_sets": {
             analysis.id: list(_selected_probe_indices(analysis)) or "all"
             for analysis in project.enabled_analyses
-            if "probes" in workflow_for(analysis.recipe).required_inputs_for(analysis)
+            if "probe_sets" in workflow_for(analysis.recipe).required_inputs_for(analysis)
         },
         "expected_output_root": str(output),
     }

@@ -32,9 +32,11 @@ class WizardTests(unittest.TestCase):
             "Baseline mode (none/static/paired)": "none",
             "Baseline run directory": "/tmp/baseline-run",
             "Comparison run directory": "/tmp/comparison-run",
-            "Baseline comparison archive": 1,
-            "Comparison archive": 1,
-            "Artifact ID": "spectrum.spectral.psd",
+            "Baseline archived run": 1,
+            "Comparison archived run": 1,
+            "Baseline analysis ID": "spectrum",
+            "Comparison analysis ID": "spectrum",
+            "Product ID": "spectral.psd",
             "Comma-separated target frequencies [Hz]": "10000,20000",
         }
         if text not in values:
@@ -46,11 +48,11 @@ class WizardTests(unittest.TestCase):
             plotfiles=SimpleNamespace(
                 canonical_fields={"temperature": "T", "pressure": "p"}
             ),
-            probes=SimpleNamespace(
+            probe_sets={"default": SimpleNamespace(
                 median_timestep_s=1.0e-6, time_min_s=0.0, time_max_s=1.0e-3,
                 fields=("p", "T"),
-            ),
-            comparison_archives={"baseline": "/tmp/baseline", "candidate": "/tmp/candidate"},
+            )},
+            archived_runs={"baseline": "/tmp/baseline", "candidate": "/tmp/candidate"},
         )
         console = SimpleNamespace(print=lambda *args, **kwargs: None)
         with patch("pelecpost.wizard.typer.prompt", side_effect=self.prompt), \

@@ -67,6 +67,7 @@ class WorkflowContext:
         interpretation: str,
         coordinate_metadata: dict | None = None,
         provenance: dict | None = None,
+        product_contract: dict | None = None,
     ) -> Artifact:
         from pelecpost.workflows import workflow_for
 
@@ -76,23 +77,38 @@ class WorkflowContext:
         sources: list[str] = []
         if "plotfiles" in required_inputs and self.plan.inventory.plotfiles is not None:
             sources.append(self.plan.inventory.plotfiles.source)
-        if "probes" in required_inputs and self.plan.inventory.probes is not None:
-            sources.append(self.plan.inventory.probes.source)
-        if "comparison_archives" in required_inputs:
-            sources.extend(self.plan.inventory.comparison_archives.values())
-            for probe_set in getattr(
-                self.plan.inventory, "comparison_probe_sets", {}
-            ).values():
-                sources.append(probe_set.source)
+        if "probe_sets" in required_inputs:
+            probe_set_id = getattr(self.analysis, "probe_set_id", None)
+            linkage = getattr(self.analysis, "probe_linkage", None)
+            if probe_set_id is None and linkage is not None:
+                probe_set_id = linkage.probe_set_id
+            if probe_set_id and probe_set_id in self.plan.inventory.probe_sets:
+                sources.append(self.plan.inventory.probe_sets[probe_set_id].source)
+        if "archived_runs" in required_inputs and self.analysis.recipe != "case_comparison":
+            sources.extend(str(path) for path in self.plan.inventory.archived_runs.values())
+        if self.analysis.recipe == "case_comparison":
+            for reference_name in ("baseline", "comparison"):
+                reference = getattr(self.analysis, reference_name)
+                if reference.archived_run_id is not None:
+                    archive = self.plan.inventory.archived_runs.get(reference.archived_run_id)
+                    if archive is not None:
+                        sources.append(str(archive))
+                else:
+                    sources.extend(
+                        str(self.run_dir / artifact.path)
+                        for artifact in self.artifacts.artifacts
+                        if artifact.recipe_instance == reference.analysis_id
+                    )
         baseline_id = (
             getattr(self.analysis, "baseline_id", None)
             if self.analysis.recipe == "aerodynamic_forces" else None
         )
         if baseline_id:
             baseline = self.project.machine_file.inputs.baselines[baseline_id]
+            baseline_source_config = baseline.source.expanduser()
             baseline_source = (
-                baseline.source if baseline.source.is_absolute()
-                else (self.project.root / baseline.source).resolve()
+                baseline_source_config if baseline_source_config.is_absolute()
+                else (self.project.root / baseline_source_config).resolve()
             )
             sources.append(str(baseline_source))
         provenance_payload = dict(provenance or {})
@@ -102,6 +118,13 @@ class WorkflowContext:
                 mode="json", exclude={"id", "enabled"}, exclude_none=True
             ),
         )
+        if kind == "array":
+            from pelecpost.analysis.products import product_contract as infer_product_contract
+
+            provenance_payload.setdefault(
+                "product_contract",
+                product_contract or infer_product_contract(artifact_id, path, units=units),
+            )
         return self.artifacts.register(Artifact(
             id=f"{self.analysis.id}.{artifact_id}",
             schema_version=1,

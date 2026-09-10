@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "segment_count": 7,
+  "approximate_degrees_of_freedom": 14,
+  "frequency_resolution_hz": 3906.249999999905,
+  "record_duration_s": 0.001023,
+  "interpretation": "Degrees of freedom are approximate because overlapped windowed segments are correlated."
+}

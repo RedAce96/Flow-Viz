@@ -190,9 +190,9 @@ inspected, but numerical recipes block at preflight.
 
 This file is customized on each server. It contains:
 
-- plotfile and/or probe locations;
+- plotfile locations and named probe sources;
 - optional baseline plotfile locations;
-- optional registered comparison-run archives;
+- optional named archived analysis runs;
 - output root;
 - workers, memory limit, FFT batch size, and optional scratch directory.
 
@@ -217,19 +217,23 @@ Relative paths resolve relative to the project directory. Thus
 `outputs.root: runs` writes below `PROJECT/runs`; an absolute path writes to
 that server location.
 
-For probes, configure exactly one compact archive or a collection of binary
-probe files:
+For probes, configure named sources. Each source uses exactly one compact
+archive or collection of binary probe files:
 
 ```yaml
 inputs:
-  probes:
-    compact_file: /scratch/myuser/probes/probes.h5
-    # Or:
-    # binary_files: [/scratch/myuser/probes/probe.segment*.pbin]
+  probe_sets:
+    asym:
+      binary_files: [/scratch/myuser/probes/asym.segment*.pbin]
+    gaus:
+      compact_file: /scratch/myuser/probes/gaus.h5
+  archived_runs:
+    previous_asym: /results/asym/run
 ```
 
 Compact HDF5 is preferable for repeated production analysis because it is
-self-contained, verified, and read-optimized.
+self-contained, verified, and read-optimized. Recipes select `probe_set_id`
+and never depend on the storage format.
 
 ### 4.3 `analyses.yaml`: recipes and scientific choices
 
@@ -274,13 +278,13 @@ The current recipes are:
 | `boundary_layer_reference` | How does a flat-plate boundary layer compare with a laminar reference? | plotfiles |
 | `surface_diagnostics` | Is reconstructed wall geometry and near-wall sampling trustworthy? | plotfiles |
 | `aerodynamic_forces` | What pressure, viscous, thermal, force, and moment loads act on the body? | plotfiles |
-| `probe_spectrum` | What stationary frequency content is present? | probes |
-| `single_pulse_response` | What response follows a finite laser pulse? | probes |
-| `directional_wave` | What direction, wavelength, phase speed, and amplification are measured? | probes |
-| `transient_wavepacket` | How does a transient packet arrive and propagate? | probes |
-| `nonlinear_coupling` | Are significant quadratic frequency interactions measured? | probes |
-| `modal_screening` | Which coherent low-rank structures are visible? | probes |
-| `case_comparison` | How do two registered runs differ? | comparison archives |
+| `probe_spectrum` | What stationary frequency content is present? | probe_sets |
+| `single_pulse_response` | What response follows a finite laser pulse? | probe_sets |
+| `directional_wave` | What direction, wavelength, phase speed, and amplification are measured? | probe_sets |
+| `transient_wavepacket` | How does a transient packet arrive and propagate? | probe_sets |
+| `nonlinear_coupling` | Are significant quadratic frequency interactions measured? | probe_sets |
+| `modal_screening` | Which coherent low-rank structures are visible? | probe_sets |
+| `case_comparison` | How do two registered runs differ? | local products and/or archived_runs |
 
 The registry is authoritative; see [`RECIPES.md`](RECIPES.md) for the full
 recipe contract.
@@ -373,10 +377,10 @@ pelec-post inspect PROJECT --json > input-inventory.json
 ```
 
 It reports plotfile count/names, AMR levels, time range, fields, canonical
-mapping, domain bounds, and solver units. For probes it reports format,
-sample/probe counts, fields, coordinates, timing, restart overlaps, missing
-values, mapping epochs, quality approval, and provenance. It also reports
-baselines and registered comparison archives.
+mapping, domain bounds, and solver units. For probes it reports every named
+source's format, sample/probe counts, fields, coordinates, timing, restart
+overlaps, missing values, mapping epochs, quality approval, and provenance. It
+also reports baselines and named archived analysis runs.
 
 Inspection is the first useful check after moving a project to a new server.
 
@@ -473,8 +477,10 @@ units, coordinate metadata, source inputs, interpretation, and provenance.
 Arrays use compressed NPZ/HDF5, scalar records use JSON, tables use unit-
 bearing CSV, and figures use PNG or vector formats.
 
-Case comparison checks schema, variables, units, coordinates, and preprocessing
-provenance before comparing products. Every run also includes conservative
+Case comparison checks typed product schemas, variables, units, coordinates,
+masks, and preprocessing provenance before comparing products. Time, frequency,
+and space use explicit alignment policies. Probe indices and coordinate arrays
+are never numerical difference metrics. Every run also includes conservative
 measurement evidence; it does not claim LST/PSE attribution or causality.
 
 ## 13. Probe archive workflow

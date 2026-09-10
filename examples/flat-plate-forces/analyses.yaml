@@ -8,5 +8,5 @@ analyses:
     conductivity_w_m_k: 0.012415
     # Optional independent steady momentum-balance diagnostic:
     # control_volume: {x_range_m: [0.0, 0.4], y_top_m: 0.03}
-    # Optional measured force/probe association (also configure inputs.probes):
-    # probe_linkage: {variable: pressure, force_component: y, forcing_frequency_hz: 1.0e6}
+    # Optional measured force/probe association (also configure inputs.probe_sets):
+    # probe_linkage: {probe_set_id: default, variable: pressure, force_component: y, forcing_frequency_hz: 1.0e6}

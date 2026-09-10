@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Literal
@@ -393,11 +394,29 @@ class BaseAnalysis(StrictModel):
     presentation: PresentationOverride | None = None
 
 
+class ProbePlottingConfig(StrictModel):
+    """Controls visual treatment of selected probe traces."""
+
+    mode: Literal["overlay", "panels", "both"] = "both"
+    normalization: Literal["none", "per_probe_peak"] = "none"
+    label: Literal["index_coordinates", "coordinates", "index"] = "index_coordinates"
+
+
 class ProbeAnalysis(BaseAnalysis):
+    probe_set_id: str = Field(min_length=1, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
     probe_indices: tuple[int, ...] = ()
+    probe_plotting: ProbePlottingConfig = Field(default_factory=ProbePlottingConfig)
+    record_start_time_s: float | None = None
+    end_time_s: PositiveFloat | None = None
+    time_grid_policy: Literal["resample_uniform", "require_uniform"] = "resample_uniform"
 
     @model_validator(mode="after")
     def valid_probe_indices(self) -> "ProbeAnalysis":
+        if not self.probe_set_id:
+            raise ValueError("probe_set_id cannot be empty")
+        if self.record_start_time_s is not None and self.end_time_s is not None:
+            if self.end_time_s <= self.record_start_time_s:
+                raise ValueError("end_time_s must exceed record_start_time_s")
         if any(index < 0 for index in self.probe_indices):
             raise ValueError("probe_indices cannot contain negative values")
         if len(self.probe_indices) != len(set(self.probe_indices)):
@@ -576,6 +595,8 @@ class ControlVolumeConfig(StrictModel):
 
 
 class ForceProbeLinkageConfig(StrictModel):
+    probe_set_id: str = Field(min_length=1, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+    time_grid_policy: Literal["resample_uniform", "require_uniform"] = "resample_uniform"
     variable: Variable = Variable.PRESSURE
     force_component: Literal["x", "y", "moment"] = "y"
     forcing_frequency_hz: PositiveFloat
@@ -622,12 +643,10 @@ class ProbeSpectrumAnalysis(ProbeAnalysis):
     recipe: Literal["probe_spectrum"]
     variable: Variable
     frequency_max_hz: PositiveFloat | None = None
-    end_time_s: PositiveFloat | None = None
     window: Literal["hann", "hamming", "blackman", "rectangular"] = "hann"
     detrend: Literal["mean", "linear", "none"] = "mean"
     welch_segment_samples: PositiveInt | None = None
     overlap_fraction: float = Field(default=0.5, ge=0.0, lt=1.0)
-    time_grid_policy: Literal["resample_uniform", "require_uniform"] = "resample_uniform"
 
 
 class SinglePulseAnalysis(ProbeAnalysis):
@@ -644,6 +663,35 @@ class SinglePulseAnalysis(ProbeAnalysis):
     frequency_max_hz: PositiveFloat | None = None
 
 
+class TemporalWavenumberDisabled(StrictModel):
+    enabled: Literal[False] = False
+
+
+class TemporalWavenumberEnabled(StrictModel):
+    enabled: Literal[True] = True
+    window_duration_s: PositiveFloat
+    overlap_fraction: float = Field(default=0.75, ge=0.0, lt=1.0)
+    window: Literal["hann", "hamming", "blackman", "rectangular"] = "hann"
+    snapshot_times_s: tuple[float, ...] = ()
+    minimum_relative_energy_db: float = Field(default=-30.0, le=0.0)
+    display_floor_db: float = Field(default=-60.0, le=0.0)
+
+    @field_validator("snapshot_times_s")
+    @classmethod
+    def finite_snapshot_times(cls, values: tuple[float, ...]) -> tuple[float, ...]:
+        if any(not math.isfinite(value) for value in values):
+            raise ValueError("snapshot_times_s must contain finite values")
+        if len(values) != len(set(values)):
+            raise ValueError("snapshot_times_s must be unique")
+        return values
+
+
+TemporalWavenumberConfig = Annotated[
+    TemporalWavenumberDisabled | TemporalWavenumberEnabled,
+    Field(discriminator="enabled"),
+]
+
+
 class DirectionalWaveAnalysis(ProbeAnalysis):
     recipe: Literal["directional_wave"]
     variable: Variable
@@ -654,6 +702,9 @@ class DirectionalWaveAnalysis(ProbeAnalysis):
     minimum_coherence: float = Field(default=0.8, ge=0.0, le=1.0)
     spatial_window: Literal["hann", "hamming", "blackman", "rectangular"] = "hann"
     temporal_window: Literal["hann", "hamming", "blackman", "rectangular"] = "rectangular"
+    temporal_wavenumber: "TemporalWavenumberConfig" = Field(
+        default_factory=lambda: TemporalWavenumberDisabled()
+    )
 
     @model_validator(mode="after")
     def ranges(self) -> "DirectionalWaveAnalysis":
@@ -714,49 +765,54 @@ class ModalScreeningAnalysis(ProbeAnalysis):
     sensitivity_windows: tuple[tuple[float, float], ...] = ((0.0, 0.5), (0.5, 1.0))
 
 
-class CaseComparisonAnalysis(BaseAnalysis):
-    recipe: Literal["case_comparison"]
-    baseline_id: str
-    comparison_id: str
-    artifact_ids: tuple[str, ...] = Field(default_factory=tuple)
-    # Direct-probe overlay mode: compare probe binaries in one run instead of
-    # archived runs. Requires comparison_probe_sets in machine.yaml.
-    variable: Variable | None = None
-    probe_indices: tuple[int, ...] = ()
-    end_time_s: PositiveFloat | None = None
-    window: Literal["hann", "hamming", "blackman", "rectangular"] | None = None
-    detrend: Literal["mean", "linear", "none"] | None = None
-    welch_segment_samples: PositiveInt | None = None
-    overlap_fraction: float | None = Field(default=None, ge=0.0, lt=1.0)
-    time_grid_policy: Literal["resample_uniform", "require_uniform"] | None = None
-    frequency_max_hz: PositiveFloat | None = None
-    overlay_probes: tuple[int, ...] = ()
+class ComparisonReference(StrictModel):
+    """A product from this run or from a named archived run."""
+
+    analysis_id: str = Field(min_length=1, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+    archived_run_id: str | None = Field(
+        default=None, min_length=1, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    )
 
     @model_validator(mode="after")
-    def distinct_runs_and_products(self) -> "CaseComparisonAnalysis":
-        if self.baseline_id == self.comparison_id:
-            raise ValueError("baseline_id and comparison_id must be different")
-        if len(self.artifact_ids) != len(set(self.artifact_ids)):
-            raise ValueError("artifact_ids must be unique")
-        probe_mode = any(
-            getattr(self, name) is not None
-            for name in ("variable", "end_time_s", "window", "detrend",
-                         "welch_segment_samples", "overlap_fraction",
-                         "time_grid_policy", "frequency_max_hz")
-        ) or bool(self.probe_indices)
-        archive_mode = bool(self.artifact_ids)
-        if probe_mode and archive_mode:
-            raise ValueError(
-                "case_comparison: choose artifact_ids (archive mode) or "
-                "variable/probe_indices (direct probe mode), not both"
-            )
-        if not archive_mode and not probe_mode:
-            raise ValueError(
-                "case_comparison requires artifact_ids or direct probe "
-                "comparison fields (variable + probe comparison mode)"
-            )
-        if probe_mode and self.variable is None:
-            raise ValueError("direct probe comparison requires variable")
+    def valid_reference(self) -> "ComparisonReference":
+        if not self.analysis_id:
+            raise ValueError("comparison analysis_id cannot be empty")
+        if self.archived_run_id == "":
+            raise ValueError("archived_run_id cannot be empty")
+        return self
+
+
+AxisAlignmentPolicy = Literal[
+    "strict", "intersection", "interpolate_to_baseline", "interpolate_to_comparison"
+]
+
+
+class ComparisonAlignment(StrictModel):
+    time: AxisAlignmentPolicy = "strict"
+    frequency: AxisAlignmentPolicy = "strict"
+    space: AxisAlignmentPolicy = "strict"
+    wavenumber: AxisAlignmentPolicy = "strict"
+    time_tolerance_s: float = Field(default=1.0e-15, ge=0.0)
+    frequency_tolerance_hz: float = Field(default=1.0e-9, ge=0.0)
+    space_tolerance_m: float = Field(default=1.0e-12, ge=0.0)
+    wavenumber_tolerance_rad_m: float = Field(default=1.0e-9, ge=0.0)
+
+
+class CaseComparisonAnalysis(BaseAnalysis):
+    recipe: Literal["case_comparison"]
+    baseline: "ComparisonReference"
+    comparison: "ComparisonReference"
+    product_ids: tuple[str, ...] = Field(min_length=1, json_schema_extra={"uniqueItems": True})
+    alignment: "ComparisonAlignment" = Field(default_factory=lambda: ComparisonAlignment())
+
+    @model_validator(mode="after")
+    def distinct_products(self) -> "CaseComparisonAnalysis":
+        if self.baseline == self.comparison:
+            raise ValueError("baseline and comparison references must be different")
+        if len(self.product_ids) != len(set(self.product_ids)):
+            raise ValueError("product_ids must be unique")
+        if any(not product_id.strip() for product_id in self.product_ids):
+            raise ValueError("product_ids cannot contain empty values")
         return self
 
 
@@ -798,27 +854,60 @@ class ProbeInput(StrictModel):
     compact_file: Path | None = None
     binary_files: tuple[str, ...] = ()
 
+    model_config = ConfigDict(
+        extra="forbid", frozen=True,
+        json_schema_extra={
+            "oneOf": [
+                {
+                    "required": ["compact_file"],
+                    "properties": {
+                        "compact_file": {"type": "string"},
+                        "binary_files": {"maxItems": 0},
+                    },
+                },
+                {
+                    "required": ["binary_files"],
+                    "properties": {
+                        "compact_file": {"type": "null"},
+                        "binary_files": {"minItems": 1},
+                    },
+                },
+            ],
+        },
+    )
+
+    @field_validator("compact_file", mode="before")
+    @classmethod
+    def nonempty_compact_file(cls, value: Path | str | None) -> Path | str | None:
+        if value is not None and not str(value).strip():
+            raise ValueError("compact_file cannot be empty")
+        return value
+
     @model_validator(mode="after")
     def one_source(self) -> "ProbeInput":
         if self.compact_file is not None and self.binary_files:
             raise ValueError("choose compact_file or binary_files, not both")
+        if self.compact_file is None and not self.binary_files:
+            raise ValueError("probe input requires compact_file or binary_files")
+        if any(not pattern.strip() for pattern in self.binary_files):
+            raise ValueError("binary_files cannot contain empty paths")
         return self
 
 
 class InputConfig(StrictModel):
     plotfiles: PlotfileInput | None = None
-    probes: ProbeInput | None = None
-    comparison_archives: dict[str, Path] = Field(default_factory=dict)
-    comparison_probe_sets: dict[str, ProbeInput] = Field(default_factory=dict)
+    probe_sets: dict[str, ProbeInput] = Field(default_factory=dict)
+    archived_runs: dict[str, Path] = Field(default_factory=dict)
     baselines: dict[str, PlotfileInput] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def comparison_requires_mode(self) -> "InputConfig":
-        if self.comparison_archives and self.comparison_probe_sets:
-            raise ValueError(
-                "choose comparison_archives (run dirs with artifacts.json) or "
-                "comparison_probe_sets (direct probe binaries), not both"
-            )
+    def named_sources(self) -> "InputConfig":
+        for field_name, values in (
+            ("probe_sets", self.probe_sets), ("archived_runs", self.archived_runs),
+            ("baselines", self.baselines),
+        ):
+            if any(not name.strip() for name in values):
+                raise ValueError(f"{field_name} names cannot be empty")
         return self
 
 
