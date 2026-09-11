@@ -233,8 +233,19 @@ def _shared_contour_ranges(
     extrema = {field: [np.inf, -np.inf] for field in selected}
     samples: dict[str, np.ndarray] = {field: np.empty(0) for field in selected}
     maximum_samples = 500_000
-    for plotfile in paths:
-        dataset = _load(context, plotfile, requested, _region(analysis))
+    total = len(paths)
+    for index, plotfile in enumerate(paths, start=1):
+        with context.timed_phase(
+            "shared-range-plotfile-load", plotfile=plotfile,
+            plotfile_index=index, plotfile_count=total,
+        ):
+            dataset = _load(context, plotfile, requested, _region(analysis))
+        context.progress(
+            f"scanning shared contour ranges for plotfile {index}/{total}",
+            event="contour-range-scan", plotfile=plotfile,
+            plotfile_index=index, plotfile_count=total,
+            fields=sorted(selected),
+        )
         for field, style in selected.items():
             values = np.asarray(dataset["fields"][field], dtype=float).ravel()
             values = values[np.isfinite(values)]
@@ -261,6 +272,12 @@ def _shared_contour_ranges(
                 [style.range.lower_percentile, style.range.upper_percentile],
             ))
         resolved[field] = (float(limits[0]), float(limits[1]))
+        context.progress(
+            f"resolved shared contour range for {field}",
+            event="contour-range-resolved", field=field,
+            minimum=resolved[field][0], maximum=resolved[field][1],
+            range_mode=style.range.mode,
+        )
     return resolved
 
 
@@ -587,59 +604,79 @@ def run_flow_overview(context: WorkflowContext) -> None:
     requested = set(output_fields)
     if analysis.streamlines:
         requested.update(("x_velocity", "y_velocity"))
-    paths = _paths(context)
+    with context.timed_phase("plotfile-discovery"):
+        paths = _paths(context)
+    context.progress(
+        f"discovered {len(paths)} selected plotfile(s)",
+        event="plotfiles-discovered", plotfile_count=len(paths),
+        first_plotfile=paths[0] if paths else None,
+        last_plotfile=paths[-1] if paths else None,
+    )
     styles = {
         field: _field_contour_style(context, analysis, field)
         for field in sorted(output_fields)
     }
-    shared_ranges = _shared_contour_ranges(context, analysis, paths, requested, styles)
+    with context.timed_phase(
+        "shared-contour-range-scan", plotfile_count=len(paths),
+        fields=sorted(output_fields),
+    ):
+        shared_ranges = _shared_contour_ranges(context, analysis, paths, requested, styles)
     with visualization.presentation_context(presentation):
-        for plotfile in paths:
-            dataset = _load(context, plotfile, requested, _region(analysis))
+        for plotfile_index, plotfile in enumerate(paths, start=1):
+            with context.timed_phase(
+                "render-pass-plotfile-load", plotfile=plotfile,
+                plotfile_index=plotfile_index, plotfile_count=len(paths),
+            ):
+                dataset = _load(context, plotfile, requested, _region(analysis))
             label = dataset["plot_label"]
             time_text = plotting_api.format_dataset_time(
                 dataset, precision=presentation.time_annotation.precision,
             )
             for field in sorted(output_fields):
-                style = styles[field]
-                limits = _contour_limits(
-                    dataset["fields"][field], style, shared_ranges.get(field),
-                )
-                figure, contour_axis, colorbar_axis, _, time_artist, resolved_limits = (
-                    visualization.render_contour(
-                        dataset, field, presentation, style, limits,
-                        x_limits_m=analysis.x_limits_m, y_limits_m=analysis.y_limits_m,
-                        time_text=time_text,
+                with context.timed_phase(
+                    "contour-render-and-save", field=field, plotfile=plotfile,
+                    plotfile_label=label, plotfile_index=plotfile_index,
+                    plotfile_count=len(paths),
+                ):
+                    style = styles[field]
+                    limits = _contour_limits(
+                        dataset["fields"][field], style, shared_ranges.get(field),
                     )
-                )
-                if time_artist is not None and visualization.artists_overlap(
-                    figure, time_artist, colorbar_axis,
-                ):
-                    plt.close(figure)
-                    raise RuntimeError("time annotation overlaps the contour colorbar")
-                if time_artist is not None and visualization.artists_overlap(
-                    figure, time_artist, contour_axis,
-                ):
-                    plt.close(figure)
-                    raise RuntimeError("time annotation overlaps the contour data axes")
-                if visualization.artists_overlap(figure, colorbar_axis, contour_axis):
-                    plt.close(figure)
-                    raise RuntimeError("contour colorbar or label overlaps the data axes")
-                figure_paths = visualization.save_figure_variants(
-                    figure, context.figure_dir / f"{label}_{field}", presentation.figure,
-                )
-                _register_figure_variants(
-                    context, artifact_id=f"field.contours.{label}.{field}",
-                    paths=figure_paths, variable=field, units="SI; see field label",
-                    coordinate_metadata={"x": "m", "y": "m"},
-                    interpretation="Descriptive two-dimensional field view at one registered plotfile time.",
-                    provenance={
-                        "plotfile": plotfile,
-                        "freestream_reference": dataset.get("freestream_reference"),
-                        "contour_style": style.model_dump(mode="json"),
-                        "resolved_color_range": list(resolved_limits),
-                    },
-                )
+                    figure, contour_axis, colorbar_axis, _, time_artist, resolved_limits = (
+                        visualization.render_contour(
+                            dataset, field, presentation, style, limits,
+                            x_limits_m=analysis.x_limits_m, y_limits_m=analysis.y_limits_m,
+                            time_text=time_text,
+                        )
+                    )
+                    if time_artist is not None and visualization.artists_overlap(
+                        figure, time_artist, colorbar_axis,
+                    ):
+                        plt.close(figure)
+                        raise RuntimeError("time annotation overlaps the contour colorbar")
+                    if time_artist is not None and visualization.artists_overlap(
+                        figure, time_artist, contour_axis,
+                    ):
+                        plt.close(figure)
+                        raise RuntimeError("time annotation overlaps the contour data axes")
+                    if visualization.artists_overlap(figure, colorbar_axis, contour_axis):
+                        plt.close(figure)
+                        raise RuntimeError("contour colorbar or label overlaps the data axes")
+                    figure_paths = visualization.save_figure_variants(
+                        figure, context.figure_dir / f"{label}_{field}", presentation.figure,
+                    )
+                    _register_figure_variants(
+                        context, artifact_id=f"field.contours.{label}.{field}",
+                        paths=figure_paths, variable=field, units="SI; see field label",
+                        coordinate_metadata={"x": "m", "y": "m"},
+                        interpretation="Descriptive two-dimensional field view at one registered plotfile time.",
+                        provenance={
+                            "plotfile": plotfile,
+                            "freestream_reference": dataset.get("freestream_reference"),
+                            "contour_style": style.model_dump(mode="json"),
+                            "resolved_color_range": list(resolved_limits),
+                        },
+                    )
             for station in analysis.line_stations_x_m:
                 profiles = []
                 for field in sorted(output_fields):

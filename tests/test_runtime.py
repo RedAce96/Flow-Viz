@@ -166,6 +166,41 @@ class RuntimeTests(unittest.TestCase):
             self.assertIn("synthetic independent failure", report)
             self.assertIn("spectrum.spectral.psd", report)
 
+    def test_run_log_records_workflow_phase_timing_and_failure_context(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.make_project(Path(temporary), [{
+                "id": "spectrum", "recipe": "probe_spectrum", "variable": "pressure",
+            }])
+
+            def fail_during_load(context):
+                with context.timed_phase("synthetic-data-load", source="test-input"):
+                    raise RuntimeError("synthetic timed failure")
+
+            importlib.import_module("pelecpost.analysis.spectral")
+            with patch.dict(EXECUTORS, {"probe_spectrum": fail_during_load}):
+                result = run_project(project, "timing-log")
+
+            self.assertEqual(result.status, "failed")
+            log_lines = (result.run_dir / "logs/run.log").read_text(encoding="utf-8").splitlines()
+            events = [json.loads(line) for line in log_lines if line.startswith("{")]
+            event_names = [item["event"] for item in events]
+            self.assertIn("workflow-start", event_names)
+            self.assertIn("phase-start", event_names)
+            self.assertIn("phase-failed", event_names)
+            self.assertIn("workflow-failed", event_names)
+            failed_phase = next(
+                item for item in events
+                if item["event"] == "phase-failed"
+                and item.get("phase") == "synthetic-data-load"
+            )
+            self.assertGreaterEqual(failed_phase["elapsed_s"], 0.0)
+            self.assertEqual(failed_phase["error_type"], "RuntimeError")
+            manifest = json.loads((result.run_dir / "manifest.json").read_text())
+            workflow = manifest["workflows"]["analysis.spectrum"]
+            self.assertEqual(workflow["active_phase"], "synthetic-data-load")
+            self.assertGreaterEqual(workflow["duration_s"], 0.0)
+            self.assertTrue(workflow["phase_timings"])
+
     def test_executor_cannot_silently_skip_declared_products(self):
         with tempfile.TemporaryDirectory() as temporary:
             project = self.make_project(Path(temporary), [{

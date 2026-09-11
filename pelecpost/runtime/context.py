@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from contextlib import ExitStack
-from dataclasses import dataclass
+from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
+import time
 from types import TracebackType
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from pelecpost.config.models import AnalysisConfig, ResolvedProject
 from pelecpost.preflight import PreflightPlan
@@ -21,8 +22,10 @@ class WorkflowContext:
     run_dir: Path
     analysis: AnalysisConfig
     artifacts: ArtifactRegistry
+    progress_callback: Callable[[str, str, dict[str, Any]], None] | None = None
     _resources: ExitStack | None = None
     resource_metadata: dict[str, Any] | None = None
+    _phase_stack: list[str] = field(default_factory=list)
 
     def __enter__(self) -> "WorkflowContext":
         self._resources = ExitStack()
@@ -43,6 +46,56 @@ class WorkflowContext:
         if self._resources is None:
             raise RuntimeError("WorkflowContext must be entered before acquiring resources")
         self._resources.callback(callback)
+
+    def progress(
+        self,
+        message: str,
+        *,
+        event: str = "progress",
+        phase: str | None = None,
+        **details: Any,
+    ) -> None:
+        """Emit an immediately visible workflow progress event when logging is configured."""
+        if self.progress_callback is None:
+            return
+        active_phase = phase or (self._phase_stack[-1] if self._phase_stack else None)
+        payload = dict(details)
+        if active_phase is not None:
+            payload["phase"] = active_phase
+        self.progress_callback(event, message, payload)
+
+    @contextmanager
+    def timed_phase(self, phase: str, **details: Any) -> Iterator[None]:
+        """Report start, completion, and failure timing for one executor phase."""
+        self._phase_stack.append(phase)
+        parent_phase = self._phase_stack[-2] if len(self._phase_stack) > 1 else None
+        started = time.perf_counter()
+        self.progress(
+            f"starting {phase}", event="phase-start", phase=phase,
+            parent_phase=parent_phase, **details,
+        )
+        try:
+            yield
+        except BaseException as exc:
+            self.progress(
+                f"failed {phase}: {type(exc).__name__}: {exc}",
+                event="phase-failed",
+                phase=phase,
+                elapsed_s=time.perf_counter() - started,
+                error_type=type(exc).__name__,
+                error=str(exc),
+                parent_phase=parent_phase,
+                **details,
+            )
+            raise
+        else:
+            self.progress(
+                f"completed {phase}", event="phase-complete", phase=phase,
+                elapsed_s=time.perf_counter() - started,
+                parent_phase=parent_phase, **details,
+            )
+        finally:
+            self._phase_stack.pop()
 
     @property
     def data_dir(self) -> Path:
@@ -125,7 +178,7 @@ class WorkflowContext:
                 "product_contract",
                 product_contract or infer_product_contract(artifact_id, path, units=units),
             )
-        return self.artifacts.register(Artifact(
+        artifact = self.artifacts.register(Artifact(
             id=f"{self.analysis.id}.{artifact_id}",
             schema_version=1,
             recipe_instance=self.analysis.id,
@@ -138,3 +191,8 @@ class WorkflowContext:
             interpretation=interpretation,
             provenance=provenance_payload,
         ))
+        self.progress(
+            f"registered artifact {artifact.id}", event="artifact-registered",
+            artifact_id=artifact.id, artifact_kind=kind, artifact_path=artifact.path,
+        )
+        return artifact

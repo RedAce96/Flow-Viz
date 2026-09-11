@@ -11,6 +11,7 @@ import platform
 import re
 import socket
 import subprocess
+import time
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
@@ -182,6 +183,7 @@ def _provenance(project: ResolvedProject) -> dict[str, Any]:
 
 
 def run_project(project: ResolvedProject, run_name: str | None = None) -> RunResult:
+    run_started = time.perf_counter()
     plan = create_plan(project)
     if plan.blockers:
         raise PreflightBlockedError(
@@ -208,11 +210,35 @@ def run_project(project: ResolvedProject, run_name: str | None = None) -> RunRes
     dump_yaml(run_dir / "resolved-machine.yaml", project.machine_file)
     atomic_json(run_dir / "plan.json", plan.as_dict())
     registry = ArtifactRegistry(run_dir)
+    log_path = run_dir / "logs" / "run.log"
+
+    def emit(level: str, event: str, message: str, **details: Any) -> None:
+        payload = {
+            "timestamp_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "level": level,
+            "event": event,
+            "message": message,
+            **details,
+        }
+        # Opening for each event makes every line visible immediately to `tail -f` and
+        # durable even if a batch scheduler terminates the process between phases.
+        with log_path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
+            stream.flush()
+
+    emit("INFO", "run-start", "post-processing run initialized", run_id=run_id)
+    provenance_started = time.perf_counter()
+    emit("INFO", "phase-start", "collecting run provenance", phase="run-provenance")
+    provenance = _provenance(project)
+    emit(
+        "INFO", "phase-complete", "collected run provenance",
+        phase="run-provenance", elapsed_s=time.perf_counter() - provenance_started,
+    )
     manifest: dict[str, Any] = {
         "schema": "pelecpost.run-manifest", "schema_version": 1,
         "run_id": run_id, "case_id": project.case_file.case.id,
         "created_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
-        "status": "running", "workflows": {}, "provenance": _provenance(project),
+        "status": "running", "workflows": {}, "provenance": provenance,
     }
     atomic_json(run_dir / "manifest.json", manifest)
 
@@ -232,31 +258,69 @@ def run_project(project: ResolvedProject, run_name: str | None = None) -> RunRes
         ("run.manifest", "manifest.json", "Atomic workflow state and provenance manifest."),
     ):
         register_control(artifact_id, relative, interpretation)
-    log_path = run_dir / "logs" / "run.log"
     dependencies_ok: dict[str, bool] = {}
     analyses = {item.id: item for item in project.enabled_analyses}
 
-    def record(node_id: str, status: str, message: str = "") -> None:
-        manifest["workflows"][node_id] = {"status": status, "message": message}
+    def record(node_id: str, status: str, message: str = "", **details: Any) -> None:
+        entry = manifest["workflows"].setdefault(node_id, {})
+        entry.update({"status": status, "message": message, **details})
         atomic_json(run_dir / "manifest.json", manifest)
 
-    with log_path.open("a", encoding="utf-8") as log:
-        for node_id in graph.order:
-            node = graph.node(node_id)
-            failed_dependencies = [item for item in node.dependencies if not dependencies_ok.get(item, False)]
-            if failed_dependencies:
-                record(node_id, "skipped-by-dependency", f"failed dependencies: {failed_dependencies}")
-                dependencies_ok[node_id] = False
-                continue
-            if node.internal:
-                record(node_id, "completed", "preflight-validated shared resource")
-                dependencies_ok[node_id] = True
-                continue
-            if node.analysis_id is None:
-                raise RuntimeError(f"public workflow node {node_id} has no analysis owner")
-            analysis = analyses[node.analysis_id]
-            try:
-                with WorkflowContext(project, plan, run_dir, analysis, registry) as context:
+    for node_id in graph.order:
+        node = graph.node(node_id)
+        failed_dependencies = [item for item in node.dependencies if not dependencies_ok.get(item, False)]
+        if failed_dependencies:
+            message = f"failed dependencies: {failed_dependencies}"
+            record(node_id, "skipped-by-dependency", message)
+            emit("WARNING", "workflow-skipped", message, workflow=node_id)
+            dependencies_ok[node_id] = False
+            continue
+        if node.internal:
+            record(node_id, "completed", "preflight-validated shared resource")
+            emit(
+                "INFO", "workflow-complete", "preflight-validated shared resource",
+                workflow=node_id, elapsed_s=0.0,
+            )
+            dependencies_ok[node_id] = True
+            continue
+        if node.analysis_id is None:
+            raise RuntimeError(f"public workflow node {node_id} has no analysis owner")
+        analysis = analyses[node.analysis_id]
+        workflow_started = time.perf_counter()
+        started_utc = dt.datetime.now(dt.timezone.utc).isoformat()
+        active_phase: str | None = "workflow-initialization"
+        phase_timings: list[dict[str, Any]] = []
+        artifact_count_before = len(registry.artifacts)
+        record(node_id, "running", started_utc=started_utc, active_phase=active_phase)
+        emit(
+            "INFO", "workflow-start", f"starting {node_id}", workflow=node_id,
+            analysis_id=analysis.id, recipe=analysis.recipe,
+        )
+
+        def workflow_progress(event: str, message: str, details: dict[str, Any]) -> None:
+            nonlocal active_phase
+            phase = details.get("phase")
+            if event == "phase-start" and isinstance(phase, str):
+                active_phase = phase
+            elif event == "phase-complete":
+                parent_phase = details.get("parent_phase")
+                active_phase = parent_phase if isinstance(parent_phase, str) else None
+                phase_timings.append({"event": event, **details})
+            elif event == "phase-failed":
+                phase_timings.append({"event": event, **details})
+            entry = manifest["workflows"][node_id]
+            entry["active_phase"] = active_phase
+            entry["last_progress_utc"] = dt.datetime.now(dt.timezone.utc).isoformat()
+            atomic_json(run_dir / "manifest.json", manifest)
+            level = "ERROR" if event == "phase-failed" else "INFO"
+            emit(level, event, message, workflow=node_id, **details)
+
+        try:
+            with WorkflowContext(
+                project, plan, run_dir, analysis, registry,
+                progress_callback=workflow_progress,
+            ) as context:
+                with context.timed_phase("workflow-execution"):
                     workflow = workflow_for(analysis.recipe)
                     workflow.execute(context)
                     produced = tuple(
@@ -277,23 +341,66 @@ def run_project(project: ResolvedProject, run_name: str | None = None) -> RunRes
                             "workflow returned without declared artifact(s): "
                             + ", ".join(missing_products)
                         )
-            except KeyboardInterrupt:
+        except KeyboardInterrupt as exc:
+            elapsed = time.perf_counter() - workflow_started
+            with log_path.open("a", encoding="utf-8") as log:
                 traceback.print_exc(file=log)
-                record(node_id, "interrupted", "execution interrupted by user or scheduler")
-                dependencies_ok[node_id] = False
-                manifest["status"] = "interrupted"
-                break
-            except UnsupportedCapabilityError as exc:
+                log.flush()
+            message = "execution interrupted by user or scheduler"
+            record(
+                node_id, "interrupted", message, completed_utc=dt.datetime.now(dt.timezone.utc).isoformat(),
+                duration_s=elapsed, active_phase=active_phase, phase_timings=phase_timings,
+            )
+            emit(
+                "ERROR", "workflow-interrupted", message, workflow=node_id,
+                active_phase=active_phase, elapsed_s=elapsed, error=str(exc),
+            )
+            dependencies_ok[node_id] = False
+            manifest["status"] = "interrupted"
+            break
+        except UnsupportedCapabilityError as exc:
+            elapsed = time.perf_counter() - workflow_started
+            with log_path.open("a", encoding="utf-8") as log:
                 traceback.print_exc(file=log)
-                record(node_id, "unavailable", str(exc))
-                dependencies_ok[node_id] = False
-            except Exception as exc:  # independent workflows must continue
+                log.flush()
+            record(
+                node_id, "unavailable", str(exc), completed_utc=dt.datetime.now(dt.timezone.utc).isoformat(),
+                duration_s=elapsed, active_phase=active_phase, phase_timings=phase_timings,
+            )
+            emit(
+                "ERROR", "workflow-unavailable", str(exc), workflow=node_id,
+                active_phase=active_phase, elapsed_s=elapsed,
+            )
+            dependencies_ok[node_id] = False
+        except Exception as exc:  # independent workflows must continue
+            elapsed = time.perf_counter() - workflow_started
+            with log_path.open("a", encoding="utf-8") as log:
                 traceback.print_exc(file=log)
-                record(node_id, "failed", f"{type(exc).__name__}: {exc}")
-                dependencies_ok[node_id] = False
-            else:
-                record(node_id, "completed")
-                dependencies_ok[node_id] = True
+                log.flush()
+            message = f"{type(exc).__name__}: {exc}"
+            record(
+                node_id, "failed", message, completed_utc=dt.datetime.now(dt.timezone.utc).isoformat(),
+                duration_s=elapsed, active_phase=active_phase, phase_timings=phase_timings,
+                error_type=type(exc).__name__,
+            )
+            emit(
+                "ERROR", "workflow-failed", message, workflow=node_id,
+                active_phase=active_phase, elapsed_s=elapsed,
+            )
+            dependencies_ok[node_id] = False
+        else:
+            elapsed = time.perf_counter() - workflow_started
+            produced_count = len(registry.artifacts) - artifact_count_before
+            record(
+                node_id, "completed", completed_utc=dt.datetime.now(dt.timezone.utc).isoformat(),
+                duration_s=elapsed, active_phase=None, phase_timings=phase_timings,
+                artifact_count=produced_count,
+            )
+            emit(
+                "INFO", "workflow-complete", f"completed {node_id}", workflow=node_id,
+                elapsed_s=elapsed, artifact_count=produced_count,
+            )
+            dependencies_ok[node_id] = True
     failed = tuple(
         name for name, item in manifest["workflows"].items()
         if item["status"] in {"failed", "unavailable", "skipped-by-dependency", "interrupted"}
@@ -323,7 +430,13 @@ def run_project(project: ResolvedProject, run_name: str | None = None) -> RunRes
         },
     ))
     manifest["completed_utc"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    manifest["duration_s"] = time.perf_counter() - run_started
     atomic_json(run_dir / "manifest.json", manifest)
+    emit(
+        "INFO", "run-complete", f"run finished with status {manifest['status']}",
+        status=manifest["status"], elapsed_s=manifest["duration_s"],
+        failed_workflows=list(failed),
+    )
     register_control("run.log", "logs/run.log", "Full workflow log including tracebacks.")
     generate_report(run_dir)
     register_control("run.report", "report/index.html", "Portable HTML run report.")
