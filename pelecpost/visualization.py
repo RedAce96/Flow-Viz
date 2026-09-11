@@ -221,8 +221,11 @@ def contour_layout(
         # separation than the legacy header.  This gives shallow contours
         # more of the exported image without risking label/tick collisions.
         grid = figure.add_gridspec(2, 1, height_ratios=(0.24, 1.0), hspace=0.18)
-        time_width = 0.18
         centered_margin = (1.0 - colorbar_length_fraction) / 2.0
+        # Use nearly all of the available side margin for the timestamp.  A
+        # fixed narrow cell can let large publication fonts extend into an
+        # otherwise correctly positioned colorbar.
+        time_width = max(0.18, 0.96 * centered_margin)
         if centered_margin >= time_width:
             # Keep the colorbar centered over the contour axes even though
             # the time annotation occupies one side of the same header row.

@@ -96,6 +96,25 @@ class VisualizationTests(unittest.TestCase):
         )
         plt.close(figure)
 
+    def test_large_timestamp_typography_does_not_overlap_top_colorbar(self):
+        config = PresentationConfig(
+            figure={"width_in": 10.0, "height_in": 6.0},
+            typography={"base_size": 24, "colorbar_tick_label_size": 20},
+            time_annotation={"position": "top_left", "precision": 4},
+        )
+        style = ContourStyle(colorbar={
+            "position": "top", "length_fraction": 0.50,
+            "thickness_fraction": 0.30, "include_endpoints": True,
+            "tick_count": 5, "label": "Temperature [K]",
+        })
+        figure, _, colorbar, _, time_artist, _ = render_contour(
+            self.dataset(), "temperature", config, style, (100.0, 2000.0),
+            time_text=r"$t = 399.1\ \mu\mathrm{s}$",
+        )
+        assert time_artist is not None
+        self.assertFalse(artists_overlap(figure, time_artist, colorbar))
+        plt.close(figure)
+
     def test_colorbar_length_fraction_controls_horizontal_extent(self):
         figure, main, colorbar, _, _ = contour_layout(
             PresentationConfig(), "top", 0.33, 0.33, r"$t=5.325$ ms"
