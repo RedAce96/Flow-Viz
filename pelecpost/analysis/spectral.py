@@ -31,12 +31,11 @@ from pelecpost.config.models import (
 from pelecpost.errors import UnsupportedCapabilityError
 from pelecpost.io.signals import open_probe_signal_workspace
 from pelecpost.runtime.context import WorkflowContext
+from pelecpost.runtime.parallel import ParallelTask, plan_parallel_stage, stage_readonly_array
 
 from .executors import executor
 from .probe_plotting import register_probe_line_overlay, register_probe_trace_figures
 from .temporal_wavenumber import (
-    compute_temporal_snapshots,
-    compute_temporal_wavenumber,
     register_dispersion_figure,
     register_temporal_wavenumber_figures,
 )
@@ -57,6 +56,37 @@ SI = {
     "temperature": (1.0, "K"),
 }
 MAX_PROBES_PER_FIGURE = 8
+
+
+def _coherence_batch_worker(payload: dict[str, Any]) -> dict[str, Any]:
+    """Compute coherence/CSD for a contiguous batch of physical probe pairs."""
+    matrix = np.load(payload["fft_values_path"], mmap_mode="r")
+    window_name = payload["window"]
+    detrend_value = payload["detrend"]
+    segment = int(payload["segment"])
+    overlap = int(payload["overlap"])
+    rows = []
+    phases = []
+    frequency = None
+    for pair_index, first, second in payload["pairs"]:
+        pair_frequency, pair_coherence = coherence(
+            matrix[:, int(first)], matrix[:, int(second)],
+            fs=float(payload["fs"]), window=window_name, nperseg=segment,
+            noverlap=overlap, detrend=detrend_value,
+        )
+        _, pair_cross = csd(
+            matrix[:, int(first)], matrix[:, int(second)],
+            fs=float(payload["fs"]), window=window_name, nperseg=segment,
+            noverlap=overlap, detrend=detrend_value, scaling="density",
+        )
+        frequency = pair_frequency
+        rows.append((int(pair_index), pair_coherence))
+        phases.append((int(pair_index), np.angle(pair_cross)))
+    return {
+        "frequency": np.asarray(frequency) if frequency is not None else np.empty(0),
+        "coherence": rows,
+        "phase": phases,
+    }
 
 
 def _field(variable: str, fields: tuple[str, ...]) -> str:
@@ -472,7 +502,7 @@ def _plot_probe_time_fft(
             raw_axis.set_title(f"{label} - Raw")
             raw_axis.set_xlabel("Time [s]")
             raw_axis.set_ylabel(f"Signal [{unit}]")
-            raw_axis.grid(True, alpha=0.25)
+            raw_axis.grid(False)
 
             processed_axis.plot(
                 time, processed_values[:, column], color="tab:orange", linewidth=1.0
@@ -480,7 +510,7 @@ def _plot_probe_time_fft(
             processed_axis.set_title(f"{label} - Processed ({detrend}, {window})")
             processed_axis.set_xlabel("Time [s]")
             processed_axis.set_ylabel(f"Signal [{unit}]")
-            processed_axis.grid(True, alpha=0.25)
+            processed_axis.grid(False)
 
             keep = (frequency > 0.0) & (amplitude[:, column] > 0.0)
             if np.any(keep):
@@ -496,7 +526,7 @@ def _plot_probe_time_fft(
             fft_axis.set_title(f"{label} - FFT")
             fft_axis.set_xlabel("Frequency [Hz]")
             fft_axis.set_ylabel(f"|Amplitude| [{unit}]")
-            fft_axis.grid(True, which="both", alpha=0.25)
+            fft_axis.grid(False)
         fig.tight_layout()
         fig.savefig(page_path, dpi=180)
         plt.close(fig)
@@ -599,31 +629,80 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
     )
     order = np.argsort(x_m)
     pair_columns = np.column_stack((order[:-1], order[1:])) if len(order) > 1 else np.empty((0, 2), dtype=int)
-    coherence_values = []
-    phase_values = []
     window_name = "boxcar" if analysis.window == "rectangular" else analysis.window
     scipy_detrend = {"mean": "constant", "linear": "linear", "none": False}[analysis.detrend]
     coherence_frequency = np.fft.rfftfreq(segment, dt)
-    for first, second in pair_columns:
-        pair_frequency, pair_coherence = coherence(
-            products["fft_values"][:, first], products["fft_values"][:, second], fs=1.0 / dt, window=window_name,
-            nperseg=segment, noverlap=overlap, detrend=scipy_detrend,
+    if int(context.project.machine_file.compute.workers) <= 1 or len(pair_columns) < 2:
+        coherence_values = []
+        phase_values = []
+        for first, second in pair_columns:
+            pair_frequency, pair_coherence = coherence(
+                products["fft_values"][:, first], products["fft_values"][:, second], fs=1.0 / dt, window=window_name,
+                nperseg=segment, noverlap=overlap, detrend=scipy_detrend,
+            )
+            _, pair_cross = csd(
+                products["fft_values"][:, first], products["fft_values"][:, second], fs=1.0 / dt, window=window_name,
+                nperseg=segment, noverlap=overlap, detrend=scipy_detrend, scaling="density",
+            )
+            coherence_frequency = pair_frequency
+            coherence_values.append(pair_coherence)
+            phase_values.append(np.angle(pair_cross))
+        coherence_matrix = np.asarray(coherence_values).T if coherence_values else np.empty((len(coherence_frequency), 0))
+        phase_matrix = np.asarray(phase_values).T if phase_values else np.empty((len(coherence_frequency), 0))
+    else:
+        scratch_dir = context.project.machine_file.compute.scratch_directory
+        if scratch_dir is None:
+            scratch_dir = context.run_dir / "scratch" / context.analysis.id
+        elif not scratch_dir.is_absolute():
+            scratch_dir = (context.project.root / scratch_dir).resolve()
+        matrix_spec, matrix_cleanup = stage_readonly_array(
+            products["fft_values"], scratch_dir, prefix="coherence-fft-values-",
         )
-        _, pair_cross = csd(
-            products["fft_values"][:, first], products["fft_values"][:, second], fs=1.0 / dt, window=window_name,
-            nperseg=segment, noverlap=overlap, detrend=scipy_detrend, scaling="density",
+        context.add_cleanup(matrix_cleanup)
+        pair_count = len(pair_columns)
+        worker_count = max(1, int(context.project.machine_file.compute.workers))
+        batch_count = min(pair_count, max(1, worker_count * 4))
+        pair_indices = np.array_split(np.arange(pair_count, dtype=int), batch_count)
+        tasks = []
+        for index, batch in enumerate(pair_indices):
+            if not len(batch):
+                continue
+            payload_pairs = [
+                (int(pair_index), int(pair_columns[pair_index, 0]), int(pair_columns[pair_index, 1]))
+                for pair_index in batch
+            ]
+            tasks.append(ParallelTask(
+                index, f"coherence-batch-{index:03d}", {
+                    "fft_values_path": matrix_spec.path,
+                    "pairs": payload_pairs, "fs": 1.0 / dt,
+                    "window": window_name, "detrend": scipy_detrend,
+                    "segment": segment, "overlap": overlap,
+                }, {"pair_indices": [int(item) for item in batch]},
+            ))
+        parent_gb = float((context.resource_metadata or {}).get("parent_resident_gb", 0.25))
+        per_worker_gb = max(0.05, 0.15 + products["fft_values"].nbytes / 1024**3)
+        stage_plan = plan_parallel_stage(
+            "probe-coherence-batches", requested_workers=worker_count,
+            task_count=len(tasks), memory_limit_gb=float(context.project.machine_file.compute.memory_limit_gb),
+            parent_resident_gb=parent_gb, per_worker_peak_gb=per_worker_gb,
         )
-        coherence_frequency = pair_frequency
-        coherence_values.append(pair_coherence)
-        phase_values.append(np.angle(pair_cross))
-    coherence_matrix = (
-        np.asarray(coherence_values).T
-        if coherence_values else np.empty((len(coherence_frequency), 0))
-    )
-    phase_matrix = (
-        np.asarray(phase_values).T
-        if phase_values else np.empty((len(coherence_frequency), 0))
-    )
+        batch_results = context.run_parallel_stage(
+            "probe-coherence-batches", tasks, _coherence_batch_worker, stage_plan,
+        )
+        coherence_values_by_pair: dict[int, np.ndarray] = {}
+        phase_values_by_pair: dict[int, np.ndarray] = {}
+        for result in batch_results:
+            payload = result.value
+            if len(payload["frequency"]):
+                coherence_frequency = payload["frequency"]
+            coherence_values_by_pair.update(payload["coherence"])
+            phase_values_by_pair.update(payload["phase"])
+        coherence_matrix = np.column_stack([
+            coherence_values_by_pair[index] for index in range(pair_count)
+        ]) if pair_count else np.empty((len(coherence_frequency), 0))
+        phase_matrix = np.column_stack([
+            phase_values_by_pair[index] for index in range(pair_count)
+        ]) if pair_count else np.empty((len(coherence_frequency), 0))
     coherence_keep = np.ones(len(coherence_frequency), dtype=bool)
     if analysis.frequency_max_hz is not None:
         coherence_keep &= coherence_frequency <= analysis.frequency_max_hz
@@ -739,7 +818,7 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
     axis.fill_between(frequency[positive], lower[positive], upper[positive], alpha=0.25, label="10–90%")
     axis.set_xlabel("Frequency [Hz]")
     axis.set_ylabel(f"PSD [({unit})²/Hz]")
-    axis.grid(True, which="both", alpha=0.25)
+    axis.grid(False)
     axis.legend()
     fig.tight_layout()
     fig.savefig(figure_path, dpi=180)
@@ -1034,8 +1113,11 @@ def run_directional_wave(context: WorkflowContext) -> None:
                     "time_grid_policy": analysis.time_grid_policy, "resampled": resampled},
     )
     if isinstance(analysis.temporal_wavenumber, TemporalWavenumberEnabled):
-        summary = compute_temporal_wavenumber(values, time, x_m, analysis)
-        snapshots = compute_temporal_snapshots(values, time, x_m, analysis, summary)
+        from .temporal_wavenumber import compute_temporal_wavenumber_parallel
+
+        summary, snapshots = compute_temporal_wavenumber_parallel(
+            context, values, time, x_m, analysis,
+        )
         temporal_path = context.data_dir / "temporal_wavenumber.npz"
         np.savez_compressed(
             temporal_path,

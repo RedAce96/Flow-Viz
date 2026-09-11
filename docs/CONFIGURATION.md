@@ -121,7 +121,7 @@ after each workflow and are not run artifacts.
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
 | `schema_version` | no | `1` | `1` | — |
-| `presentation` | no | `PresentationConfig` | `{"contour_axes": {"x_tick_format": "auto", "y_tick_format": "auto"}, "contour_defaults": {"colorbar": {"include_endpoints": false, "label": "auto", "length_fraction": 0.43, "position": "top", "thickness_fraction": null, "tick_count": 4, "tick_format": "auto"}, "colormap": "viridis", "normalization": "linear", "range": {"lower_percentile": 1.0, "maximum": null, "minimum": null, "mode": "per_snapshot_percentile", "upper_percentile": 99.0}, "rendering": {"levels": null, "mode": "continuous"}, "symlog_linear_threshold": null, "symmetric_about_zero": false}, "figure": {"dpi": 300, "formats": ["png"], "height_in": 4.5, "transparent": false, "width_in": 14.0}, "line_defaults": {"color": null, "coordinate_scale": "linear", "grid": true, "legend_position": "best", "linestyle": "solid", "linewidth": 2.0, "marker": "none", "value_scale": "linear"}, "preset": "publication", "time_annotation": {"boxed": true, "enabled": true, "position": "top_left", "precision": 4}, "typography": {"axes_label_size": 16.0, "base_size": 14.0, "colorbar_label_pad": 2.0, "colorbar_label_size": 13.0, "colorbar_tick_label_size": 11.0, "colorbar_tick_pad": 2.0, "font_family": "DejaVu Sans", "legend_size": 13.0, "tick_label_size": 14.0}}` | — |
+| `presentation` | no | `PresentationConfig` | `{"contour_axes": {"x_tick_format": "auto", "y_tick_format": "auto"}, "contour_defaults": {"colorbar": {"include_endpoints": false, "label": "auto", "length_fraction": 0.43, "position": "top", "thickness_fraction": null, "tick_count": 4, "tick_format": "auto"}, "colormap": "viridis", "normalization": "linear", "range": {"lower_percentile": 1.0, "maximum": null, "minimum": null, "mode": "per_snapshot_percentile", "upper_percentile": 99.0}, "rendering": {"levels": null, "mode": "continuous"}, "symlog_linear_threshold": null, "symmetric_about_zero": false}, "figure": {"dpi": 300, "formats": ["png"], "height_in": 4.5, "transparent": false, "width_in": 14.0}, "line_defaults": {"color": null, "coordinate_scale": "linear", "grid": false, "legend_position": "best", "linestyle": "solid", "linewidth": 2.0, "marker": "none", "value_scale": "linear"}, "preset": "publication", "time_annotation": {"boxed": true, "enabled": true, "position": "top_left", "precision": 4}, "typography": {"axes_label_size": 16.0, "base_size": 14.0, "colorbar_label_pad": 2.0, "colorbar_label_size": 13.0, "colorbar_tick_label_size": 11.0, "colorbar_tick_pad": 2.0, "font_family": "DejaVu Sans", "legend_size": 13.0, "tick_label_size": 14.0}}` | — |
 | `analyses` | no | `array[FlowOverviewAnalysis \| BoundaryLayerAnalysis \| SurfaceDiagnosticsAnalysis \| AerodynamicForcesAnalysis \| ProbeSpectrumAnalysis \| SinglePulseAnalysis \| DirectionalWaveAnalysis \| TransientWavepacketAnalysis \| NonlinearCouplingAnalysis \| ModalScreeningAnalysis \| CaseComparisonAnalysis]` | `[]` | — |
 
 ### `AerodynamicForcesAnalysis`
@@ -397,7 +397,7 @@ after each workflow and are not run artifacts.
 | `linestyle` | no | `'solid' \| 'dashed' \| 'dashdot' \| 'dotted'` | `"solid"` | — |
 | `marker` | no | `'none' \| 'circle' \| 'square' \| 'triangle' \| 'diamond'` | `"none"` | — |
 | `color` | no | `string \| null` | `null` | — |
-| `grid` | no | `boolean` | `true` | — |
+| `grid` | no | `boolean` | `false` | — |
 | `legend_position` | no | `'best' \| 'upper_left' \| 'upper_right' \| 'lower_left' \| 'lower_right'` | `"best"` | — |
 | `coordinate_scale` | no | `'linear' \| 'log' \| 'symlog'` | `"linear"` | — |
 | `value_scale` | no | `'linear' \| 'log' \| 'symlog'` | `"linear"` | — |
@@ -469,7 +469,7 @@ after each workflow and are not run artifacts.
 | `contour_axes` | no | `ContourAxesPresentation` | `{"x_tick_format": "auto", "y_tick_format": "auto"}` | — |
 | `time_annotation` | no | `TimeAnnotationPresentation` | `{"boxed": true, "enabled": true, "position": "top_left", "precision": 4}` | — |
 | `contour_defaults` | no | `ContourStyle` | `{"colorbar": {"include_endpoints": false, "label": "auto", "length_fraction": 0.43, "position": "top", "thickness_fraction": null, "tick_count": 4, "tick_format": "auto"}, "colormap": "viridis", "normalization": "linear", "range": {"lower_percentile": 1.0, "maximum": null, "minimum": null, "mode": "per_snapshot_percentile", "upper_percentile": 99.0}, "rendering": {"levels": null, "mode": "continuous"}, "symlog_linear_threshold": null, "symmetric_about_zero": false}` | — |
-| `line_defaults` | no | `LineStyle` | `{"color": null, "coordinate_scale": "linear", "grid": true, "legend_position": "best", "linestyle": "solid", "linewidth": 2.0, "marker": "none", "value_scale": "linear"}` | — |
+| `line_defaults` | no | `LineStyle` | `{"color": null, "coordinate_scale": "linear", "grid": false, "legend_position": "best", "linestyle": "solid", "linewidth": 2.0, "marker": "none", "value_scale": "linear"}` | — |
 
 ### `PresentationOverride`
 
@@ -577,7 +577,7 @@ after each workflow and are not run artifacts.
 | `clustering_exponent` | no | `number` | `2.0` | greater than: `0` |
 | `include_wall_extrapolation` | no | `boolean` | `true` | — |
 | `stations` | yes | `array[SurfaceNormalStation]` | — | minimum items: `1` |
-| `figure` | no | `SurfaceProfileFigure` | `{"coordinate_scale": "linear", "grid": true, "layout": "separate_fields", "normalize_values": false, "value_scale": "linear"}` | — |
+| `figure` | no | `SurfaceProfileFigure` | `{"coordinate_scale": "linear", "grid": false, "layout": "separate_fields", "normalize_values": false, "value_scale": "linear"}` | — |
 
 ### `SurfaceNormalStation`
 
@@ -598,7 +598,7 @@ after each workflow and are not run artifacts.
 | `normalize_values` | no | `boolean` | `false` | — |
 | `coordinate_scale` | no | `'linear' \| 'log' \| 'symlog'` | `"linear"` | — |
 | `value_scale` | no | `'linear' \| 'log' \| 'symlog'` | `"linear"` | — |
-| `grid` | no | `boolean` | `true` | — |
+| `grid` | no | `boolean` | `false` | — |
 
 ### `SurfaceXLocation`
 
@@ -712,7 +712,7 @@ after each workflow and are not run artifacts.
 
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
-| `workers` | no | `integer` | `1` | greater than: `0` |
+| `workers` | no | `integer` | `1` | Safe upper bound for process workers inside an independent workflow stage; workflows themselves remain serial.; greater than: `0` |
 | `memory_limit_gb` | no | `number` | `8.0` | greater than: `0` |
 | `fft_batch_size` | no | `integer` | `32` | greater than: `0` |
 | `scratch_directory` | no | `string \| null` | `null` | — |

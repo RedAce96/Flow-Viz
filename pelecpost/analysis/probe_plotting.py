@@ -11,7 +11,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from pelecpost.config.models import PresentationConfig
 from pelecpost.runtime.context import WorkflowContext
+from pelecpost.runtime.parallel import ParallelTask, plan_parallel_stage, stage_readonly_array
 from pelecpost.visualization import (
     legend_location,
     plot_profile,
@@ -122,13 +124,102 @@ def _save_line_figure(
     if log_y:
         axis.set_yscale("log")
     axis.legend(loc=legend_location(style), ncol=max(1, (len(labels) + 7) // 8))
-    axis.grid(style.grid, alpha=0.25)
+    if style.grid:
+        axis.grid(True, alpha=0.25)
+    else:
+        axis.grid(False)
     figure.tight_layout()
     return _register_figure_variants(
         context, figure=figure, artifact_id=artifact_id,
         stem=context.figure_dir / filename,
         variable=variable, units=units, interpretation=interpretation,
         provenance=provenance,
+    )
+
+
+def _probe_line_figure_worker(payload: dict[str, Any]) -> dict[str, Any]:
+    """Render one probe overlay from read-only staged arrays."""
+    created: list[str] = []
+    try:
+        presentation = PresentationConfig.model_validate(payload["presentation"])
+        x = np.load(payload["x_path"], mmap_mode="r")
+        values = np.load(payload["values_path"], mmap_mode="r")
+        labels = list(payload["labels"])
+        figure, axis = plt.subplots(
+            figsize=(presentation.figure.width_in, max(4.5, presentation.figure.height_in))
+        )
+        style = resolve_line_style(presentation.line_defaults, None)
+        for column, label in enumerate(labels):
+            line_style = style.model_copy(update={
+                "color": plt.get_cmap("tab10")(column % 10),
+            })
+            plot_profile(axis, x, values[:, column], label, line_style)
+        axis.set_xlabel(payload["x_label"])
+        axis.set_ylabel(payload["y_label"])
+        if payload.get("log_x"):
+            axis.set_xscale("log")
+        if payload.get("log_y"):
+            axis.set_yscale("log")
+        axis.legend(
+            loc=legend_location(style),
+            ncol=max(1, (len(labels) + 7) // 8),
+        )
+        # Avoid Matplotlib's warning-producing ``grid(False, properties...)``
+        # call while retaining the configured no-grid default.
+        if style.grid:
+            axis.grid(True, alpha=0.25)
+        figure.tight_layout()
+        paths = save_figure_variants(
+            figure, Path(payload["stem"]), presentation.figure,
+        )
+        created.extend(str(path) for path in paths)
+        return {"paths": created}
+    except BaseException:
+        for path in created:
+            try:
+                Path(path).unlink()
+            except FileNotFoundError:
+                pass
+        plt.close("all")
+        raise
+
+
+def _register_saved_line_paths(
+    context: WorkflowContext,
+    *,
+    result: dict[str, Any],
+    artifact_id: str,
+    variable: str,
+    units: str,
+    coordinate_metadata: dict[str, Any],
+    interpretation: str,
+    provenance: dict[str, Any],
+) -> None:
+    paths = tuple(Path(path) for path in result["paths"])
+    for index, path in enumerate(paths):
+        if not path.is_file():
+            raise FileNotFoundError(f"parallel figure worker did not create {path}")
+        suffix = "" if index == 0 else f".{path.suffix.lstrip('.') }"
+        context.register(
+            artifact_id=f"{artifact_id}{suffix}", path=path, kind="figure",
+            variable=variable, units=units,
+            coordinate_metadata=coordinate_metadata,
+            interpretation=interpretation,
+            provenance=provenance | {"figure_format": path.suffix.lstrip(".")},
+        )
+
+
+def _probe_parallel_plan(context: WorkflowContext, task_count: int, matrix_bytes: int):
+    metadata = context.resource_metadata or {}
+    parent_gb = float(metadata.get("parent_resident_gb", 0.25))
+    per_worker = max(0.05, 0.15 + float(matrix_bytes) / 1024**3)
+    return plan_parallel_stage(
+        "probe-figure-render",
+        requested_workers=int(context.project.machine_file.compute.workers),
+        task_count=task_count,
+        memory_limit_gb=float(context.project.machine_file.compute.memory_limit_gb),
+        parent_resident_gb=parent_gb,
+        per_worker_peak_gb=per_worker,
     )
 
 
@@ -163,23 +254,108 @@ def register_probe_trace_figures(
         "normalization_scales": raw_scales,
         "preprocessing": preprocessing,
     }
-    _save_line_figure(
-        context, artifact_id="probe.raw_history.figure", filename="raw_history_overlay",
-        x=np.asarray(raw_time), values=raw_display, labels=labels,
-        x_label="Time [s]", y_label=f"Signal [{normalization_units}]",
-        variable=variable, units=normalization_units,
-        interpretation="Overlay of the selected probe histories before recipe preprocessing.",
-        provenance=common | {"stage": "raw"},
-    )
+    if int(context.project.machine_file.compute.workers) <= 1:
+        _save_line_figure(
+            context, artifact_id="probe.raw_history.figure", filename="raw_history_overlay",
+            x=np.asarray(raw_time), values=raw_display, labels=labels,
+            x_label="Time [s]", y_label=f"Signal [{normalization_units}]",
+            variable=variable, units=normalization_units,
+            interpretation="Overlay of the selected probe histories before recipe preprocessing.",
+            provenance=common | {"stage": "raw"},
+        )
+        _save_line_figure(
+            context, artifact_id="probe.method_ready.figure", filename="method_ready_overlay",
+            x=np.asarray(prepared_time), values=prepared_display, labels=labels,
+            x_label="Time [s]", y_label=f"Signal [{normalization_units}]",
+            variable=variable, units=normalization_units,
+            interpretation="Overlay of the selected probe signals supplied to the recipe method.",
+            provenance=common | {"stage": "method_ready"},
+        )
+        return
+
     common["normalization_scales"] = prepared_scales
-    _save_line_figure(
-        context, artifact_id="probe.method_ready.figure", filename="method_ready_overlay",
-        x=np.asarray(prepared_time), values=prepared_display, labels=labels,
-        x_label="Time [s]", y_label=f"Signal [{normalization_units}]",
-        variable=variable, units=normalization_units,
-        interpretation="Overlay of the selected probe signals supplied to the recipe method.",
-        provenance=common | {"stage": "method_ready"},
-    )
+    scratch = context.project.machine_file.compute.scratch_directory
+    scratch_dir = scratch if scratch is not None else context.run_dir / "scratch"
+    if not scratch_dir.is_absolute():
+        scratch_dir = (context.project.root / scratch_dir).resolve()
+    staged: list[tuple[Any, Any]] = []
+    try:
+        for prefix, array in (
+            ("probe-raw-time-", np.asarray(raw_time)),
+            ("probe-raw-values-", raw_display),
+            ("probe-prepared-time-", np.asarray(prepared_time)),
+            ("probe-prepared-values-", prepared_display),
+        ):
+            spec, cleanup = stage_readonly_array(array, scratch_dir, prefix=prefix)
+            staged.append((spec, cleanup))
+            context.add_cleanup(cleanup)
+        raw_time_spec, raw_values_spec, prepared_time_spec, prepared_values_spec = (
+            item[0] for item in staged
+        )
+        payloads = (
+            {
+                "x_path": raw_time_spec.path,
+                "values_path": raw_values_spec.path,
+                "labels": labels,
+                "presentation": _figure_config(context).model_dump(mode="json"),
+                "x_label": "Time [s]",
+                "y_label": f"Signal [{normalization_units}]",
+                "stem": str(context.figure_dir / "raw_history_overlay"),
+            },
+            {
+                "x_path": prepared_time_spec.path,
+                "values_path": prepared_values_spec.path,
+                "labels": labels,
+                "presentation": _figure_config(context).model_dump(mode="json"),
+                "x_label": "Time [s]",
+                "y_label": f"Signal [{normalization_units}]",
+                "stem": str(context.figure_dir / "method_ready_overlay"),
+            },
+        )
+        tasks = tuple(
+            ParallelTask(
+                index, name, payload,
+                {"figure": name, "probe_indices": [int(item) for item in selected]},
+            )
+            for index, (name, payload) in enumerate(
+                zip(("raw-history", "method-ready"), payloads)
+            )
+        )
+        plan = _probe_parallel_plan(context, len(tasks), raw_display.nbytes + prepared_display.nbytes)
+        results = context.run_parallel_stage(
+            "probe-figure-render", tasks, _probe_line_figure_worker, plan,
+        )
+        raw_common = common | {"stage": "raw"}
+        prepared_common = common | {
+            "stage": "method_ready", "normalization_scales": prepared_scales,
+        }
+        _register_saved_line_paths(
+            context, result=results[0].value, artifact_id="probe.raw_history.figure",
+            variable=variable, units=normalization_units,
+            coordinate_metadata={"time": "s", "probe_x": "m", "probe_y": "m"},
+            interpretation="Overlay of the selected probe histories before recipe preprocessing.",
+            provenance=raw_common,
+        )
+        _register_saved_line_paths(
+            context, result=results[1].value, artifact_id="probe.method_ready.figure",
+            variable=variable, units=normalization_units,
+            coordinate_metadata={"time": "s", "probe_x": "m", "probe_y": "m"},
+            interpretation="Overlay of the selected probe signals supplied to the recipe method.",
+            provenance=prepared_common,
+        )
+    except BaseException:
+        # Context cleanups run on workflow exit; eagerly remove any staged
+        # arrays if setup fails before the context has a chance to unwind.
+        presentation = _figure_config(context)
+        for stem_name in ("raw_history_overlay", "method_ready_overlay"):
+            for output_format in presentation.figure.formats:
+                try:
+                    (context.figure_dir / stem_name).with_suffix(f".{output_format}").unlink()
+                except FileNotFoundError:
+                    pass
+        for _, cleanup in staged:
+            cleanup()
+        raise
 
 
 def register_probe_line_overlay(

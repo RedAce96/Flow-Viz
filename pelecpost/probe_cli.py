@@ -107,7 +107,7 @@ def _write_diagnostics(directory, time, requested_x, results, signal_reader):
     ax.set_xlabel("Requested probe x [cm]")
     ax.set_ylabel("Absolute time [s]")
     ax.set_title(f"Probe disturbance windows ({np.count_nonzero(valid)}/{len(valid)} valid)")
-    ax.grid(True, alpha=0.25)
+    ax.grid(False)
     ax.legend()
     fig.tight_layout()
     fig.savefig(directory / "window_bounds_vs_x.png", dpi=160)
@@ -127,7 +127,7 @@ def _write_diagnostics(directory, time, requested_x, results, signal_reader):
                 color="C1", alpha=0.18,
             )
         axis.set_ylabel(f"p{probe}")
-        axis.grid(True, alpha=0.2)
+        axis.grid(False)
     axes[-1].set_xlabel("Absolute time [s]")
     fig.suptitle("Representative detector traces and padded windows")
     fig.tight_layout()

@@ -11,6 +11,7 @@ from scipy.signal import find_peaks, welch
 import pp_functions_database as reviewed_nonlinear
 from pelecpost.config.models import NonlinearCouplingAnalysis
 from pelecpost.runtime.context import WorkflowContext
+from pelecpost.runtime.parallel import ParallelTask, plan_parallel_stage, stage_readonly_array
 
 from .executors import executor
 from .probe_plotting import register_named_line_figure, register_probe_trace_figures
@@ -34,6 +35,14 @@ def _automatic_targets(signal: np.ndarray, fs: float, segment: int, maximum: flo
         "selected_frequency_hz": targets.tolist(),
         "native_resolution_hz": float(frequency[1] - frequency[0]),
     }
+
+
+def _surrogate_batch_worker(payload: dict) -> np.ndarray:
+    magnitudes = np.load(payload["magnitudes_path"], mmap_mode="r")
+    return reviewed_nonlinear.compute_surrogate_triad_batch(
+        magnitudes, payload["triad_bins"], payload["labels"],
+        payload["random_seed"], payload["start_index"], payload["stop_index"],
+    )
 
 
 @executor("nonlinear_coupling")
@@ -62,12 +71,64 @@ def run_nonlinear_coupling(context: WorkflowContext) -> None:
         targets = np.asarray(analysis.target_frequencies_hz, dtype=float)
         selection = {"method": "explicit target_frequencies_hz from analyses.yaml",
                      "selected_frequency_hz": targets.tolist()}
-    significance = reviewed_nonlinear.compute_surrogate_triad_significance(
-        signal, fs, targets, nperseg=segment,
-        noverlap=int(round(segment * analysis.overlap_fraction)),
-        n_surrogates=analysis.surrogate_count, fdr_alpha=analysis.fdr_alpha,
-        minimum_independent_segments=2,
-    )
+    noverlap = int(round(segment * analysis.overlap_fraction))
+    n_surrogates = int(analysis.surrogate_count)
+    if int(context.project.machine_file.compute.workers) <= 1:
+        significance = reviewed_nonlinear.compute_surrogate_triad_significance(
+            signal, fs, targets, nperseg=segment, noverlap=noverlap,
+            n_surrogates=n_surrogates, fdr_alpha=analysis.fdr_alpha,
+            minimum_independent_segments=2,
+        )
+    else:
+        prepared = reviewed_nonlinear.prepare_surrogate_triad_problem(
+            signal, fs, targets, nperseg=segment, noverlap=noverlap,
+            n_surrogates=n_surrogates, fdr_alpha=analysis.fdr_alpha,
+            minimum_independent_segments=2,
+        )
+        scratch = context.project.machine_file.compute.scratch_directory
+        scratch_dir = scratch if scratch is not None else context.run_dir / "scratch"
+        magnitudes_spec, magnitudes_cleanup = stage_readonly_array(
+            prepared["magnitudes"], scratch_dir, prefix="nonlinear-magnitudes-",
+        )
+        context.add_cleanup(magnitudes_cleanup)
+        worker_count = max(1, int(context.project.machine_file.compute.workers))
+        batch_count = min(n_surrogates, max(1, worker_count * 4))
+        boundaries = np.linspace(0, n_surrogates, batch_count + 1, dtype=int)
+        tasks = []
+        for index in range(batch_count):
+            start_index, stop_index = int(boundaries[index]), int(boundaries[index + 1])
+            if stop_index <= start_index:
+                continue
+            tasks.append(ParallelTask(
+                index, f"surrogates-{start_index:06d}-{stop_index:06d}", {
+                    "magnitudes_path": magnitudes_spec.path,
+                    "labels": prepared["labels"],
+                    "triad_bins": prepared["triad_bins"],
+                    "random_seed": 0,
+                    "start_index": start_index,
+                    "stop_index": stop_index,
+                }, {"surrogate_start": start_index, "surrogate_stop": stop_index},
+            ))
+        parent_gb = float((context.resource_metadata or {}).get("parent_resident_gb", 0.25))
+        per_worker_gb = max(0.05, 0.15 + prepared["magnitudes"].nbytes / 1024**3)
+        stage_plan = plan_parallel_stage(
+            "nonlinear-surrogate-batches",
+            requested_workers=worker_count,
+            task_count=len(tasks),
+            memory_limit_gb=float(context.project.machine_file.compute.memory_limit_gb),
+            parent_resident_gb=parent_gb,
+            per_worker_peak_gb=per_worker_gb,
+        )
+        results = context.run_parallel_stage(
+            "nonlinear-surrogate-batches", tasks, _surrogate_batch_worker, stage_plan,
+        )
+        surrogate_values = np.empty((n_surrogates, len(prepared["labels"])), dtype=float)
+        for result in results:
+            start_index = tasks[result.index].payload["start_index"]
+            surrogate_values[start_index:start_index + len(result.value)] = result.value
+        significance = reviewed_nonlinear.finalize_surrogate_triad_significance(
+            prepared, surrogate_values,
+        )
     observed = np.asarray(significance["observed_bicoherence_squared"])
     surrogate = np.asarray(significance["surrogate_median_bicoherence_squared"])
     register_named_line_figure(

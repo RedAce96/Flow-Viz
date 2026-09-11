@@ -1,0 +1,44 @@
+% Paste this file after \begin{document} in your existing Beamer presentation.
+% Beamer already loads graphicx. Copy assets/ next to your main .tex file,
+% then adjust this path if needed.
+\newcommand{\FlowVizKomegaFigure}{assets/komega_snapshots.png}
+
+\begin{frame}{Flow Viz analysis for thermal-source kernels}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.64\textwidth}
+      \textbf{New analysis workflow}\\[0.5em]
+      \begin{itemize}\setlength{\itemsep}{0.65em}
+        \item Probe V2 \texttt{.pbin} and compact HDF5 share one named probe-dataset model.
+        \item Multi-probe products include histories, FFT/PSD, STFT and envelopes, pulse response, nonlinear coupling, and modal screening.
+        \item Typed Asym/Gaus comparisons align time, frequency, physical probe positions, and wavenumber.
+        \item Preflight and phase-level logging report inputs, resource use, output artifacts, and failures while a run is active.
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.31\textwidth}
+      \textbf{Thermal-source application}\\[0.5em]
+      \small
+      Compare the energy kernels with the same probes and product definitions. The workflow separates physical differences in source evolution, spectral content, and wave propagation from file-format and plotting choices.\\[1em]
+      \footnotesize
+      Suggested figure set:\\[0.3em]
+      time history, PSD, time-localized f--k map, and matched-time temperature contours.
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Time-localized wavenumber diagnostics}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.71\textwidth}
+      \centering
+      \includegraphics[width=\linewidth,height=0.72\textheight,keepaspectratio]{\FlowVizKomegaFigure}
+    \end{column}
+    \begin{column}{0.25\textwidth}
+      \small
+      \textbf{What this figure shows}\\[0.5em]
+      Each panel resolves the pressure field into frequency and signed wavenumber at a selected pulse stage.\\[0.8em]
+      Positive $k$ denotes downstream propagation for $\cos(\omega t-kx)$.\\[0.8em]
+      A shared color scale prevents post-pulse noise from appearing artificially strong.\\[1em]
+      \footnotesize
+      Illustrative verification output, not an Asym/Gaus production result.
+    \end{column}
+  \end{columns}
+\end{frame}

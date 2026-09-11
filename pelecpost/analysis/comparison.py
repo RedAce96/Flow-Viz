@@ -543,7 +543,7 @@ def _render_summary(context: WorkflowContext, metrics: list[dict[str, Any]]) -> 
     axis.bar(np.arange(len(values)), values)
     axis.set_xticks(np.arange(len(labels)), labels, rotation=60, ha="right")
     axis.set_ylabel("Maximum absolute difference")
-    axis.grid(True, axis="y", alpha=0.25)
+    axis.grid(False)
     fig.tight_layout()
     fig.savefig(path, dpi=180)
     plt.close(fig)
@@ -575,7 +575,7 @@ def _render_product_overlay(context: WorkflowContext, left: _Product, right: _Pr
                         image = np.abs(values) if np.iscomplexobj(values) else values
                         axis.imshow(image, aspect="auto")
                     axis.set_title(f"{title}: {key}")
-                    axis.grid(True, alpha=0.2)
+                    axis.grid(False)
     fig.tight_layout()
     fig.savefig(path, dpi=180)
     plt.close(fig)

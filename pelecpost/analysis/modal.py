@@ -9,10 +9,19 @@ import numpy as np
 import pp_modal_database as reviewed_modal
 from pelecpost.config.models import ModalScreeningAnalysis
 from pelecpost.runtime.context import WorkflowContext
+from pelecpost.runtime.parallel import ParallelTask, plan_parallel_stage, stage_readonly_array
 
 from .executors import executor
 from .probe_plotting import register_named_line_figure, register_probe_trace_figures
 from .spectral import load_probe_signal, prepare_probe_time_grid
+
+
+def _spod_frequency_batch_worker(payload: dict) -> dict:
+    blocks = np.load(payload["blocks_path"], mmap_mode="r")
+    return reviewed_modal.compute_spod_frequency_batch(
+        blocks, np.asarray(payload["weights"], dtype=float), payload["mode_count"],
+        payload["start_index"], payload["stop_index"],
+    )
 
 
 def _register_npz(context: WorkflowContext, name: str, arrays: dict, interpretation: str) -> None:
@@ -70,10 +79,67 @@ def run_modal_screening(context: WorkflowContext) -> None:
     }, "Weighted descriptive POD of the probe measure; not a stability eigenmode.")
     segment = min(int(analysis.spod_segment_samples), len(time) // 2)
     segment = max(8, segment)
-    spod = reviewed_modal.compute_spod(
-        dataset, nperseg=segment, noverlap=segment // 2,
-        n_modes=min(mode_count, 3), frequency_stride=max(1, segment // 256),
-    )
+    frequency_stride = max(1, segment // 256)
+    if int(context.project.machine_file.compute.workers) <= 1:
+        spod = reviewed_modal.compute_spod(
+            dataset, nperseg=segment, noverlap=segment // 2,
+            n_modes=min(mode_count, 3), frequency_stride=frequency_stride,
+        )
+    else:
+        spod_problem = reviewed_modal.prepare_spod_blocks(
+            dataset, nperseg=segment, noverlap=segment // 2,
+            n_modes=min(mode_count, 3), frequency_stride=frequency_stride,
+        )
+        scratch = context.project.machine_file.compute.scratch_directory
+        if scratch is None:
+            scratch = context.run_dir / "scratch" / context.analysis.id
+        elif not scratch.is_absolute():
+            scratch = (context.project.root / scratch).resolve()
+        blocks_spec, blocks_cleanup = stage_readonly_array(
+            spod_problem["blocks"], scratch, prefix="modal-spod-blocks-",
+        )
+        context.add_cleanup(blocks_cleanup)
+        frequency_count = len(spod_problem["frequency_indices"])
+        worker_count = max(1, int(context.project.machine_file.compute.workers))
+        batch_count = min(frequency_count, max(1, worker_count * 4))
+        boundaries = np.linspace(0, frequency_count, batch_count + 1, dtype=int)
+        tasks = []
+        for index in range(batch_count):
+            start_index, stop_index = int(boundaries[index]), int(boundaries[index + 1])
+            if stop_index <= start_index:
+                continue
+            tasks.append(ParallelTask(
+                index, f"spod-frequencies-{start_index:04d}-{stop_index:04d}", {
+                    "blocks_path": blocks_spec.path,
+                    "weights": np.asarray(spod_problem["weights"]).tolist(),
+                    "mode_count": int(spod_problem["mode_count"]),
+                    "start_index": start_index, "stop_index": stop_index,
+                }, {"frequency_start": start_index, "frequency_stop": stop_index},
+            ))
+        parent_gb = float((context.resource_metadata or {}).get("parent_resident_gb", 0.25))
+        per_worker_gb = max(0.05, 0.15 + spod_problem["blocks"].nbytes / 1024**3)
+        stage_plan = plan_parallel_stage(
+            "modal-spod-frequency-batches", requested_workers=worker_count,
+            task_count=len(tasks), memory_limit_gb=float(context.project.machine_file.compute.memory_limit_gb),
+            parent_resident_gb=parent_gb, per_worker_peak_gb=per_worker_gb,
+        )
+        batch_results = context.run_parallel_stage(
+            "modal-spod-frequency-batches", tasks, _spod_frequency_batch_worker, stage_plan,
+        )
+        eigenvalues = np.zeros((frequency_count, int(spod_problem["mode_count"])), dtype=float)
+        modes = np.zeros((frequency_count, int(spod_problem["mode_count"]), values.shape[1]), dtype=complex)
+        for result in batch_results:
+            start_index = int(result.value["start_index"])
+            stop_index = start_index + len(result.value["eigenvalues"])
+            eigenvalues[start_index:stop_index] = result.value["eigenvalues"]
+            modes[start_index:stop_index] = result.value["modes"]
+        spod = {
+            **{key: spod_problem[key] for key in (
+                "frequency_hz", "frequency_indices", "n_blocks", "nperseg",
+                "noverlap", "coordinates", "variable",
+            )},
+            "eigenvalues": eigenvalues, "modes": modes,
+        }
     register_named_line_figure(
         context, artifact_id="modal.spod.figure", filename="spod_eigenvalues",
         x=np.asarray(spod["frequency_hz"]), values=np.asarray(spod["eigenvalues"]),

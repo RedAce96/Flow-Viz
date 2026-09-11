@@ -213,6 +213,13 @@ compute:
   scratch_directory: /local/scratch/myuser/pelecpost
 ```
 
+`compute.workers` is a safe upper bound for independent work inside one
+workflow stage; it is not a request to run analyses concurrently. Workflows
+remain in dependency order. The runtime reduces the effective stage count for
+available CPUs, task count, and the memory budget (reserving 20% for overhead),
+and records the selected count and limiting reason in `plan.json`, the run log,
+and the workflow manifest. `workers: 1` runs the same task functions inline.
+
 Relative paths resolve relative to the project directory. Thus
 `outputs.root: runs` writes below `PROJECT/runs`; an absolute path writes to
 that server location.

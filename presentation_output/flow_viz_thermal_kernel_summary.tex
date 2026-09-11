@@ -1,0 +1,76 @@
+\documentclass[aspectratio=169,10pt]{beamer}
+% Compile from presentation_output/: pdflatex flow_viz_thermal_kernel_summary.tex
+
+\definecolor{FlowBlue}{HTML}{143B5D}
+\definecolor{FlowGold}{HTML}{C89B3C}
+\definecolor{FlowGray}{HTML}{5B6573}
+
+\usetheme{default}
+\usecolortheme{default}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}{%
+  \hfill\color{black!55}\insertframenumber\,/\,\inserttotalframenumber\hspace{1.3em}\vspace{0.9em}}
+\setbeamertemplate{itemize item}{\color{FlowBlue}\raisebox{0.15ex}{\scriptsize$\blacktriangleright$}}
+\setbeamercolor{frametitle}{fg=FlowBlue}
+\setbeamercolor{normal text}{fg=black,bg=white}
+\setbeamercolor{structure}{fg=FlowBlue}
+\setbeamerfont{frametitle}{series=\bfseries,size=\Large}
+\setbeamerfont{title}{series=\bfseries,size=\Large}
+
+\newcommand{\decktitle}{Flow Viz for thermal-source kernels}
+
+\title{\decktitle}
+\author{}
+\date{}
+
+\begin{document}
+
+\begin{frame}[t]{\decktitle}
+  \vspace{-0.2em}
+  {\color{FlowGold}\rule{0.96\textwidth}{1.25pt}}\\[0.7em]
+
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.63\textwidth}
+      \textbf{New analysis workflow}\\[0.6em]
+      \begin{itemize}\setlength\itemsep{0.8em}
+        \item Probe V2 \texttt{.pbin} and compact HDF5 share one named probe-dataset model.
+        \item Multi-probe products include histories, FFT/PSD, STFT and envelopes, pulse response, nonlinear coupling, and modal screening.
+        \item Typed Asym/Gaus comparisons align time, frequency, physical probe positions, and wavenumber.
+        \item Preflight and phase-level logging report inputs, resource use, output artifacts, and failures while a run is active.
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.32\textwidth}
+      \vspace{0.1em}
+      {\color{FlowBlue}\rule{\textwidth}{0.7pt}}\\[-0.1em]
+      \textbf{Thermal-source application}\\[0.55em]
+      \small
+      Compare the energy kernels with the same probes and product definitions. This isolates physical differences in source evolution, spectral content, and wave propagation from differences in file format or plotting setup.\\[1.0em]
+      {\color{FlowGold}\rule{\textwidth}{0.7pt}}\\[-0.1em]
+      \footnotesize
+      Recommended comparison set:\\[0.35em]
+      time history, PSD, time-localized f--k map, and matched-time temperature contours.
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[t]{Time-localized wavenumber diagnostics}
+  \vspace{-0.2em}
+  {\color{FlowGold}\rule{0.96\textwidth}{1.25pt}}\\[0.6em]
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.71\textwidth}
+      \centering
+      \includegraphics[width=\linewidth,height=0.72\textheight,keepaspectratio]{assets/komega_snapshots.png}
+    \end{column}
+    \begin{column}{0.25\textwidth}
+      \small
+      \textbf{What this figure shows}\\[0.5em]
+      Each panel resolves the pressure field into frequency and signed wavenumber at a selected pulse stage.\\[0.8em]
+      Positive $k$ denotes downstream propagation for $\cos(\omega t-kx)$.\\[0.8em]
+      A shared color scale prevents post-pulse noise from appearing artificially strong.\\[1em]
+      \footnotesize\color{FlowGray}
+      Illustrative verification output, not an Asym/Gaus production result.
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\end{document}

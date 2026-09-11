@@ -105,13 +105,18 @@ def run_transient_wavepacket(context: WorkflowContext) -> None:
         np.median(disturbance, axis=1), fs=1.0 / dt, window="hann",
         nperseg=segment, noverlap=overlap, boundary=None, padded=False,
     )
-    per_probe_coefficients = np.stack([
-        stft(
-            disturbance[:, column], fs=1.0 / dt, window="hann",
-            nperseg=segment, noverlap=overlap, boundary=None, padded=False,
-        )[2]
-        for column in range(disturbance.shape[1])
-    ], axis=2)
+    # SciPy already supports an arbitrary signal axis.  Transform every
+    # selected probe in one vectorized call, then restore the established
+    # frequency × time × probe product contract.
+    _probe_frequency, _probe_time, probe_coefficients = stft(
+        disturbance.T, fs=1.0 / dt, window="hann", nperseg=segment,
+        noverlap=overlap, boundary=None, padded=False, axis=-1,
+    )
+    if not np.allclose(_probe_frequency, frequency) or not np.allclose(_probe_time, stft_time):
+        raise RuntimeError("vectorized per-probe STFT axes disagree with the representative STFT")
+    if probe_coefficients.ndim != 3:
+        raise RuntimeError("vectorized per-probe STFT did not return probe, frequency, time axes")
+    per_probe_coefficients = np.transpose(probe_coefficients, (1, 2, 0))
     register_probe_stft_figure(
         context, artifact_id="transient.stft_figure", filename="stft_overlay",
         frequency_hz=frequency, time_s=stft_time, coefficients=per_probe_coefficients,

@@ -17,6 +17,11 @@ from pelecpost.config.models import (
     TemporalWavenumberEnabled,
 )
 from pelecpost.runtime.context import WorkflowContext
+from pelecpost.runtime.parallel import (
+    ParallelTask,
+    plan_parallel_stage,
+    stage_readonly_array,
+)
 from pelecpost.visualization import resolve_presentation, save_figure_variants
 
 
@@ -72,6 +77,45 @@ def _window_spectrum(
     )
 
 
+def _temporal_window_worker(payload: dict[str, Any]) -> dict[str, Any]:
+    """Compute one localized wavenumber summary from read-only staged arrays."""
+    values = np.load(payload["values_path"], mmap_mode="r")
+    time_s = np.load(payload["time_path"], mmap_mode="r")
+    x_m = np.load(payload["x_path"], mmap_mode="r")
+    analysis = DirectionalWaveAnalysis.model_validate(payload["analysis"])
+    spectrum = _window_spectrum(
+        values, time_s, x_m, int(payload["start"]), int(payload["n_window"]),
+        analysis, analysis.temporal_wavenumber,
+    )
+    indices = _frequency_selection(np.asarray(spectrum["frequency_hz"]), analysis)
+    power = np.asarray(spectrum["power"], dtype=float)[indices]
+    band_power = np.sum(power, axis=0)
+    ridge = _ridge(spectrum, indices, analysis)
+    return {
+        "index": int(payload["index"]),
+        "band_power": band_power,
+        "energy": float(np.sum(band_power)),
+        "ridge": ridge,
+    }
+
+
+def _temporal_snapshot_worker(payload: dict[str, Any]) -> dict[str, Any]:
+    """Compute one selected localized f-k snapshot."""
+    values = np.load(payload["values_path"], mmap_mode="r")
+    time_s = np.load(payload["time_path"], mmap_mode="r")
+    x_m = np.load(payload["x_path"], mmap_mode="r")
+    analysis = DirectionalWaveAnalysis.model_validate(payload["analysis"])
+    spectrum = _window_spectrum(
+        values, time_s, x_m, int(payload["start"]), int(payload["n_window"]),
+        analysis, analysis.temporal_wavenumber,
+    )
+    indices = _frequency_selection(np.asarray(spectrum["frequency_hz"]), analysis)
+    return {
+        "index": int(payload["index"]),
+        "power": np.asarray(spectrum["power"], dtype=float)[indices],
+    }
+
+
 def _frequency_selection(
     frequency_hz: np.ndarray, analysis: DirectionalWaveAnalysis,
 ) -> np.ndarray:
@@ -124,6 +168,7 @@ def compute_temporal_wavenumber(
     time_s: np.ndarray,
     x_m: np.ndarray,
     analysis: DirectionalWaveAnalysis,
+    window_runner: Any | None = None,
 ) -> dict[str, Any]:
     """Compute bounded sliding-window f-k summaries and snapshot selection."""
     config = analysis.temporal_wavenumber
@@ -149,15 +194,22 @@ def compute_temporal_wavenumber(
     band_power_rows: list[np.ndarray] = []
     energies: list[float] = []
     ridge_rows: list[tuple[float, float, float, float, bool, bool]] = []
-    for start in starts:
-        spectrum = first if int(start) == int(starts[0]) else _window_spectrum(
-            values, time_s, x_m, int(start), n_window, analysis, config
-        )
-        power = np.asarray(spectrum["power"], dtype=float)[frequency_indices]
-        band_power = np.sum(power, axis=0)
-        band_power_rows.append(band_power)
-        energies.append(float(np.sum(band_power)))
-        ridge_rows.append(_ridge(spectrum, frequency_indices, analysis))
+    if window_runner is None:
+        for start in starts:
+            spectrum = first if int(start) == int(starts[0]) else _window_spectrum(
+                values, time_s, x_m, int(start), n_window, analysis, config
+            )
+            power = np.asarray(spectrum["power"], dtype=float)[frequency_indices]
+            band_power = np.sum(power, axis=0)
+            band_power_rows.append(band_power)
+            energies.append(float(np.sum(band_power)))
+            ridge_rows.append(_ridge(spectrum, frequency_indices, analysis))
+    else:
+        window_results = window_runner(starts, n_window)
+        for result in sorted(window_results, key=lambda item: int(item["index"])):
+            band_power_rows.append(np.asarray(result["band_power"], dtype=float))
+            energies.append(float(result["energy"]))
+            ridge_rows.append(tuple(result["ridge"]))
     band_power = np.asarray(band_power_rows)
     energy = np.asarray(energies)
     centers = np.asarray([time_s[int(start) + n_window // 2] for start in starts])
@@ -251,6 +303,7 @@ def compute_temporal_snapshots(
     x_m: np.ndarray,
     analysis: DirectionalWaveAnalysis,
     summary: dict[str, Any],
+    snapshot_runner: Any | None = None,
 ) -> dict[str, np.ndarray]:
     config = analysis.temporal_wavenumber
     assert isinstance(config, TemporalWavenumberEnabled)
@@ -258,16 +311,25 @@ def compute_temporal_snapshots(
     if not np.array_equal(order, np.arange(len(order))):
         x_m = np.asarray(x_m)[order]
         values = np.asarray(values)[:, order]
-    spectra = []
-    for index in summary["snapshot_indices"]:
-        spectra.append(_window_spectrum(
-            values, time_s, x_m, int(summary["window_starts"][index]),
-            int(summary["n_window"]), analysis, config,
-        ))
-    power = np.asarray([
-        np.asarray(item["power"])[_frequency_selection(np.asarray(item["frequency_hz"]), analysis)]
-        for item in spectra
-    ])
+    if snapshot_runner is None:
+        spectra = []
+        for index in summary["snapshot_indices"]:
+            spectra.append(_window_spectrum(
+                values, time_s, x_m, int(summary["window_starts"][index]),
+                int(summary["n_window"]), analysis, config,
+            ))
+        power = np.asarray([
+            np.asarray(item["power"])[_frequency_selection(
+                np.asarray(item["frequency_hz"]), analysis
+            )]
+            for item in spectra
+        ])
+    else:
+        results = snapshot_runner(summary["snapshot_indices"], summary["window_starts"], summary["n_window"])
+        power = np.asarray([
+            np.asarray(item["power"], dtype=float)
+            for item in sorted(results, key=lambda item: int(item["index"]))
+        ])
     relative_power_db = 10.0 * np.log10(
         np.maximum(power, 1.0e-300) / max(float(np.nanmax(summary["band_power"])), 1.0e-300)
     )
@@ -280,6 +342,135 @@ def compute_temporal_snapshots(
         "relative_power_db": relative_power_db,
         "valid_snapshot_mask": summary["valid_time_mask"][summary["snapshot_indices"]],
     }
+
+
+def compute_temporal_wavenumber_parallel(
+    context: WorkflowContext,
+    values: np.ndarray,
+    time_s: np.ndarray,
+    x_m: np.ndarray,
+    analysis: DirectionalWaveAnalysis,
+) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
+    """Compute localized summaries and snapshots with bounded worker processes."""
+    config = analysis.temporal_wavenumber
+    if not isinstance(config, TemporalWavenumberEnabled):
+        raise ValueError("temporal wavenumber processing is disabled")
+    if int(context.project.machine_file.compute.workers) <= 1:
+        summary = compute_temporal_wavenumber(values, time_s, x_m, analysis)
+        return summary, compute_temporal_snapshots(values, time_s, x_m, analysis, summary)
+
+    values = np.asarray(values, dtype=float)
+    time_s = np.asarray(time_s, dtype=float).ravel()
+    x_m = np.asarray(x_m, dtype=float).ravel()
+    order = np.argsort(x_m)
+    if not np.array_equal(order, np.arange(len(order))):
+        x_m = x_m[order]
+        values = values[:, order]
+    n_window, _hop, starts = _windows(time_s, config)
+    if len(starts) < 2:
+        summary = compute_temporal_wavenumber(values, time_s, x_m, analysis)
+        return summary, compute_temporal_snapshots(values, time_s, x_m, analysis, summary)
+
+    scratch = context.project.machine_file.compute.scratch_directory
+    if scratch is None:
+        scratch = context.run_dir / "scratch" / context.analysis.id
+    elif not scratch.is_absolute():
+        scratch = (context.project.root / scratch).resolve()
+    value_spec, value_cleanup = stage_readonly_array(
+        values, scratch, prefix="temporal-wavenumber-values-"
+    )
+    time_spec, time_cleanup = stage_readonly_array(
+        time_s, scratch, prefix="temporal-wavenumber-time-"
+    )
+    x_spec, x_cleanup = stage_readonly_array(
+        x_m, scratch, prefix="temporal-wavenumber-x-"
+    )
+    context.add_cleanup(value_cleanup)
+    context.add_cleanup(time_cleanup)
+    context.add_cleanup(x_cleanup)
+    analysis_dump = analysis.model_dump(mode="json")
+    parent_gb = 0.1
+    metadata = context.resource_metadata or {}
+    signal_metadata = metadata.get("probe_signal", {})
+    if signal_metadata.get("resident_bound_bytes"):
+        parent_gb += float(signal_metadata["resident_bound_bytes"]) / 1024**3
+    frequency_count = max(
+        1, int(np.ceil((analysis.frequency_max_hz - analysis.frequency_min_hz) * n_window * np.median(np.diff(time_s))))
+    )
+    per_worker_gb = max(
+        0.05,
+        1.25 * (
+            n_window * len(x_m) * 16 + frequency_count * len(x_m) * 16
+        ) / 1024**3,
+    )
+
+    def make_payload(index: int, start: int) -> dict[str, Any]:
+        return {
+            "index": int(index), "start": int(start), "n_window": int(n_window),
+            "values_path": value_spec.path, "time_path": time_spec.path,
+            "x_path": x_spec.path, "analysis": analysis_dump,
+        }
+
+    window_plan = plan_parallel_stage(
+        "temporal-wavenumber-windows",
+        requested_workers=context.project.machine_file.compute.workers,
+        task_count=len(starts), memory_limit_gb=context.project.machine_file.compute.memory_limit_gb,
+        parent_resident_gb=parent_gb, per_worker_peak_gb=per_worker_gb,
+    )
+
+    def run_windows(window_starts: np.ndarray, _window_size: int) -> list[dict[str, Any]]:
+        tasks = [
+            ParallelTask(
+                index, f"window-{index:06d}", make_payload(index, int(start)),
+                {"window_index": index, "window_start": int(start)},
+            )
+            for index, start in enumerate(window_starts)
+        ]
+        results = context.run_parallel_stage(
+            "temporal-wavenumber-windows", tasks, _temporal_window_worker,
+            window_plan, recycle_after_tasks=1,
+        )
+        return [result.value for result in results]
+
+    def run_snapshots(
+        snapshot_indices: np.ndarray,
+        window_starts: np.ndarray,
+        window_size: int,
+    ) -> list[dict[str, Any]]:
+        tasks = [
+            ParallelTask(
+                position, f"snapshot-{position:03d}",
+                make_payload(position, int(window_starts[int(index)])),
+                {"snapshot_index": int(index), "snapshot_position": position},
+            )
+            for position, index in enumerate(snapshot_indices)
+        ]
+        snapshot_plan = plan_parallel_stage(
+            "temporal-wavenumber-snapshots",
+            requested_workers=context.project.machine_file.compute.workers,
+            task_count=len(tasks), memory_limit_gb=context.project.machine_file.compute.memory_limit_gb,
+            parent_resident_gb=parent_gb, per_worker_peak_gb=per_worker_gb,
+        )
+        results = context.run_parallel_stage(
+            "temporal-wavenumber-snapshots", tasks, _temporal_snapshot_worker,
+            snapshot_plan, recycle_after_tasks=1,
+        )
+        return [result.value for result in results]
+
+    try:
+        summary = compute_temporal_wavenumber(
+            values, time_s, x_m, analysis, window_runner=run_windows,
+        )
+        snapshots = compute_temporal_snapshots(
+            values, time_s, x_m, analysis, summary,
+            snapshot_runner=run_snapshots,
+        )
+        return summary, snapshots
+    except BaseException:
+        value_cleanup()
+        time_cleanup()
+        x_cleanup()
+        raise
 
 
 def _register_figure(
@@ -363,7 +554,7 @@ def register_temporal_wavenumber_figures(
     for axis, (data, label) in zip(axes.flat, series):
         axis.plot(summary["time_center_s"], np.where(summary["valid_time_mask"], data, np.nan))
         axis.set_ylabel(label)
-        axis.grid(True, alpha=0.25)
+        axis.grid(False)
     axes[1, 0].set_xlabel("Time [s]")
     axes[1, 1].set_xlabel("Time [s]")
     figure.suptitle("Dominant time-localized spectral ridge")
@@ -457,7 +648,7 @@ def register_dispersion_figure(
         axis.fill_between(frequency_hz[finite], lower[finite], upper[finite], color="C0", alpha=0.2, label="16–84% over x")
         axis.set_xlabel("Frequency [Hz]")
         axis.set_ylabel(ylabel)
-        axis.grid(True, alpha=0.25)
+        axis.grid(False)
         axis.legend(loc="best")
     figure.suptitle("Full-record wavenumber dispersion")
     figure.tight_layout()

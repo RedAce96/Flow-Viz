@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import os
 from pathlib import Path
 from typing import Iterator
 
@@ -514,7 +515,10 @@ def line_figure(presentation: PresentationConfig, time_text: str):
 def style_line_axis(axis, style: LineStyle) -> None:
     axis.set_xscale(style.coordinate_scale)
     axis.set_yscale(style.value_scale)
-    axis.grid(style.grid, alpha=0.25)
+    if style.grid:
+        axis.grid(True, alpha=0.25)
+    else:
+        axis.grid(False)
 
 
 def plot_profile(axis, coordinate, values, label: str, style: LineStyle) -> None:
@@ -539,16 +543,27 @@ def save_figure_variants(
     config: FigurePresentation,
 ) -> tuple[Path, ...]:
     paths = []
-    for output_format in config.formats:
-        path = stem.with_suffix(f".{output_format}")
-        figure.savefig(
-            path,
-            dpi=config.dpi,
-            transparent=config.transparent,
-            bbox_inches="tight",
-        )
-        paths.append(path)
-    plt.close(figure)
+    try:
+        for output_format in config.formats:
+            path = stem.with_suffix(f".{output_format}")
+            temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+            try:
+                figure.savefig(
+                    temporary,
+                    format=output_format,
+                    dpi=config.dpi,
+                    transparent=config.transparent,
+                    bbox_inches="tight",
+                )
+                os.replace(temporary, path)
+            finally:
+                try:
+                    temporary.unlink()
+                except FileNotFoundError:
+                    pass
+            paths.append(path)
+    finally:
+        plt.close(figure)
     return tuple(paths)
 
 

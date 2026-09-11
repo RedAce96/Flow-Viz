@@ -4204,6 +4204,7 @@
           },
           "workers": {
             "default": 1,
+            "description": "Safe upper bound for process workers inside an independent workflow stage; workflows themselves remain serial.",
             "exclusiveMinimum": 0,
             "title": "Workers",
             "type": "integer"

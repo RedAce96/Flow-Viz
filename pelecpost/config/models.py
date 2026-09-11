@@ -196,7 +196,7 @@ class LineStyle(StrictModel):
     linestyle: Literal["solid", "dashed", "dashdot", "dotted"] = "solid"
     marker: Literal["none", "circle", "square", "triangle", "diamond"] = "none"
     color: str | None = None
-    grid: bool = True
+    grid: bool = False
     legend_position: Literal[
         "best", "upper_left", "upper_right", "lower_left", "lower_right",
     ] = "best"
@@ -484,7 +484,7 @@ class SurfaceProfileFigure(StrictModel):
     normalize_values: bool = False
     coordinate_scale: AxisScale = "linear"
     value_scale: AxisScale = "linear"
-    grid: bool = True
+    grid: bool = False
 
 
 class SurfaceNormalProfiles(StrictModel):
@@ -918,7 +918,13 @@ class OutputConfig(StrictModel):
 
 
 class ComputeConfig(StrictModel):
-    workers: PositiveInt = 1
+    workers: PositiveInt = Field(
+        default=1,
+        description=(
+            "Safe upper bound for process workers inside an independent "
+            "workflow stage; workflows themselves remain serial."
+        ),
+    )
     memory_limit_gb: PositiveFloat = 8.0
     fft_batch_size: PositiveInt = 32
     scratch_directory: Path | None = None

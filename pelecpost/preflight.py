@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from math import pi
 import re
@@ -13,6 +13,7 @@ import numpy as np
 
 from pelecpost.config.models import ResolvedProject
 from pelecpost.io import InputInventory, inspect_project
+from pelecpost.runtime.parallel import available_cpu_count
 from pelecpost.workflows import build_workflow_graph, workflow_for
 
 
@@ -37,6 +38,13 @@ class AnalysisEstimate:
     estimated_peak_gb: float
     memory_components_gb: dict[str, float]
     expected_artifact_ids: tuple[str, ...]
+    requested_workers: int = 1
+    effective_workers_by_stage: dict[str, int] = field(default_factory=dict)
+    parallel_task_counts: dict[str, int] = field(default_factory=dict)
+    parent_resident_gb: float = 0.0
+    estimated_memory_per_worker_gb: dict[str, float] = field(default_factory=dict)
+    estimated_concurrent_peak_gb: dict[str, float] = field(default_factory=dict)
+    limiting_reasons: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -949,20 +957,74 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                     ))
 
     estimate_items = []
+    configured_workers = int(project.machine_file.compute.workers)
+    limit = float(project.machine_file.compute.memory_limit_gb)
+    available_cpus = available_cpu_count()
     for analysis in project.enabled_analyses:
         workflow = workflow_for(analysis.recipe)
         components = workflow.estimate_resources(analysis, inventory)
+        total_peak = sum(components.values())
+        # Runtime replaces these conservative values with source-specific
+        # dimensions.  They describe stages, not concurrent workflows.
+        parent_gb = min(total_peak, total_peak * 0.25)
+        stage_counts: dict[str, int] = {}
+        if "plotfiles" in workflow.required_inputs_for(analysis):
+            plotfile_names = inventory.plotfiles.names if inventory.plotfiles else ()
+            count = len(_selected_plotfile_names(analysis, plotfile_names))
+            if count:
+                stage_counts["plotfile-timesteps"] = count
+        elif getattr(analysis, "probe_set_id", None):
+            count = len(getattr(analysis, "probe_indices", ()) or ())
+            if count > 1:
+                stage_counts["probe-figures"] = count
+        worker_memory: dict[str, float] = {}
+        effective_workers: dict[str, int] = {}
+        stage_peaks: dict[str, float] = {}
+        stage_reasons: dict[str, tuple[str, ...]] = {}
+        for stage, count in stage_counts.items():
+            per_worker = max(0.05, total_peak * 0.5)
+            worker_memory[stage] = per_worker
+            memory_workers = max(1, int(max(0.0, 0.8 * limit - parent_gb) // per_worker))
+            effective = min(configured_workers, count, available_cpus, memory_workers)
+            effective_workers[stage] = effective
+            stage_peaks[stage] = parent_gb + effective * per_worker
+            reasons: list[str] = []
+            if effective < configured_workers:
+                if count < configured_workers:
+                    reasons.append("task_count")
+                if memory_workers < configured_workers:
+                    reasons.append("memory_limit")
+                if available_cpus < configured_workers:
+                    reasons.append("cpu_count")
+            stage_reasons[stage] = tuple(reasons)
         estimate_items.append(AnalysisEstimate(
-            analysis.id, analysis.recipe, sum(components.values()), components,
+            analysis.id, analysis.recipe, total_peak, components,
             workflow.artifact_declarations_for(analysis),
+            requested_workers=configured_workers,
+            effective_workers_by_stage=effective_workers,
+            parallel_task_counts=stage_counts,
+            parent_resident_gb=parent_gb,
+            estimated_memory_per_worker_gb=worker_memory,
+            estimated_concurrent_peak_gb=stage_peaks,
+            limiting_reasons=stage_reasons,
         ))
     estimates = tuple(estimate_items)
-    limit = float(project.machine_file.compute.memory_limit_gb)
-    workers = int(project.machine_file.compute.workers)
+    for estimate in estimates:
+        for stage, per_worker in estimate.estimated_memory_per_worker_gb.items():
+            if estimate.parent_resident_gb + per_worker > 0.8 * limit:
+                findings.append(Finding(
+                    Severity.BLOCKER, "PARALLEL_STAGE_MEMORY_LIMIT",
+                    f"Analysis {estimate.analysis_id!r} stage {stage!r} cannot fit one "
+                    f"worker plus parent estimate within 80% of the configured "
+                    f"{limit:.2f} GB memory limit.", estimate.analysis_id,
+                ))
     largest = max((item.estimated_peak_gb for item in estimates), default=0.0)
-    concurrent = largest * min(workers, max(1, len(estimates)))
+    # Workflow DAG nodes remain serial; workers only apply inside one active
+    # independent stage.  Do not multiply the run peak by worker count.
+    concurrent = largest
     sampling["resource_estimate"] = {
-        "workers": workers,
+        "workers": configured_workers,
+        "workers_semantics": "safe maximum within independent workflow stages",
         "largest_workflow_peak_gb": largest,
         "estimated_concurrent_peak_gb": concurrent,
         "memory_limit_gb": limit,

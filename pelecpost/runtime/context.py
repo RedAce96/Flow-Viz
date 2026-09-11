@@ -97,6 +97,30 @@ class WorkflowContext:
         finally:
             self._phase_stack.pop()
 
+    def run_parallel_stage(
+        self,
+        stage: str,
+        tasks: Any,
+        function: Callable[[Any], Any],
+        plan: Any,
+        **kwargs: Any,
+    ) -> tuple[Any, ...]:
+        """Run independent work while keeping logs and manifests parent-owned."""
+        from .parallel import run_parallel_stage
+
+        def report(event: str, details: dict[str, Any]) -> None:
+            task_id = details.get("task_id")
+            suffix = f" task={task_id}" if task_id is not None else ""
+            payload = {key: value for key, value in details.items() if key != "event"}
+            self.progress(
+                f"{event.replace('-', ' ')}{suffix}", event=event,
+                phase=stage, **payload,
+            )
+
+        return run_parallel_stage(
+            stage, tasks, function, plan, event_callback=report, **kwargs,
+        )
+
     @property
     def data_dir(self) -> Path:
         path = self.run_dir / "data" / self.analysis.id

@@ -177,6 +177,70 @@ def compute_pod(dataset, n_modes=10):
     }
 
 
+def prepare_spod_blocks(dataset, nperseg=1024, noverlap=None, n_modes=3,
+                        frequency_indices=None, frequency_stride=1):
+    """Prepare the read-only Welch blocks used by the independent SPOD bins."""
+    if not isinstance(dataset, SnapshotMatrix):
+        raise TypeError("dataset must be a SnapshotMatrix")
+    nperseg = int(nperseg)
+    if not 8 <= nperseg <= dataset.values.shape[0]:
+        raise ValueError("nperseg must be between 8 and n_time")
+    if noverlap is None:
+        noverlap = nperseg // 2
+    noverlap = int(noverlap)
+    if not 0 <= noverlap < nperseg:
+        raise ValueError("noverlap must satisfy 0 <= noverlap < nperseg")
+    step = nperseg - noverlap
+    starts = np.arange(0, dataset.values.shape[0] - nperseg + 1, step)
+    if starts.size < 2:
+        raise ValueError("SPOD requires at least two complete Welch blocks")
+    all_frequency = np.fft.rfftfreq(nperseg, dataset.dt)
+    if frequency_indices is None:
+        selected = np.arange(0, all_frequency.size, max(1, int(frequency_stride)))
+    else:
+        selected = np.unique(np.asarray(frequency_indices, dtype=int))
+        if selected.size == 0 or selected[0] < 0 or selected[-1] >= all_frequency.size:
+            raise ValueError("frequency_indices are outside the rFFT grid")
+    window = np.hanning(nperseg)
+    scale = np.sqrt(dataset.dt / max(np.sum(window ** 2), 1.0e-30))
+    blocks = np.empty((starts.size, selected.size, dataset.values.shape[1]), dtype=complex)
+    for block, start in enumerate(starts):
+        segment = dataset.values[start:start + nperseg, :]
+        segment = segment - np.mean(segment, axis=0, keepdims=True)
+        spectrum = np.fft.rfft(segment * window[:, None], axis=0) * scale
+        blocks[block, :, :] = spectrum[selected, :]
+    weights = np.ones(dataset.values.shape[1]) if dataset.weights is None else dataset.weights
+    mode_count = min(int(n_modes), starts.size, dataset.values.shape[1])
+    return {
+        "blocks": blocks,
+        "frequency_hz": all_frequency[selected],
+        "frequency_indices": selected,
+        "weights": np.asarray(weights),
+        "mode_count": mode_count,
+        "n_blocks": int(starts.size),
+        "nperseg": nperseg,
+        "noverlap": noverlap,
+        "coordinates": dataset.coordinates,
+        "variable": dataset.variable,
+    }
+
+
+def compute_spod_frequency_batch(blocks, weights, mode_count, start_index, stop_index):
+    """Compute independent SPOD frequency rows for one contiguous batch."""
+    blocks = np.asarray(blocks)
+    weights = np.asarray(weights, dtype=float)
+    mode_count = int(mode_count)
+    sqrt_weights = np.sqrt(weights)
+    eigenvalues = np.zeros((int(stop_index) - int(start_index), mode_count), dtype=float)
+    modes = np.zeros((int(stop_index) - int(start_index), mode_count, blocks.shape[2]), dtype=complex)
+    for row, frequency_index in enumerate(range(int(start_index), int(stop_index))):
+        realization_matrix = blocks[:, frequency_index, :].T * sqrt_weights[:, None] / np.sqrt(blocks.shape[0])
+        spatial, singular, _ = _truncated_svd(realization_matrix, mode_count)
+        eigenvalues[row, :] = singular ** 2
+        modes[row, :, :] = (spatial / sqrt_weights[:, None]).T
+    return {"start_index": int(start_index), "eigenvalues": eigenvalues, "modes": modes}
+
+
 def compute_spod(dataset, nperseg=1024, noverlap=None, n_modes=3,
                  frequency_indices=None, frequency_stride=1):
     """Compute Welch-block SPOD using the method of snapshots at each bin."""

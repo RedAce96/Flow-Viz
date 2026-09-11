@@ -239,6 +239,11 @@ def run_project(project: ResolvedProject, run_name: str | None = None) -> RunRes
         "run_id": run_id, "case_id": project.case_file.case.id,
         "created_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "status": "running", "workflows": {}, "provenance": provenance,
+        "compute": {
+            "requested_workers": int(project.machine_file.compute.workers),
+            "memory_limit_gb": float(project.machine_file.compute.memory_limit_gb),
+            "workflows_serial": True,
+        },
     }
     atomic_json(run_dir / "manifest.json", manifest)
 
@@ -290,6 +295,7 @@ def run_project(project: ResolvedProject, run_name: str | None = None) -> RunRes
         started_utc = dt.datetime.now(dt.timezone.utc).isoformat()
         active_phase: str | None = "workflow-initialization"
         phase_timings: list[dict[str, Any]] = []
+        parallel_stage_started: dict[str, float] = {}
         artifact_count_before = len(registry.artifacts)
         record(node_id, "running", started_utc=started_utc, active_phase=active_phase)
         emit(
@@ -309,6 +315,72 @@ def run_project(project: ResolvedProject, run_name: str | None = None) -> RunRes
             elif event == "phase-failed":
                 phase_timings.append({"event": event, **details})
             entry = manifest["workflows"][node_id]
+            if event == "parallel-stage-plan":
+                stage = str(details.get("stage", details.get("phase", "unknown")))
+                parallel_stage_started[stage] = time.perf_counter()
+                entry.setdefault("parallel_stages", {})[stage] = {
+                    "requested_workers": details.get("requested_workers"),
+                    "effective_workers": details.get("effective_workers"),
+                    "task_total": details.get("task_count", 0),
+                    "active_task_ids": [], "active_task_phases": {},
+                    "completed_count": 0, "failed_count": 0,
+                    "parent_resident_gb": details.get("parent_resident_gb"),
+                    "estimated_memory_per_worker_gb": details.get("per_worker_peak_gb"),
+                    "estimated_concurrent_peak_gb": details.get("estimated_concurrent_peak_gb"),
+                    "limiting_reasons": details.get("limiting_reasons", []),
+                }
+            elif event in {"parallel-task-start", "parallel-task-complete", "parallel-task-failed"}:
+                stage = str(details.get("stage", details.get("phase", "unknown")))
+                stage_entry = entry.setdefault("parallel_stages", {}).setdefault(stage, {
+                    "active_task_ids": [], "active_task_phases": {},
+                    "completed_count": 0, "failed_count": 0,
+                })
+                task_id = details.get("task_id")
+                active_ids = stage_entry.setdefault("active_task_ids", [])
+                active_phases = stage_entry.setdefault("active_task_phases", {})
+                if event == "parallel-task-start" and task_id is not None:
+                    if task_id not in active_ids:
+                        active_ids.append(task_id)
+                    active_phases[task_id] = details.get("current_phase", stage)
+                elif event == "parallel-task-complete" and task_id is not None:
+                    if task_id in active_ids:
+                        active_ids.remove(task_id)
+                    active_phases.pop(task_id, None)
+                    stage_entry["completed_count"] = int(stage_entry.get("completed_count", 0)) + 1
+                    if details.get("peak_rss_bytes") is not None:
+                        measured = float(details["peak_rss_bytes"]) / 1024**3
+                        stage_entry["measured_peak_worker_gb"] = max(
+                            float(stage_entry.get("measured_peak_worker_gb", 0.0)), measured,
+                        )
+                        effective = int(stage_entry.get("effective_workers", 1) or 1)
+                        parent = float(stage_entry.get("parent_resident_gb", 0.0) or 0.0)
+                        stage_entry["measured_concurrent_peak_gb"] = parent + effective * float(
+                            stage_entry["measured_peak_worker_gb"]
+                        )
+                elif event == "parallel-task-failed":
+                    if task_id in active_ids:
+                        active_ids.remove(task_id)
+                    active_phases.pop(task_id, None)
+                    stage_entry["failed_count"] = int(stage_entry.get("failed_count", 0)) + 1
+                    stage_entry["failed_task_id"] = task_id
+                    stage_entry["failed_work_unit"] = details.get("work_unit")
+                    stage_entry["failed_error_type"] = details.get("error_type")
+            elif event == "parallel-stage-heartbeat":
+                stage = str(details.get("stage", details.get("phase", "unknown")))
+                stage_entry = entry.setdefault("parallel_stages", {}).setdefault(stage, {})
+                stage_entry["heartbeat_completed_count"] = details.get("completed_count")
+                stage_entry["heartbeat_total_count"] = details.get("total_count")
+                stage_entry["active_task_ids"] = details.get("running_task_ids", [])
+            elif event == "parallel-stage-complete":
+                stage = str(details.get("stage", details.get("phase", "unknown")))
+                stage_entry = entry.setdefault("parallel_stages", {}).setdefault(stage, {})
+                started = parallel_stage_started.get(stage)
+                stage_entry["stage_duration_s"] = (
+                    time.perf_counter() - started if started is not None else None
+                )
+                stage_entry["completed_count"] = details.get(
+                    "completed_count", stage_entry.get("completed_count", 0)
+                )
             entry["active_phase"] = active_phase
             entry["last_progress_utc"] = dt.datetime.now(dt.timezone.utc).isoformat()
             atomic_json(run_dir / "manifest.json", manifest)

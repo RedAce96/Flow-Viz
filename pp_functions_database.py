@@ -7656,6 +7656,184 @@ def compute_triad_bicoherence(signal, fs, target_freqs, nperseg=256,
     return result
 
 
+def prepare_surrogate_triad_problem(
+        signal, fs, target_freqs, nperseg=256, noverlap=None,
+        n_surrogates=200, fdr_alpha=0.05, minimum_independent_segments=8):
+    """Prepare the observed triads and reusable surrogate magnitudes.
+
+    This reviewed numerical adapter is split from surrogate generation so the
+    postprocessor can distribute only the independent null realizations while
+    retaining one deterministic preparation/finalization path.
+    """
+    signal = np.asarray(signal, dtype=float).ravel()
+    fs = float(fs)
+    nperseg = int(nperseg)
+    n_surrogates = int(n_surrogates)
+    if not np.isfinite(fs) or fs <= 0.0:
+        raise ValueError("fs must be positive and finite")
+    if nperseg < 8 or signal.size < nperseg:
+        raise ValueError("signal must contain at least nperseg >= 8 samples")
+    if not np.all(np.isfinite(signal)):
+        raise ValueError("signal contains NaN or infinite values")
+    if n_surrogates < 19:
+        raise ValueError("at least 19 surrogates are required")
+    fdr_alpha = float(fdr_alpha)
+    if not 0.0 < fdr_alpha < 1.0:
+        raise ValueError("fdr_alpha must lie in (0, 1)")
+    minimum_independent_segments = int(minimum_independent_segments)
+    if minimum_independent_segments < 2:
+        raise ValueError("minimum_independent_segments must be at least 2")
+    independent_segments = signal.size // nperseg
+    if independent_segments < minimum_independent_segments:
+        raise ValueError(
+            f"only {independent_segments} non-overlapping segments are available; "
+            f"{minimum_independent_segments} required"
+        )
+    if noverlap is None:
+        noverlap = nperseg // 2
+    noverlap = int(noverlap)
+    if not 0 <= noverlap < nperseg:
+        raise ValueError("noverlap must satisfy 0 <= noverlap < nperseg")
+    observed = compute_triad_bicoherence(
+        signal, fs, target_freqs, nperseg=nperseg, noverlap=noverlap
+    )
+    targets = [float(value) for value in target_freqs]
+    labels = []
+    for first_index, first in enumerate(targets):
+        for second in targets[first_index:]:
+            label = f"b²({first:.3e}, {second:.3e})"
+            if label in observed:
+                labels.append(label)
+    labels = sorted(set(labels))
+    if not labels:
+        raise ValueError("no requested triads lie below Nyquist")
+    minimum_surrogates = int(np.ceil(len(labels) / float(fdr_alpha)) - 1)
+    if n_surrogates < minimum_surrogates:
+        raise ValueError(
+            f"{n_surrogates} surrogates cannot resolve the first Benjamini-Hochberg "
+            f"threshold for {len(labels)} unique triads at alpha={float(fdr_alpha):g}; "
+            f"at least {minimum_surrogates} are required"
+        )
+    observed_values = np.asarray([observed[label] for label in labels])
+    step = nperseg - noverlap
+    starts = np.arange(0, signal.size - nperseg + 1, step, dtype=int)
+    window = np.hanning(nperseg)
+    spectra = np.empty((starts.size, nperseg // 2 + 1), dtype=complex)
+    for row, start in enumerate(starts):
+        segment = signal[start:start + nperseg]
+        spectra[row] = np.fft.rfft((segment - np.mean(segment)) * window)
+    magnitudes = np.abs(spectra)
+    frequency_grid = np.fft.rfftfreq(nperseg, 1.0 / fs)
+    bins = {
+        float(value): int(np.argmin(np.abs(frequency_grid - value)))
+        for value in target_freqs
+    }
+    triad_bins = {}
+    for first in target_freqs:
+        first_bin = bins[float(first)]
+        for second in target_freqs:
+            second_bin = bins[float(second)]
+            if first + second > frequency_grid[-1] or first_bin + second_bin >= frequency_grid.size:
+                continue
+            first_sorted, second_sorted = sorted((first_bin, second_bin))
+            triad_bins[f"b²({first:.3e}, {second:.3e})"] = (
+                first_sorted, second_sorted, first_sorted + second_sorted,
+            )
+    return {
+        "labels": tuple(labels),
+        "observed_values": observed_values,
+        "magnitudes": magnitudes,
+        "triad_bins": triad_bins,
+        "frequency_grid": frequency_grid,
+        "n_surrogates": n_surrogates,
+        "fdr_alpha": fdr_alpha,
+        "independent_segments": independent_segments,
+    }
+
+
+def compute_surrogate_triad_batch(
+        magnitudes, triad_bins, labels, random_seed, start_index, stop_index):
+    """Compute indexed, deterministic surrogate rows for one batch."""
+    magnitudes = np.asarray(magnitudes)
+    labels = tuple(labels)
+    rows = np.empty((int(stop_index) - int(start_index), len(labels)), dtype=float)
+    draws_per_surrogate = int(magnitudes.size)
+    eps = 1.0e-30
+    for row, surrogate_index in enumerate(range(int(start_index), int(stop_index))):
+        bit_generator = np.random.PCG64(int(random_seed))
+        bit_generator.advance(surrogate_index * draws_per_surrogate)
+        rng = np.random.Generator(bit_generator)
+        phase = rng.uniform(0.0, 2.0 * np.pi, magnitudes.shape)
+        phase[:, 0] = 0.0
+        randomized = magnitudes * np.exp(1j * phase)
+        randomized[:, 0] = 0.0
+        values = []
+        for label in labels:
+            first_bin, second_bin, summed_bin = triad_bins[label]
+            product = randomized[:, first_bin] * randomized[:, second_bin]
+            summed = randomized[:, summed_bin]
+            bispectrum = np.mean(product * np.conj(summed))
+            denominator = np.mean(np.abs(product) ** 2) * np.mean(np.abs(summed) ** 2)
+            values.append(float(np.clip(np.abs(bispectrum) ** 2 / (denominator + eps), 0.0, 1.0)))
+        rows[row] = values
+    return rows
+
+
+def finalize_surrogate_triad_significance(
+        prepared, surrogate_values, laser_frequency_hz=None):
+    """Finalize p-values and FDR decisions from assembled surrogate rows."""
+    labels = tuple(prepared["labels"])
+    observed_values = np.asarray(prepared["observed_values"])
+    surrogate_values = np.asarray(surrogate_values, dtype=float)
+    n_surrogates = int(surrogate_values.shape[0])
+    fdr_alpha = float(prepared["fdr_alpha"])
+    p_value = (1.0 + np.sum(surrogate_values >= observed_values[None, :], axis=0)) / (n_surrogates + 1.0)
+    order = np.argsort(p_value)
+    ranked = p_value[order]
+    thresholds = fdr_alpha * np.arange(1, len(labels) + 1) / len(labels)
+    accepted_rank = np.flatnonzero(ranked <= thresholds)
+    significant = np.zeros(len(labels), dtype=bool)
+    if accepted_rank.size:
+        significant = p_value <= ranked[int(accepted_rank[-1])]
+    adjusted = np.empty_like(p_value)
+    monotone = np.minimum.accumulate(
+        (ranked * len(labels) / np.arange(1, len(labels) + 1))[::-1]
+    )[::-1]
+    adjusted[order] = np.minimum(monotone, 1.0)
+    laser_related = np.zeros(len(labels), dtype=bool)
+    frequency_grid = np.asarray(prepared["frequency_grid"])
+    if laser_frequency_hz is not None:
+        tolerance = frequency_grid[1] - frequency_grid[0] if frequency_grid.size > 1 else 0.0
+        label_laser = {}
+        for label in labels:
+            first, second = [float(value) for value in label[3:-1].split(",")]
+            values = (first, second, first + second)
+            label_laser[label] = any(
+                abs(value / float(laser_frequency_hz) - round(value / float(laser_frequency_hz)))
+                * float(laser_frequency_hz) <= tolerance for value in values
+            )
+        laser_related = np.asarray([label_laser.get(label, False) for label in labels], dtype=bool)
+    return {
+        "triad_labels": np.asarray(labels),
+        "observed_bicoherence_squared": observed_values,
+        "surrogate_median_bicoherence_squared": np.median(surrogate_values, axis=0),
+        "surrogate_95_bicoherence_squared": np.quantile(surrogate_values, 0.95, axis=0),
+        "empirical_p_value": p_value,
+        "fdr_adjusted_p_value": adjusted,
+        "significant_fdr": significant,
+        "laser_harmonic_related": laser_related,
+        "n_surrogates": n_surrogates,
+        "unique_triad_hypothesis_count": len(labels),
+        "minimum_empirical_p_value": 1.0 / (n_surrogates + 1.0),
+        "independent_segment_count": int(prepared["independent_segments"]),
+        "fdr_alpha": fdr_alpha,
+        "null_model": (
+            "independent segment-frequency phase randomization with each "
+            "windowed segment magnitude retained"
+        ),
+    }
+
+
 def compute_surrogate_triad_significance(
         signal, fs, target_freqs, nperseg=256, noverlap=None,
         n_surrogates=200, fdr_alpha=0.05,
@@ -7763,32 +7941,9 @@ def compute_surrogate_triad_significance(
                 first_sorted, second_sorted,
                 first_sorted + second_sorted,
             )
-    rng = np.random.default_rng(random_seed)
-    eps = 1.0e-30
-    surrogate_values = np.empty((n_surrogates, len(labels)), dtype=float)
-    for surrogate_index in range(n_surrogates):
-        phase = rng.uniform(0.0, 2.0 * np.pi, spectra.shape)
-        phase[:, 0] = 0.0
-        randomized = magnitudes * np.exp(1j * phase)
-        randomized[:, 0] = 0.0
-        values = []
-        for label in labels:
-            first_bin, second_bin, summed_bin = triad_bins[label]
-            product = (
-                randomized[:, first_bin]
-                * randomized[:, second_bin]
-            )
-            summed = randomized[:, summed_bin]
-            bispectrum = np.mean(product * np.conj(summed))
-            denominator = (
-                np.mean(np.abs(product) ** 2)
-                * np.mean(np.abs(summed) ** 2)
-            )
-            values.append(float(np.clip(
-                np.abs(bispectrum) ** 2 / (denominator + eps),
-                0.0, 1.0,
-            )))
-        surrogate_values[surrogate_index] = values
+    surrogate_values = compute_surrogate_triad_batch(
+        magnitudes, triad_bins, labels, random_seed, 0, n_surrogates,
+    )
     p_value = (
         1.0 + np.sum(surrogate_values >= observed_values[None, :], axis=0)
     ) / (n_surrogates + 1.0)
