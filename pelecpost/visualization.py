@@ -289,9 +289,14 @@ def contour_layout(
             # for large typography and makes the annotation read as metadata
             # for the contour panel.
             if colorbar_position == "top":
-                rows.extend(("colorbar", "time", "main"))
+                rows.append("colorbar")
+                if show_time:
+                    rows.append("time")
+                rows.append("main")
             else:
-                rows.extend(("time", "main", "colorbar"))
+                if show_time:
+                    rows.append("time")
+                rows.extend(("main", "colorbar"))
         else:
             if show_time and time_top:
                 rows.append("time")
@@ -302,11 +307,23 @@ def contour_layout(
                 rows.append("colorbar")
             if show_time and not time_top:
                 rows.append("time")
+        if above_axes:
+            time_row_ratio = 0.12
+            colorbar_row_ratio = 0.20
+            layout_hspace = 0.20
+        else:
+            time_row_ratio = 0.16
+            colorbar_row_ratio = 0.24
+            layout_hspace = 1.0
         ratios = [
-            0.16 if item == "time" else 0.24 if item == "colorbar" else 1.0
+            time_row_ratio if item == "time"
+            else colorbar_row_ratio if item == "colorbar"
+            else 1.0
             for item in rows
         ]
-        grid = figure.add_gridspec(len(rows), 1, height_ratios=ratios, hspace=1.0)
+        grid = figure.add_gridspec(
+            len(rows), 1, height_ratios=ratios, hspace=layout_hspace
+        )
         axes = {}
         for index, item in enumerate(rows):
             if item == "main":
