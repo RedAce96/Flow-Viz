@@ -24,8 +24,11 @@ positive. Signed fields such as vorticity should normally use a diverging map,
 limits symmetric about zero, and either linear or `symlog` normalization.
 
 The time annotation always occupies an external header or footer row. Its six
-positions are `top_left`, `top_center`, `top_right`, `bottom_left`,
-`bottom_center`, and `bottom_right`. Colorbars use separate top, bottom, left,
+header/footer positions are `top_left`, `top_center`, `top_right`, `bottom_left`,
+`bottom_center`, and `bottom_right`. For contour figures, use
+`above_axes_left`, `above_axes_center`, or `above_axes_right` to place it in a
+separate row immediately adjacent to the main contour axes, independent of the
+colorbar. Colorbars use separate top, bottom, left,
 or right axes. A top or bottom colorbar is horizontal; a left or right colorbar
 is vertical. `colorbar.length_fraction` is a visual scale from `0.20` to
 `0.75`: it controls both the long-axis length and colored-strip thickness,

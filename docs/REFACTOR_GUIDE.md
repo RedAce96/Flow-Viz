@@ -343,7 +343,7 @@ presentation:
       tick_count: 4
   time_annotation:
     enabled: true
-    position: top_left
+    position: above_axes_left # or top_left, top_center, bottom_right, etc.
     boxed: true
     precision: 4
   typography:

@@ -76,6 +76,7 @@ class TimeAnnotationPresentation(StrictModel):
     position: Literal[
         "top_left", "top_center", "top_right",
         "bottom_left", "bottom_center", "bottom_right",
+        "above_axes_left", "above_axes_center", "above_axes_right",
     ] = "top_left"
     boxed: bool = True
     precision: int = Field(default=4, ge=1, le=12)
@@ -256,6 +257,7 @@ class TimeAnnotationOverride(StrictModel):
     position: Literal[
         "top_left", "top_center", "top_right",
         "bottom_left", "bottom_center", "bottom_right",
+        "above_axes_left", "above_axes_center", "above_axes_right",
     ] | None = None
     boxed: bool | None = None
     precision: int | None = Field(default=None, ge=1, le=12)

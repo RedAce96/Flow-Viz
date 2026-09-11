@@ -115,6 +115,22 @@ class VisualizationTests(unittest.TestCase):
         self.assertFalse(artists_overlap(figure, time_artist, colorbar))
         plt.close(figure)
 
+    def test_above_axes_timestamp_is_separate_from_top_colorbar(self):
+        config = PresentationConfig(
+            time_annotation={"position": "above_axes_left"}
+        )
+        figure, main, colorbar, time_axis, time_artist = contour_layout(
+            config, "top", 0.50, 0.30, r"$t = 0.0\ \mu\mathrm{s}$"
+        )
+        assert time_axis is not None
+        assert time_artist is not None
+        figure.canvas.draw()
+        self.assertLess(time_axis.get_position().y0, colorbar.get_position().y0)
+        self.assertGreater(time_axis.get_position().y0, main.get_position().y1)
+        self.assertFalse(artists_overlap(figure, time_artist, colorbar))
+        self.assertFalse(artists_overlap(figure, time_artist, main))
+        plt.close(figure)
+
     def test_colorbar_length_fraction_controls_horizontal_extent(self):
         figure, main, colorbar, _, _ = contour_layout(
             PresentationConfig(), "top", 0.33, 0.33, r"$t=5.325$ ms"

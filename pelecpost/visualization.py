@@ -202,7 +202,8 @@ def contour_layout(
     )
     time_config = presentation.time_annotation
     show_time = bool(time_config.enabled and time_text)
-    time_top = time_config.position.startswith("top")
+    above_axes = time_config.position.startswith("above_axes")
+    time_top = time_config.position.startswith("top") or above_axes
     horizontal = colorbar_position in {"top", "bottom"}
 
     time_axis = time_artist = None
@@ -282,15 +283,25 @@ def contour_layout(
         )
     elif horizontal:
         rows: list[str] = []
-        if show_time and time_top:
-            rows.append("time")
-        if colorbar_position == "top":
-            rows.append("colorbar")
-        rows.append("main")
-        if colorbar_position == "bottom":
-            rows.append("colorbar")
-        if show_time and not time_top:
-            rows.append("time")
+        if above_axes:
+            # This deliberately places the timestamp next to the main data
+            # axes, rather than sharing the colorbar header.  It is useful
+            # for large typography and makes the annotation read as metadata
+            # for the contour panel.
+            if colorbar_position == "top":
+                rows.extend(("colorbar", "time", "main"))
+            else:
+                rows.extend(("time", "main", "colorbar"))
+        else:
+            if show_time and time_top:
+                rows.append("time")
+            if colorbar_position == "top":
+                rows.append("colorbar")
+            rows.append("main")
+            if colorbar_position == "bottom":
+                rows.append("colorbar")
+            if show_time and not time_top:
+                rows.append("time")
         ratios = [
             0.16 if item == "time" else 0.24 if item == "colorbar" else 1.0
             for item in rows

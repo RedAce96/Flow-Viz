@@ -630,7 +630,7 @@ after each workflow and are not run artifacts.
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
 | `enabled` | no | `boolean \| null` | `null` | — |
-| `position` | no | `'top_left' \| 'top_center' \| 'top_right' \| 'bottom_left' \| 'bottom_center' \| 'bottom_right' \| null` | `null` | — |
+| `position` | no | `'top_left' \| 'top_center' \| 'top_right' \| 'bottom_left' \| 'bottom_center' \| 'bottom_right' \| 'above_axes_left' \| 'above_axes_center' \| 'above_axes_right' \| null` | `null` | — |
 | `boxed` | no | `boolean \| null` | `null` | — |
 | `precision` | no | `integer \| null` | `null` | — |
 
@@ -639,7 +639,7 @@ after each workflow and are not run artifacts.
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
 | `enabled` | no | `boolean` | `true` | — |
-| `position` | no | `'top_left' \| 'top_center' \| 'top_right' \| 'bottom_left' \| 'bottom_center' \| 'bottom_right'` | `"top_left"` | — |
+| `position` | no | `'top_left' \| 'top_center' \| 'top_right' \| 'bottom_left' \| 'bottom_center' \| 'bottom_right' \| 'above_axes_left' \| 'above_axes_center' \| 'above_axes_right'` | `"top_left"` | — |
 | `boxed` | no | `boolean` | `true` | — |
 | `precision` | no | `integer` | `4` | minimum: `1`; maximum: `12` |
 

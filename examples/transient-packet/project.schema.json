@@ -3178,7 +3178,10 @@
                   "top_right",
                   "bottom_left",
                   "bottom_center",
-                  "bottom_right"
+                  "bottom_right",
+                  "above_axes_left",
+                  "above_axes_center",
+                  "above_axes_right"
                 ],
                 "type": "string"
               },
@@ -3228,7 +3231,10 @@
               "top_right",
               "bottom_left",
               "bottom_center",
-              "bottom_right"
+              "bottom_right",
+              "above_axes_left",
+              "above_axes_center",
+              "above_axes_right"
             ],
             "title": "Position",
             "type": "string"
