@@ -34,6 +34,7 @@ after each workflow and are not run artifacts.
 | `solver` | no | `'pelec'` | `"pelec"` | — |
 | `dimensionality` | no | `2 \| 3` | `2` | — |
 | `solver_units` | no | `SolverUnits` | `"cgs"` | — |
+| `solver_revision` | no | `string \| null` | `null` | — |
 | `description` | no | `string \| null` | `null` | — |
 
 ### `ExplicitFreestream`
@@ -661,6 +662,11 @@ after each workflow and are not run artifacts.
 | `band_min_hz` | yes | `number` | — | minimum: `0.0` |
 | `band_max_hz` | yes | `number` | — | greater than: `0` |
 | `baseline_end_time_s` | no | `number \| null` | `null` | — |
+| `minimum_baseline_samples` | no | `integer` | `8` | greater than: `0` |
+| `minimum_packet_snr_db` | no | `number` | `6.0` | — |
+| `minimum_arrival_r_squared` | no | `number` | `0.8` | minimum: `0.0`; maximum: `1.0` |
+| `arrival_edge_margin_s` | no | `number \| null` | `null` | — |
+| `require_monotonic_arrivals` | no | `boolean` | `true` | — |
 | `stft_segment_samples` | no | `integer` | `2048` | greater than: `0` |
 | `overlap_fraction` | no | `number` | `0.75` | minimum: `0.0`; less than: `1.0` |
 
@@ -706,7 +712,7 @@ after each workflow and are not run artifacts.
 | `schema_version` | no | `1` | `1` | — |
 | `inputs` | no | `InputConfig` | `{"archived_runs": {}, "baselines": {}, "plotfiles": null, "probe_sets": {}}` | — |
 | `outputs` | yes | `OutputConfig` | — | — |
-| `compute` | no | `ComputeConfig` | `{"fft_batch_size": 32, "memory_limit_gb": 8.0, "scratch_directory": null, "workers": 1}` | — |
+| `compute` | no | `ComputeConfig` | `{"fft_batch_size": 32, "memory_limit_gb": 8.0, "parallel_task_timeout_s": 21600.0, "scratch_directory": null, "workers": 1}` | — |
 
 ### `ComputeConfig`
 
@@ -716,6 +722,7 @@ after each workflow and are not run artifacts.
 | `memory_limit_gb` | no | `number` | `8.0` | greater than: `0` |
 | `fft_batch_size` | no | `integer` | `32` | greater than: `0` |
 | `scratch_directory` | no | `string \| null` | `null` | — |
+| `parallel_task_timeout_s` | no | `number` | `21600.0` | greater than: `0` |
 
 ### `InputConfig`
 
@@ -738,6 +745,7 @@ after each workflow and are not run artifacts.
 | --- | --- | --- | --- | --- |
 | `source` | yes | `string` | — | — |
 | `prefix` | no | `string` | `"plt"` | — |
+| `identity_manifest` | no | `string \| null` | `null` | — |
 
 ### `ProbeInput`
 
@@ -745,6 +753,7 @@ after each workflow and are not run artifacts.
 | --- | --- | --- | --- | --- |
 | `compact_file` | no | `string \| null` | `null` | — |
 | `binary_files` | no | `array[string]` | `[]` | — |
+| `identity_manifest` | no | `string \| null` | `null` | — |
 
 Repository maintainers regenerate this reference, the recipe reference, and example
 schemas with `python -m tools.generate_reference_docs`.

@@ -11,7 +11,28 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m pip install -e '.[dev]'
-      - run: python -m pytest tests test_engineering.py
-      - run: ruff check pelecpost tests
+      - run: python -m pip install -c requirements/constraints-py${{ matrix.python-version }}.txt -e '.[dev]'
+      - run: python -m pytest -q tests test_engineering.py
+      - run: ruff check --select F401 pelecpost tests
       - run: mypy pelecpost
+      - run: python -m compileall -q pelecpost tests pp_functions_database.py
+      - run: git diff --check
+
+  clean-install:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install build
+      - run: python -m build --wheel
+      - run: python -m venv /tmp/pelecpost-clean-${{ matrix.python-version }}
+      - run: /tmp/pelecpost-clean-${{ matrix.python-version }}/bin/python -m pip install -c requirements/constraints-py${{ matrix.python-version }}.txt dist/*.whl
+      - run: /tmp/pelecpost-clean-${{ matrix.python-version }}/bin/pelec-post --help
+      - run: /tmp/pelecpost-clean-${{ matrix.python-version }}/bin/pelec-post init /tmp/pelecpost-smoke-${{ matrix.python-version }}
+      - run: /tmp/pelecpost-clean-${{ matrix.python-version }}/bin/pelec-post validate /tmp/pelecpost-smoke-${{ matrix.python-version }}
+      - run: /tmp/pelecpost-clean-${{ matrix.python-version }}/bin/pelec-post plan /tmp/pelecpost-smoke-${{ matrix.python-version }}

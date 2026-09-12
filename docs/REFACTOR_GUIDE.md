@@ -614,6 +614,17 @@ the benchmark is a reference measurement, not a pass/fail limit.
 
 ## 17. Legacy migration
 
+### Category 1 artifact-contract migration
+
+The Category 1 release intentionally increments `pulse.transfer` and
+`wave.wavenumber` product contracts to version 2. A pulse transfer archive now
+stores its finite-record denominator as `source_power_spectrum_w_m` and reports
+transfer units as `<response-unit>/(W/m)`. The physical continuous-time source
+transform remains in `pulse.source_spectrum` with J/m units. Regenerate older
+artifacts before comparing them; mixed contract versions are rejected with a
+migration-oriented error. Version-2 wavenumber comparisons likewise require the
+new growth-validity semantics.
+
 The former JSON and global workflow-switch interface is archived under
 `legacy/` and is not accepted by the current CLI. Migration is:
 

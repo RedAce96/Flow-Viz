@@ -123,6 +123,9 @@ class RuntimeTests(unittest.TestCase):
                 else:
                     self.assertTrue((report_path.parent / link).resolve().is_file(), link)
             manifest = json.loads((first.run_dir / "manifest.json").read_text())
+            self.assertIn("software", manifest["provenance"])
+            self.assertIn("analysis", manifest["provenance"])
+            self.assertEqual(manifest["provenance"]["solver"]["name"], "pelec")
             fingerprints = manifest["provenance"]["input_fingerprints"]
             project_fingerprint = next(
                 item for item in fingerprints if item["path"].endswith("case.yaml")
@@ -165,6 +168,22 @@ class RuntimeTests(unittest.TestCase):
             report = (result.run_dir / "report/index.html").read_text(encoding="utf-8")
             self.assertIn("synthetic independent failure", report)
             self.assertIn("spectrum.spectral.psd", report)
+
+    def test_finalization_failure_preserves_a_report_and_status(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.make_project(Path(temporary), [{
+                "id": "spectrum", "recipe": "probe_spectrum", "variable": "temperature",
+            }])
+            with patch(
+                "pelecpost.analysis.evidence.write_evidence_report",
+                side_effect=RuntimeError("synthetic evidence failure"),
+            ):
+                result = run_project(project)
+            self.assertEqual(result.status, "failed")
+            self.assertTrue((result.run_dir / "report/index.html").is_file())
+            manifest = json.loads((result.run_dir / "manifest.json").read_text())
+            self.assertIn("synthetic evidence failure", manifest["finalization_errors"][0])
+            self.assertIn('"status": "failed"', (result.run_dir / "logs/run.log").read_text())
 
     def test_run_log_records_workflow_phase_timing_and_failure_context(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -243,6 +262,12 @@ class RuntimeTests(unittest.TestCase):
             self.assertIn("pulse.pulse.transfer", ids)
             self.assertIn("pulse.pulse.source_spectrum", ids)
             self.assertIn("pulse.pulse.validity", ids)
+            transfer = next(
+                item for item in artifacts["artifacts"] if item["id"] == "pulse.pulse.transfer"
+            )
+            self.assertEqual(transfer["units"], "K/(W/m)")
+            with np.load(result.run_dir / "data/pulse/single_pulse_response.npz") as arrays:
+                self.assertIn("source_power_spectrum_w_m", arrays.files)
 
     def test_directional_executor_registers_wavenumber_and_komega(self):
         with tempfile.TemporaryDirectory() as temporary:

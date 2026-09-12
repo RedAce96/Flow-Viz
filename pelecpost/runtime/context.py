@@ -118,7 +118,12 @@ class WorkflowContext:
             )
 
         return run_parallel_stage(
-            stage, tasks, function, plan, event_callback=report, **kwargs,
+            stage, tasks, function, plan, event_callback=report,
+            task_timeout_s=kwargs.pop(
+                "task_timeout_s",
+                float(self.project.machine_file.compute.parallel_task_timeout_s),
+            ),
+            **kwargs,
         )
 
     @property

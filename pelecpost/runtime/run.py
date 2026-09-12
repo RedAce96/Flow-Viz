@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import html
 import importlib.metadata
+import importlib
 import json
 import os
 import platform
@@ -20,6 +22,9 @@ from typing import Any
 from pelecpost.config.loader import dump_yaml
 from pelecpost.config.models import ResolvedProject
 from pelecpost.errors import PreflightBlockedError, UnsupportedCapabilityError
+from pelecpost.io.identity import (
+    build_input_manifest, collect_payloads, validate_input_manifest,
+)
 from pelecpost.preflight import create_plan
 from pelecpost.workflows import build_workflow_graph, workflow_for
 
@@ -64,27 +69,42 @@ def _packages() -> dict[str, str]:
     return result
 
 
-CHECKSUM_LIMIT_BYTES = 64 * 1024**2
+def _software_provenance() -> dict[str, Any]:
+    """Identify the installed post-processor independently of the input project."""
+    try:
+        version = importlib.metadata.version("pelecpost")
+    except importlib.metadata.PackageNotFoundError:
+        version = "source-checkout"
+    package_root = Path(__file__).resolve().parents[2]
+    embedded_revision = None
+    try:
+        version_module = importlib.import_module("pelecpost._version")
+        embedded_revision = getattr(version_module, "__commit_id__", None)
+    except ImportError:
+        pass
+    return {
+        "package": "pelecpost",
+        "version": version,
+        "build_revision": embedded_revision or _git_provenance(package_root).get("commit"),
+        "source_checkout": _git_provenance(package_root),
+    }
 
 
 def _fingerprint(
-    path: Path, *, checksum_limit_bytes: int = CHECKSUM_LIMIT_BYTES,
-    input_id: str | None = None,
+    path: Path, *, input_id: str | None = None,
 ) -> dict[str, Any]:
     info = path.stat()
     result: dict[str, Any] = {
         "path": str(path.resolve()), "size_bytes": info.st_size, "mtime_ns": info.st_mtime_ns,
     }
-    if info.st_size <= checksum_limit_bytes:
-        digest = hashlib.sha256()
-        with path.open("rb") as stream:
-            for block in iter(lambda: stream.read(1024**2), b""):
-                digest.update(block)
-        result.update({"checksum_algorithm": "sha256", "checksum": digest.hexdigest()})
-    else:
-        result["checksum_policy"] = (
-            f"omitted because file exceeds {checksum_limit_bytes} byte practical limit"
-        )
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024**2), b""):
+            digest.update(block)
+    result.update({
+        "checksum_algorithm": "sha256", "checksum": digest.hexdigest(),
+        "checksum_policy": "full_streaming_sha256",
+    })
     if input_id is not None:
         result["input_id"] = input_id
     return result
@@ -100,10 +120,8 @@ def _input_fingerprints(project: ResolvedProject) -> list[dict[str, Any]]:
     if plotfiles:
         configured_source = plotfiles.source.expanduser()
         source = configured_source if configured_source.is_absolute() else project.root / configured_source
-        for plotfile in sorted(source.glob(f"{plotfiles.prefix}*")):
-            header = plotfile / "Header"
-            if header.is_file():
-                result.append(_fingerprint(header, input_id="inputs.plotfiles"))
+        for path in collect_payloads(source, plotfiles.prefix):
+            result.append(_fingerprint(path, input_id="inputs.plotfiles"))
     for probe_set_id, probe_set in project.machine_file.inputs.probe_sets.items():
         probes = probe_set
         if probes.compact_file:
@@ -162,22 +180,133 @@ def _input_fingerprints(project: ResolvedProject) -> list[dict[str, Any]]:
     for baseline_id, baseline in project.machine_file.inputs.baselines.items():
         configured_source = baseline.source.expanduser()
         source = configured_source if configured_source.is_absolute() else project.root / configured_source
-        for plotfile in sorted(source.glob(f"{baseline.prefix}*")):
-            header = plotfile / "Header"
-            if header.is_file():
-                result.append(_fingerprint(
-                    header, input_id=f"inputs.baselines.{baseline_id}"
-                ))
+        for path in collect_payloads(source, baseline.prefix):
+            result.append(_fingerprint(path, input_id=f"inputs.baselines.{baseline_id}"))
+    sidecars: list[tuple[Path, str]] = []
+    if plotfiles and plotfiles.identity_manifest:
+        sidecars.append((_resolve(project, plotfiles.identity_manifest), "inputs.plotfiles.manifest"))
+    for probe_id, probe in project.machine_file.inputs.probe_sets.items():
+        if probe.compact_file:
+            compact = _resolve(project, probe.compact_file)
+            sidecar = (
+                _resolve(project, probe.identity_manifest)
+                if probe.identity_manifest else compact.with_name(compact.name + ".manifest.json")
+            )
+            if sidecar.is_file():
+                sidecars.append((sidecar, f"inputs.probe_sets.{probe_id}.manifest"))
+    for baseline_id, baseline in project.machine_file.inputs.baselines.items():
+        if baseline.identity_manifest:
+            sidecars.append((
+                _resolve(project, baseline.identity_manifest),
+                f"inputs.baselines.{baseline_id}.manifest",
+            ))
+    for path, input_id in sidecars:
+        if path.is_file():
+            result.append(_fingerprint(path, input_id=input_id))
+    return result
+
+
+def _resolve(project: ResolvedProject, path: Path) -> Path:
+    expanded = path.expanduser()
+    return expanded if expanded.is_absolute() else (project.root / expanded).resolve()
+
+
+def _identity_record(
+    source: Path, *, prefix: str | None,
+    manifest_path: Path | None, input_id: str,
+) -> dict[str, Any]:
+    source = source.resolve()
+    if manifest_path is not None and manifest_path.is_file():
+        payload = validate_input_manifest(
+            manifest_path, expected_source=source, expected_prefix=prefix,
+        )
+        policy = "trusted_sidecar"
+        sidecar = str(manifest_path.resolve())
+    else:
+        payload = build_input_manifest(source, prefix=prefix)
+        policy = "full_streaming_sha256_fallback"
+        sidecar = None
+    record: dict[str, Any] = {
+        "input_id": input_id,
+        "source": str(source),
+        "aggregate_sha256": payload["aggregate_sha256"],
+        "verification_policy": policy,
+        "entry_count": len(payload.get("entries", [])),
+    }
+    if sidecar is not None:
+        record["identity_manifest"] = sidecar
+    if payload.get("kind") == "compact_probe_archive":
+        record["source_aggregate_sha256"] = payload.get("source_manifest", {}).get(
+            "aggregate_sha256"
+        )
+    return record
+
+
+def _input_identities(project: ResolvedProject) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    inputs = project.machine_file.inputs
+    if inputs.plotfiles:
+        plot_config = inputs.plotfiles
+        source = _resolve(project, plot_config.source)
+        manifest = _resolve(project, plot_config.identity_manifest) if plot_config.identity_manifest else None
+        result.append(_identity_record(
+            source, prefix=plot_config.prefix, manifest_path=manifest,
+            input_id="inputs.plotfiles",
+        ))
+    for probe_id, probe_config in inputs.probe_sets.items():
+        if probe_config.compact_file:
+            source = _resolve(project, probe_config.compact_file)
+            manifest = _resolve(project, probe_config.identity_manifest) if probe_config.identity_manifest else None
+            if manifest is None:
+                candidate = source.with_name(source.name + ".manifest.json")
+                manifest = candidate if candidate.is_file() else None
+            result.append(_identity_record(
+                source, prefix=None, manifest_path=manifest,
+                input_id=f"inputs.probe_sets.{probe_id}",
+            ))
+        else:
+            for pattern in probe_config.binary_files:
+                configured = Path(pattern).expanduser()
+                source_root = configured.parent if configured.parent.is_absolute() else project.root / configured.parent
+                if any(character in pattern for character in "*?["):
+                    paths = tuple(sorted(source_root.glob(configured.name)))
+                else:
+                    paths = (configured if configured.is_absolute() else project.root / configured,)
+                for path in paths:
+                    result.append(_identity_record(
+                        path, prefix=None, manifest_path=None,
+                        input_id=f"inputs.probe_sets.{probe_id}",
+                    ))
+    for baseline_id, config in inputs.baselines.items():
+        source = _resolve(project, config.source)
+        manifest = _resolve(project, config.identity_manifest) if config.identity_manifest else None
+        result.append(_identity_record(
+            source, prefix=config.prefix, manifest_path=manifest,
+            input_id=f"inputs.baselines.{baseline_id}",
+        ))
     return result
 
 
 def _provenance(project: ResolvedProject) -> dict[str, Any]:
+    analysis_git = _git_provenance(project.root)
     return {
-        "git": _git_provenance(project.root),
+        # Keep the historical key as an analysis-repository alias while making
+        # the two identities explicit for new manifests.
+        "git": analysis_git,
+        "analysis": {"git": analysis_git},
+        "software": _software_provenance(),
+        "solver": {
+            "name": project.case_file.case.solver,
+            "revision": project.case_file.case.solver_revision,
+        },
         "python": platform.python_version(),
         "packages": _packages(),
         "host": socket.gethostname(),
         "slurm": {key: value for key, value in os.environ.items() if key.startswith("SLURM_")},
+        "inputs": {
+            "identities": _input_identities(project),
+            "verification_policy": "trusted sidecars when valid; full streaming SHA-256 fallback",
+        },
         "input_fingerprints": _input_fingerprints(project),
     }
 
@@ -242,6 +371,13 @@ def run_project(project: ResolvedProject, run_name: str | None = None) -> RunRes
         "compute": {
             "requested_workers": int(project.machine_file.compute.workers),
             "memory_limit_gb": float(project.machine_file.compute.memory_limit_gb),
+            "configured_parallel_task_timeout_s": float(
+                project.machine_file.compute.parallel_task_timeout_s
+            ),
+            "resolved_parallel_task_timeout_s": float(
+                project.machine_file.compute.parallel_task_timeout_s
+            ),
+            "worker_start_guard_s": 60.0,
             "workflows_serial": True,
         },
     }
@@ -328,6 +464,8 @@ def run_project(project: ResolvedProject, run_name: str | None = None) -> RunRes
                     "estimated_memory_per_worker_gb": details.get("per_worker_peak_gb"),
                     "estimated_concurrent_peak_gb": details.get("estimated_concurrent_peak_gb"),
                     "limiting_reasons": details.get("limiting_reasons", []),
+                    "configured_task_timeout_s": details.get("task_timeout_s"),
+                    "worker_start_guard_s": details.get("worker_start_guard_s"),
                 }
             elif event in {"parallel-task-start", "parallel-task-complete", "parallel-task-failed"}:
                 stage = str(details.get("stage", details.get("phase", "unknown")))
@@ -481,37 +619,112 @@ def run_project(project: ResolvedProject, run_name: str | None = None) -> RunRes
         manifest["status"] = "failed" if failed else "completed"
     from pelecpost.analysis.evidence import write_evidence_report
 
-    evidence_path = write_evidence_report(run_dir, registry)
-    registry.register(Artifact(
-        id="run.measurement-evidence", schema_version=1, recipe_instance="__run__",
-        kind="json", path=str(evidence_path.relative_to(run_dir)), variable=None,
-        units=None, coordinate_metadata={},
-        source_inputs=tuple(dict.fromkeys(
-            source for artifact in registry.artifacts for source in artifact.source_inputs
-        )),
-        interpretation=(
-            "Conservative measurement-based classification with explicit exclusion of "
-            "LST/PSE and causal inference."
-        ),
-        provenance={
-            "derived_from": [artifact.id for artifact in registry.artifacts],
-            "preprocessing": {
-                "classifier": "pelecpost.measurement-evidence",
-                "schema_version": 1,
-            },
-        },
-    ))
+    # Keep the compact message list for older consumers while making the
+    # structured records authoritative for diagnostics and machine readers.
+    finalization_errors: list[str] = []
+    finalization_error_records: list[dict[str, Any]] = []
+
+    def finalization_failure(phase: str, exc: BaseException) -> dict[str, Any]:
+        error = {
+            "phase": phase,
+            "exception_type": type(exc).__name__,
+            "message": str(exc),
+            "traceback": traceback.format_exc(),
+        }
+        finalization_error_records.append(error)
+        finalization_errors.append(f"{phase}: {type(exc).__name__}: {exc}")
+        emit(
+            "ERROR", "finalization-failed", f"{phase}: {type(exc).__name__}: {exc}",
+            phase=phase, exception_type=type(exc).__name__,
+        )
+        return error
+
+    def write_fallback_report(reason: str) -> None:
+        payload = {
+            "status": manifest.get("status"),
+            "workflows": manifest.get("workflows", {}),
+            "finalization_errors": finalization_errors,
+            "finalization_error_records": finalization_error_records,
+            "artifacts": [artifact.__dict__ for artifact in registry.artifacts],
+            "provenance": manifest.get("provenance", {}),
+            "reason": reason,
+        }
+        (run_dir / "report" / "index.html").write_text(
+            "<html><body><h1>Flow Viz post-processing report</h1>"
+            "<p>This portable fallback report was written because normal report "
+            "generation failed.</p>"
+            f"<pre>{html.escape(json.dumps(payload, indent=2, default=str))}</pre>"
+            "</body></html>\n",
+            encoding="utf-8",
+        )
+    try:
+        evidence_path = write_evidence_report(run_dir, registry)
+    except BaseException as exc:
+        finalization_failure("evidence_generation", exc)
+        evidence_path = None
+    if evidence_path is not None:
+        try:
+            registry.register(Artifact(
+                id="run.measurement-evidence", schema_version=1, recipe_instance="__run__",
+                kind="json", path=str(evidence_path.relative_to(run_dir)), variable=None,
+                units=None, coordinate_metadata={},
+                source_inputs=tuple(dict.fromkeys(
+                    source for artifact in registry.artifacts for source in artifact.source_inputs
+                )),
+                interpretation=(
+                    "Conservative measurement-based classification with explicit exclusion of "
+                    "LST/PSE and causal inference."
+                ),
+                provenance={
+                    "derived_from": [artifact.id for artifact in registry.artifacts],
+                    "preprocessing": {
+                        "classifier": "pelecpost.measurement-evidence",
+                        "schema_version": 1,
+                    },
+                },
+            ))
+        except BaseException as exc:
+            finalization_failure("artifact_registry_finalization", exc)
     manifest["completed_utc"] = dt.datetime.now(dt.timezone.utc).isoformat()
     manifest["duration_s"] = time.perf_counter() - run_started
-    atomic_json(run_dir / "manifest.json", manifest)
+    if finalization_errors:
+        manifest["status"] = "failed"
+        manifest["finalization_errors"] = finalization_errors
+        manifest["finalization_error_records"] = finalization_error_records
+    try:
+        atomic_json(run_dir / "manifest.json", manifest)
+    except BaseException as exc:
+        finalization_failure("manifest_finalization", exc)
+    try:
+        register_control("run.log", "logs/run.log", "Full workflow log including tracebacks.")
+    except BaseException as exc:
+        finalization_failure("artifact_registry_finalization", exc)
+    try:
+        generate_report(run_dir)
+    except BaseException as exc:
+        finalization_failure("html_report_generation", exc)
+        write_fallback_report("initial report generation failure")
+    try:
+        register_control("run.report", "report/index.html", "Portable HTML run report.")
+    except BaseException as exc:
+        finalization_failure("artifact_registry_finalization", exc)
+    # Regenerate once so the report's product index includes its own registered entry.
+    try:
+        generate_report(run_dir)
+    except BaseException as exc:
+        finalization_failure("html_report_generation", exc)
+        write_fallback_report("final report regeneration failure")
+    if finalization_errors:
+        manifest["status"] = "failed"
+        manifest["finalization_errors"] = finalization_errors
+        manifest["finalization_error_records"] = finalization_error_records
+        try:
+            atomic_json(run_dir / "manifest.json", manifest)
+        except BaseException as exc:
+            finalization_failure("manifest_finalization", exc)
     emit(
         "INFO", "run-complete", f"run finished with status {manifest['status']}",
         status=manifest["status"], elapsed_s=manifest["duration_s"],
-        failed_workflows=list(failed),
+        failed_workflows=list(failed), finalization_errors=finalization_errors,
     )
-    register_control("run.log", "logs/run.log", "Full workflow log including tracebacks.")
-    generate_report(run_dir)
-    register_control("run.report", "report/index.html", "Portable HTML run report.")
-    # Regenerate once so the report's product index includes its own registered entry.
-    generate_report(run_dir)
     return RunResult(run_id, run_dir, manifest["status"], failed)

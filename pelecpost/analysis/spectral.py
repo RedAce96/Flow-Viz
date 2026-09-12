@@ -899,7 +899,8 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
     )
     path = context.data_dir / "single_pulse_response.npz"
     np.savez_compressed(
-        path, frequency_hz=frequency[keep], source_spectrum_j_m=source["physical_spectrum"][keep],
+        path, frequency_hz=frequency[keep],
+        source_power_spectrum_w_m=np.abs(source["processed_complex"][keep]),
         transfer=transfer["transfer"][keep], transfer_magnitude=transfer["magnitude"][keep],
         transfer_phase_rad=transfer["phase_rad"][keep], valid_frequency=transfer["valid_frequency"][keep],
         baseline=baseline["baseline"], baseline_sample_count=np.array(baseline["baseline_sample_count"]),
@@ -907,8 +908,11 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
     )
     context.register(
         artifact_id="pulse.transfer", path=path, kind="array", variable=variable,
-        units=f"{unit}/(J/m)", coordinate_metadata={"frequency": "Hz", "probe_x": "m"},
-        interpretation="Finite-record single-pulse response/source ratio; invalid low-source bins are masked.",
+        units=f"{unit}/(W/m)", coordinate_metadata={"frequency": "Hz", "probe_x": "m"},
+        interpretation=(
+            "Finite-record single-pulse response/source-power ratio; invalid low-source "
+            "bins are masked. The separately registered physical source transform retains J/m units."
+        ),
         provenance={"estimator": "finite_record_single_pulse", "baseline_end_time_s": baseline_end,
                     "time_grid_policy": analysis.time_grid_policy, "resampled": resampled},
     )
@@ -916,7 +920,8 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
         context, artifact_id="pulse.transfer_magnitude.figure",
         filename="transfer_magnitude_overlay", x=frequency[keep],
         values=np.abs(transfer["magnitude"][keep]), x_label="Frequency [Hz]",
-        y_label="Transfer magnitude", variable=variable, units="dimensionless",
+        y_label=f"Transfer magnitude [{unit}/(W/m)]", variable=variable,
+        units=f"{unit}/(W/m)",
         selected=selected, x_m=x_m,
         interpretation="Finite-record transfer magnitude overlaid for every selected probe.",
         provenance={"valid_frequency_mask": "invalid source bins omitted"},
@@ -1080,6 +1085,16 @@ def run_directional_wave(context: WorkflowContext) -> None:
         interpretation="Coherence-gated dominant-wave estimate; it is not an LST/PSE eigensolution.",
         provenance={"phase_convention": local["phase_convention"], "accepted_fraction": accepted,
                     "growth_accepted_fraction": growth,
+                    "spatial_interval_method": local.get("spatial_interval_method"),
+                    "spatial_interval_independence_assumption": local.get(
+                        "spatial_interval_independence_assumption"
+                    ),
+                    "spatial_interval_degrees_of_freedom": local.get(
+                        "spatial_interval_degrees_of_freedom"
+                    ),
+                    "spatial_interval_t_multiplier": local.get(
+                        "spatial_interval_t_multiplier"
+                    ),
                     "time_grid_policy": analysis.time_grid_policy, "resampled": resampled},
     )
     spectrum_path = context.data_dir / "local_spatial_spectrum.npz"

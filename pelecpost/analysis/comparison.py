@@ -124,6 +124,14 @@ def _validate_product_pair(left: _Product, right: _Product) -> dict[str, Any]:
             f"comparison products have different product types: "
             f"{left_contract.get('product_type')!r} != {right_contract.get('product_type')!r}"
         )
+    if left_contract.get("schema_version", 1) != right_contract.get("schema_version", 1):
+        raise ValueError(
+            "comparison products use incompatible product-contract versions: "
+            f"{left_contract.get('product_type')!r} version "
+            f"{left_contract.get('schema_version', 1)} vs "
+            f"{right_contract.get('schema_version', 1)}; migrate the older artifact "
+            "or regenerate both products with the same contract version"
+        )
     if left.path.suffix.lower() == ".npz" and not left_contract.get("value_keys"):
         raise ValueError(f"product {left.label!r} has no registered typed value arrays")
     if right.path.suffix.lower() == ".npz" and not right_contract.get("value_keys"):
@@ -339,12 +347,18 @@ def _validity_for_value(
     }
     validity_by_value = contract.get("validity_by_value")
     if validity_by_value is None:
-        validity_fields = contract.get("validity_fields", contract.get("mask_keys", ()))
+        # A product-wide mask inventory is descriptive metadata, not a claim
+        # that every archive must contain every possible mask.  Only an
+        # explicit value-to-mask declaration makes a mask required.
+        validity_fields = ()
     else:
         validity_fields = validity_by_value.get(value_key, ())
     for key in validity_fields:
         if key not in archive.files:
-            continue
+            raise ValueError(
+                f"product {product_type!r} is missing required validity field {key!r} "
+                f"for value {value_key!r}"
+            )
         raw = np.asarray(archive[key])
         raw_valid = (
             np.isfinite(raw) & (raw != 0)

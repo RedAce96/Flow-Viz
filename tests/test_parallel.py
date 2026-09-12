@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 import unittest
 from pathlib import Path
@@ -34,6 +35,10 @@ def _fail_on_two(payload):
 def _sleep_and_return(payload):
     time.sleep(float(payload[1]))
     return payload[0]
+
+
+def _kill_worker(_payload):
+    os._exit(17)
 
 
 class ParallelTests(unittest.TestCase):
@@ -117,6 +122,21 @@ class ParallelTests(unittest.TestCase):
         self.assertEqual(raised.exception.result.task_id, "task-2")
         self.assertIn("synthetic task failure", str(raised.exception))
         self.assertIn("ValueError", raised.exception.result.remote_traceback)
+
+    def test_abrupt_worker_exit_terminates_the_stage(self):
+        plan = ParallelStagePlan(
+            stage="worker-death", requested_workers=2, effective_workers=2,
+            task_count=1, available_cpus=2, parent_resident_gb=0.0,
+            per_worker_peak_gb=0.1, estimated_concurrent_peak_gb=0.2,
+            limiting_reasons=(),
+        )
+        with self.assertRaises(ParallelTaskError) as raised:
+            run_parallel_stage(
+                "worker-death", [ParallelTask(0, "killed-task", None)],
+                _kill_worker, plan, heartbeat_s=0.05,
+            )
+        self.assertEqual(raised.exception.result.task_id, "killed-task")
+        self.assertEqual(raised.exception.result.error_type, "WorkerDiedError")
 
     def test_readonly_array_staging_is_reopenable_and_cleanable(self):
         with tempfile.TemporaryDirectory() as directory:

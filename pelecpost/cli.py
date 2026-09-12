@@ -13,7 +13,7 @@ from rich.table import Table
 
 from pelecpost.config import load_project, write_project_schema
 from pelecpost.errors import CONFIGURATION_EXIT_CODE, PelecPostError, PreflightBlockedError
-from pelecpost.io import inspect_project
+from pelecpost.io import inspect_project, write_input_manifest
 from pelecpost.preflight import Severity, create_plan
 from pelecpost.project import initialize_project
 from pelecpost.runtime import generate_report, run_project
@@ -29,8 +29,10 @@ app = typer.Typer(
 )
 recipes_app = typer.Typer(help="List and explain analysis recipes.")
 probes_app = typer.Typer(help="Create, verify, and prune compact probe archives.")
+inputs_app = typer.Typer(help="Create collision-resistant input identity manifests.")
 app.add_typer(recipes_app, name="recipes")
 app.add_typer(probes_app, name="probes")
+app.add_typer(inputs_app, name="inputs")
 console = Console()
 RETIRED_OPTIONS = frozenset({
     "--config", "--output-dir", "--snapshot-start", "--snapshot-end",
@@ -253,6 +255,17 @@ def probes_verify_command(context: typer.Context) -> None:
 def probes_prune_command(context: typer.Context) -> None:
     """Preview or prune sources covered by a verification manifest."""
     _run_probe_utility(["prune", *context.args])
+
+
+@inputs_app.command("manifest")
+def inputs_manifest_command(
+    source: Path,
+    output: Path = typer.Option(..., "--output", "-o"),
+    prefix: Optional[str] = typer.Option(None, "--prefix"),
+) -> None:
+    """Hash every regular payload file under SOURCE into a portable sidecar."""
+    path = write_input_manifest(source, output, prefix=prefix)
+    console.print(f"[green]Input manifest written:[/] {path}")
 
 
 def main() -> None:

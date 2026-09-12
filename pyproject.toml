@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=69", "setuptools-scm>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "pelecpost"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Recipe-driven PeleC CFD post-processing"
 requires-python = ">=3.11"
 dependencies = [
@@ -44,6 +44,10 @@ py-modules = [
   "pp_plotting_database",
   "pp_probe_store",
 ]
+
+[tool.setuptools_scm]
+version_file = "pelecpost/_version.py"
+version_file_template = "__version__ = '{version}'\n__commit_id__ = '{scm_version.node}'\n"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "."]

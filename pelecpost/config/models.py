@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import (
-    BaseModel, ConfigDict, Field, PositiveFloat, PositiveInt,
+    BaseModel, ConfigDict, Field, NonNegativeFloat, PositiveFloat, PositiveInt,
     field_validator, model_validator,
 )
 
@@ -277,6 +277,7 @@ class CaseIdentity(StrictModel):
     solver: Literal["pelec"] = "pelec"
     dimensionality: Literal[2, 3] = 2
     solver_units: SolverUnits = SolverUnits.CGS
+    solver_revision: str | None = None
     description: str | None = None
 
 
@@ -727,6 +728,11 @@ class TransientWavepacketAnalysis(ProbeAnalysis):
     band_min_hz: float = Field(ge=0.0)
     band_max_hz: PositiveFloat
     baseline_end_time_s: float | None = None
+    minimum_baseline_samples: PositiveInt = 8
+    minimum_packet_snr_db: float = 6.0
+    minimum_arrival_r_squared: float = Field(default=0.80, ge=0.0, le=1.0)
+    arrival_edge_margin_s: NonNegativeFloat | None = None
+    require_monotonic_arrivals: bool = True
     stft_segment_samples: PositiveInt = 2048
     overlap_fraction: float = Field(default=0.75, ge=0.0, lt=1.0)
 
@@ -850,11 +856,13 @@ class AnalysesFile(StrictModel):
 class PlotfileInput(StrictModel):
     source: Path
     prefix: str = "plt"
+    identity_manifest: Path | None = None
 
 
 class ProbeInput(StrictModel):
     compact_file: Path | None = None
     binary_files: tuple[str, ...] = ()
+    identity_manifest: Path | None = None
 
     model_config = ConfigDict(
         extra="forbid", frozen=True,
@@ -864,6 +872,7 @@ class ProbeInput(StrictModel):
                     "required": ["compact_file"],
                     "properties": {
                         "compact_file": {"type": "string"},
+                        "identity_manifest": {"type": ["string", "null"]},
                         "binary_files": {"maxItems": 0},
                     },
                 },
@@ -871,6 +880,7 @@ class ProbeInput(StrictModel):
                     "required": ["binary_files"],
                     "properties": {
                         "compact_file": {"type": "null"},
+                        "identity_manifest": {"type": ["string", "null"]},
                         "binary_files": {"minItems": 1},
                     },
                 },
@@ -928,6 +938,7 @@ class ComputeConfig(StrictModel):
     memory_limit_gb: PositiveFloat = 8.0
     fft_batch_size: PositiveInt = 32
     scratch_directory: Path | None = None
+    parallel_task_timeout_s: PositiveFloat = 21_600.0
 
 
 class MachineFile(StrictModel):

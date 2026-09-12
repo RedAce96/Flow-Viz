@@ -59,11 +59,21 @@ def _wave(run_dir: Path, artifact: Artifact) -> dict[str, Any]:
 
 def _packet(run_dir: Path, artifact: Artifact) -> dict[str, Any]:
     value = _read_json(run_dir, artifact)
-    speed = float(value.get("group_velocity_m_s", np.nan))
-    r_squared = float(value.get("arrival_time_regression_r_squared", np.nan))
+    raw_speed = value.get("group_velocity_m_s")
+    raw_r_squared = value.get("arrival_time_regression_r_squared")
+    speed = float(raw_speed) if raw_speed is not None else np.nan
+    r_squared = float(raw_r_squared) if raw_r_squared is not None else np.nan
+    gates = value.get("gates", {})
+    if not isinstance(gates, dict):
+        gates = {}
     supported = (
-        np.isfinite(speed) and speed > 0.0 and np.isfinite(r_squared)
-        and r_squared >= THRESHOLDS["minimum_packet_arrival_r_squared"]
+        value.get("fit_status") == "supported"
+        and np.isfinite(speed) and speed > 0.0
+        and all(bool(gates.get(name, False)) for name in (
+            "baseline_samples", "minimum_snr", "arrival_r_squared",
+            "arrival_edge_margin", "monotonic_arrivals",
+            "resolved_downstream_direction", "confidence_interval_identifiable",
+        ))
     )
     return {
         "analysis_id": artifact.recipe_instance,
@@ -71,6 +81,14 @@ def _packet(run_dir: Path, artifact: Artifact) -> dict[str, Any]:
         "group_velocity_m_s": speed,
         "arrival_time_regression_r_squared": r_squared,
         "confidence_interval_95_m_s": value.get("confidence_interval_95_m_s"),
+        "confidence_interval_identifiable": bool(
+            gates.get("confidence_interval_identifiable", False)
+        ),
+        "minimum_snr_db": value.get("minimum_snr_db"),
+        "per_probe_snr_db": value.get("per_probe_snr_db", []),
+        "gates": gates,
+        "fit_status": value.get("fit_status", "unknown"),
+        "resolved_thresholds": value.get("resolved_thresholds", {}),
         "meaning": "Band-limited arrival regression; not a causal attribution.",
     }
 

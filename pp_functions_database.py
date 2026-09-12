@@ -4599,6 +4599,8 @@ def compute_growth_rate_from_probes(probe_x, freq, P1, target_freq,
     alpha_i = np.full(n_probes, np.nan)
     r2 = np.full(n_probes, np.nan)
     alpha_i_ci95 = np.full(n_probes, np.nan)
+    ci_degrees_of_freedom = np.full(n_probes, np.nan)
+    ci_multiplier = np.full(n_probes, np.nan)
     half = window_size // 2
 
     for i in range(n_probes):
@@ -4618,14 +4620,23 @@ def compute_growth_rate_from_probes(probe_x, freq, P1, target_freq,
         r2[i] = 1.0 - ss_res / ss_tot if ss_tot > 1e-20 else np.nan
         sxx = np.sum((x_win - np.mean(x_win)) ** 2)
         if len(x_win) > 2 and sxx > 0:
-            slope_se = np.sqrt((ss_res / (len(x_win) - 2)) / sxx)
-            alpha_i_ci95[i] = 1.96 * slope_se
+            degrees_of_freedom = len(x_win) - 2
+            from scipy.stats import t as student_t
+            multiplier = float(student_t.ppf(0.975, degrees_of_freedom))
+            slope_se = np.sqrt((ss_res / degrees_of_freedom) / sxx)
+            alpha_i_ci95[i] = multiplier * slope_se
+            ci_degrees_of_freedom[i] = degrees_of_freedom
+            ci_multiplier[i] = multiplier
 
     out = {
         "x": probe_x, "alpha_i": alpha_i,
         "amplification_rate": -alpha_i,
         "A_at_f": A, "r_squared": r2,
         "alpha_i_ci95": alpha_i_ci95,
+        "alpha_i_ci95_degrees_of_freedom": ci_degrees_of_freedom,
+        "alpha_i_ci95_multiplier": ci_multiplier,
+        "alpha_i_ci95_method": "Student-t independent spatial residuals",
+        "alpha_i_ci95_independence_assumption": True,
         "window_size": int(window_size),
     }
 
@@ -5346,9 +5357,12 @@ def compute_frequency_resolved_wavenumber(
                 phase_sign * phase_slope
             )
             alpha_imag[frequency_index, centre_number] = -amplitude_slope
-            alpha_real_ci95[frequency_index, centre_number] = 1.96 * phase_se
+            from scipy.stats import t as student_t
+            spatial_degrees_of_freedom = len(x_window) - 2
+            spatial_multiplier = float(student_t.ppf(0.975, spatial_degrees_of_freedom))
+            alpha_real_ci95[frequency_index, centre_number] = spatial_multiplier * phase_se
             alpha_imag_ci95[frequency_index, centre_number] = (
-                1.96 * amplitude_se
+                spatial_multiplier * amplitude_se
             )
             phase_r_squared[frequency_index, centre_number] = phase_r2
             amplitude_r_squared[frequency_index, centre_number] = amplitude_r2
@@ -5433,6 +5447,10 @@ def compute_frequency_resolved_wavenumber(
         "probe_x_sorted_m": x,
         "probe_sort_order": order,
         "n_blocks": int(starts.size),
+        "spatial_interval_method": "Student-t independent spatial residuals",
+        "spatial_interval_independence_assumption": True,
+        "spatial_interval_degrees_of_freedom": int(spatial_window_size - 2),
+        "spatial_interval_t_multiplier": spatial_multiplier,
         "nperseg": int(nperseg),
         "noverlap": int(noverlap),
         "spatial_window_size": int(spatial_window_size),

@@ -30,6 +30,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import pp_functions_database as fdb
+from pelecpost.io.identity import build_input_manifest, sha256_file
 from pp_probe_store import (
     ProbeV2Collection, SCHEMA_NAME, SCHEMA_VERSION,
     create_numeric_dataset, hdf5_chunks, sha256_file,
@@ -394,6 +395,30 @@ def command_create(args):
         finally:
             temporary.unlink(missing_ok=True)
 
+        source_paths = tuple(Path(path).resolve() for path in collection.paths)
+        common_root = Path(os.path.commonpath([str(path) for path in source_paths]))
+        if common_root.is_file():
+            common_root = common_root.parent
+        source_manifest = build_input_manifest(
+            common_root, payloads=source_paths,
+        )
+        archive_info = output.stat()
+        sidecar = build_input_manifest(output)
+        sidecar.update({
+            "kind": "compact_probe_archive",
+            "archive": {
+                "path": str(output),
+                "size_bytes": int(archive_info.st_size),
+                "mtime_ns": int(archive_info.st_mtime_ns),
+                "sha256": sha256_file(output),
+            },
+            "source_manifest": source_manifest,
+        })
+        sidecar_path = output.with_name(output.name + ".manifest.json")
+        sidecar_path.write_text(
+            json.dumps(sidecar, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
         source_bytes = sum(Path(path).stat().st_size for path in collection.paths)
         compact_bytes = output.stat().st_size
         report = {
@@ -405,6 +430,7 @@ def command_create(args):
             "retained_fraction": (stop - start) / len(collection.time),
             "detection_coverage": coverage,
             "diagnostics": diagnostics,
+            "manifest": str(sidecar_path),
         }
         print(json.dumps(report, indent=2))
 

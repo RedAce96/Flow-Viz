@@ -12,9 +12,7 @@ from pelecpost.analysis.products import product_contract
 from pelecpost.analysis.spectral import _prepare_fft_grid, spectrum_from_signal
 from pelecpost.analysis.temporal_wavenumber import compute_temporal_wavenumber
 from pelecpost.config.models import (
-    CaseComparisonAnalysis,
     ComparisonAlignment,
-    ComparisonReference,
     ProbeInput,
 )
 from pelecpost.config.loader import write_project_schema
@@ -256,7 +254,7 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
             common = {
                 "frequency_hz": frequency,
                 "probe_x_m": x,
-                "source_spectrum_j_m": np.ones(3),
+                "source_power_spectrum_w_m": np.ones(3),
                 "transfer": np.zeros((3, 2)),
                 "transfer_magnitude": np.zeros((3, 2)),
                 "transfer_phase_rad": np.zeros((3, 2)),
@@ -275,6 +273,30 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
             self.assertEqual(transfer["linf_difference"], 0.0)
             self.assertEqual(details["transfer"]["masked_count_baseline"], 2)
             self.assertEqual(details["transfer"]["valid_count_used"], 4)
+
+    def test_growth_derived_wavenumber_values_require_growth_mask(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "wave.npz"
+            arrays = {
+                "frequency_hz": np.array([1.0, 2.0]),
+                "x_center_m": np.array([0.0, 1.0]),
+                "alpha_real_rad_m": np.ones((2, 2)),
+                "alpha_imag_rad_m": np.ones((2, 2)),
+                "alpha_real_ci95_rad_m": np.ones((2, 2)),
+                "alpha_imag_ci95_rad_m": np.ones((2, 2)),
+                "amplification_rate_per_m": np.ones((2, 2)),
+                "phase_speed_m_s": np.ones((2, 2)),
+                "coherence_squared": np.ones((2, 2)),
+                "phase_fit_r_squared": np.ones((2, 2)),
+                "amplitude_fit_r_squared": np.ones((2, 2)),
+                "spatial_alias_margin": np.ones((2, 2)),
+                "phase_valid_mask": np.ones((2, 2), dtype=bool),
+            }
+            np.savez(path, **arrays)
+            product = _Product("wave", _product_metadata(path, "wave.wavenumber"), path)
+            with self.assertRaisesRegex(ValueError, "growth_valid_mask"):
+                _array_metrics(product, product, ComparisonAlignment())
 
     def test_typed_product_adapters_cover_wave_nonlinear_and_modal_outputs(self):
         with tempfile.TemporaryDirectory() as temporary:

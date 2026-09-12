@@ -64,6 +64,7 @@ class ParallelTaskResult:
     error_type: str | None = None
     error_message: str | None = None
     remote_traceback: str | None = None
+    work_unit: dict[str, Any] = field(default_factory=dict)
 
     @property
     def succeeded(self) -> bool:
@@ -171,6 +172,8 @@ class ParallelTaskError(RuntimeError):
         self.result = result
         message = (
             f"parallel stage {stage!r} task {result.task_id!r} failed: "
+            f"index={result.index}, worker_pid={result.worker_pid}, "
+            f"elapsed_s={result.elapsed_s:.3f}, work_unit={result.work_unit!r}; "
             f"{result.error_type}: {result.error_message}"
         )
         if result.remote_traceback:
@@ -337,6 +340,7 @@ def _worker_entry(task: ParallelTask) -> ParallelTaskResult:
             worker_pid=os.getpid(), peak_rss_bytes=_peak_rss_bytes(),
             error_type=type(exc).__name__, error_message=str(exc),
             remote_traceback=traceback.format_exc(),
+            work_unit=dict(task.identity),
         )
         _emit_worker_event(
             "parallel-task-phase-failed", task_id=task.task_id,
@@ -360,6 +364,7 @@ def _worker_entry(task: ParallelTask) -> ParallelTaskResult:
     result = ParallelTaskResult(
         index=task.index, task_id=task.task_id, value=value, elapsed_s=elapsed,
         worker_pid=os.getpid(), peak_rss_bytes=_peak_rss_bytes(),
+        work_unit=dict(task.identity),
     )
     _emit_worker_event(
         "parallel-task-complete", task_id=task.task_id, task_index=task.index,
@@ -428,6 +433,7 @@ def _inline_result(
             elapsed_s=time.perf_counter() - started, worker_pid=os.getpid(),
             peak_rss_bytes=_peak_rss_bytes(), error_type=type(exc).__name__,
             error_message=str(exc), remote_traceback=traceback.format_exc(),
+            work_unit=dict(task.identity),
         )
     elapsed = time.perf_counter() - started
     _emit_parent_event(
@@ -439,6 +445,7 @@ def _inline_result(
         index=task.index, task_id=task.task_id, value=value,
         elapsed_s=elapsed, worker_pid=os.getpid(),
         peak_rss_bytes=_peak_rss_bytes(),
+        work_unit=dict(task.identity),
     )
 
 
@@ -451,6 +458,8 @@ def run_parallel_stage(
     event_callback: EventCallback | None = None,
     heartbeat_s: float = 30.0,
     recycle_after_tasks: int | None = None,
+    task_timeout_s: float = 21_600.0,
+    worker_start_guard_s: float = 60.0,
 ) -> tuple[ParallelTaskResult, ...]:
     """Run bounded tasks and return results in input order.
 
@@ -460,6 +469,10 @@ def run_parallel_stage(
     """
 
     _validate_task_function(function)
+    if task_timeout_s <= 0.0:
+        raise ValueError("task_timeout_s must be positive")
+    if worker_start_guard_s <= 0.0:
+        raise ValueError("worker_start_guard_s must be positive")
     task_list = tuple(tasks)
     if len(task_list) != plan.task_count:
         raise ValueError("parallel stage plan task_count does not match tasks")
@@ -472,6 +485,8 @@ def run_parallel_stage(
         per_worker_peak_gb=plan.per_worker_peak_gb,
         estimated_concurrent_peak_gb=plan.estimated_concurrent_peak_gb,
         limiting_reasons=list(plan.limiting_reasons),
+        task_timeout_s=float(task_timeout_s),
+        worker_start_guard_s=float(worker_start_guard_s),
     )
     if not task_list:
         _emit_parent_event(event_callback, "parallel-stage-complete", stage=stage, task_count=0)
@@ -519,26 +534,133 @@ def run_parallel_stage(
     next_task = 0
     last_heartbeat = time.monotonic()
     completed_count = 0
+    task_workers: dict[str, int] = {}
+    task_submitted_at: dict[str, float] = {}
+    task_started_at: dict[str, float] = {}
+
+    def drain_events() -> None:
+        while True:
+            try:
+                event = event_queue.get_nowait()
+            except queue.Empty:
+                break
+            task_id = event.get("task_id")
+            worker_pid = event.get("worker_pid")
+            if event.get("event") == "parallel-task-start" and task_id is not None:
+                if isinstance(worker_pid, int):
+                    task_workers[str(task_id)] = worker_pid
+                task_started_at[str(task_id)] = time.monotonic()
+            event_callback and event_callback(
+                str(event.get("event", "progress")),
+                {"stage": stage, **event},
+            )
+
+    def dead_worker_result() -> ParallelTaskResult | None:
+        """Return a failure for a task whose worker disappeared before its result."""
+        current_pids = {process.pid for process in pool._pool if process.pid is not None}
+        for future, task in active.items():
+            worker_pid = task_workers.get(task.task_id)
+            if worker_pid is not None and worker_pid not in current_pids and not future.ready():
+                return ParallelTaskResult(
+                    index=task.index, task_id=task.task_id, worker_pid=worker_pid,
+                    error_type="WorkerDiedError",
+                    error_message=(
+                        f"worker process {worker_pid} exited before task {task.task_id!r} "
+                        "returned a result"
+                    ),
+                    remote_traceback=(
+                        "The worker exited outside Python exception handling; the task "
+                        "may have been killed by the OS or a native dependency."
+                    ),
+                    work_unit=dict(task.identity),
+                )
+        return None
 
     def submit_available() -> None:
         nonlocal next_task
         while next_task < len(task_list) and len(active) < plan.effective_workers:
             task = task_list[next_task]
             active[pool.apply_async(_worker_entry, (task,))] = task
+            task_submitted_at[task.task_id] = time.monotonic()
             next_task += 1
 
     try:
         submit_available()
         while active:
-            while True:
-                try:
-                    event = event_queue.get_nowait()
-                except queue.Empty:
-                    break
-                event_callback and event_callback(
-                    str(event.get("event", "progress")),
-                    {"stage": stage, **event},
+            drain_events()
+            dead = dead_worker_result()
+            if dead is not None:
+                dead_identity = next(
+                    task.identity for task in active.values() if task.task_id == dead.task_id
                 )
+                _emit_parent_event(
+                    event_callback, "parallel-task-failed", stage=stage,
+                    task_id=dead.task_id, task_index=dead.index,
+                    error_type=dead.error_type, error_message=dead.error_message,
+                    current_phase="task", work_unit=dead_identity,
+                )
+                _emit_parent_event(
+                    event_callback, "parallel-stage-failed", stage=stage,
+                    task_id=dead.task_id, task_index=dead.index,
+                    completed_count=completed_count,
+                )
+                raise ParallelTaskError(stage, dead)
+            now = time.monotonic()
+            for task in active.values():
+                task_id = task.task_id
+                started_at = task_started_at.get(task_id)
+                submitted_at = task_submitted_at.get(task_id, now)
+                if started_at is None and now - submitted_at > worker_start_guard_s:
+                    elapsed = now - submitted_at
+                    timeout_result = ParallelTaskResult(
+                        index=task.index, task_id=task_id,
+                        worker_pid=task_workers.get(task_id, 0), elapsed_s=elapsed,
+                        error_type="WorkerStartTimeoutError",
+                        error_message=(
+                            f"task was submitted but no worker-start event arrived within "
+                            f"{worker_start_guard_s:.3f} seconds"
+                        ),
+                        work_unit=dict(task.identity),
+                    )
+                    _emit_parent_event(
+                        event_callback, "parallel-task-failed", stage=stage,
+                        task_id=task_id, task_index=task.index, elapsed_s=elapsed,
+                        worker_pid=timeout_result.worker_pid,
+                        error_type=timeout_result.error_type,
+                        error_message=timeout_result.error_message,
+                        current_phase="worker-start", work_unit=task.identity,
+                    )
+                    _emit_parent_event(
+                        event_callback, "parallel-stage-failed", stage=stage,
+                        task_id=task_id, task_index=task.index,
+                        completed_count=completed_count, work_unit=task.identity,
+                    )
+                    raise ParallelTaskError(stage, timeout_result)
+                if started_at is not None and now - started_at > task_timeout_s:
+                    elapsed = now - started_at
+                    timeout_result = ParallelTaskResult(
+                        index=task.index, task_id=task_id,
+                        worker_pid=task_workers.get(task_id, 0), elapsed_s=elapsed,
+                        error_type="TaskTimeoutError",
+                        error_message=(
+                            f"task exceeded configured timeout of {task_timeout_s:.3f} seconds"
+                        ),
+                        work_unit=dict(task.identity),
+                    )
+                    _emit_parent_event(
+                        event_callback, "parallel-task-failed", stage=stage,
+                        task_id=task_id, task_index=task.index, elapsed_s=elapsed,
+                        worker_pid=timeout_result.worker_pid,
+                        error_type=timeout_result.error_type,
+                        error_message=timeout_result.error_message,
+                        current_phase="task", work_unit=task.identity,
+                    )
+                    _emit_parent_event(
+                        event_callback, "parallel-stage-failed", stage=stage,
+                        task_id=task_id, task_index=task.index,
+                        completed_count=completed_count, work_unit=task.identity,
+                    )
+                    raise ParallelTaskError(stage, timeout_result)
             finished = [item for item in active if item.ready()]
             if not finished:
                 now = time.monotonic()
@@ -553,6 +675,9 @@ def run_parallel_stage(
                 continue
             for future in finished:
                 task = active.pop(future)
+                task_workers.pop(task.task_id, None)
+                task_submitted_at.pop(task.task_id, None)
+                task_started_at.pop(task.task_id, None)
                 try:
                     result = future.get()
                 except BaseException as exc:
@@ -560,6 +685,7 @@ def run_parallel_stage(
                         index=task.index, task_id=task.task_id,
                         worker_pid=0, error_type=type(exc).__name__,
                         error_message=str(exc), remote_traceback=traceback.format_exc(),
+                        work_unit=dict(task.identity),
                     )
                     _emit_parent_event(
                         event_callback, "parallel-task-failed", stage=stage,

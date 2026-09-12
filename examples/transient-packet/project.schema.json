@@ -1703,7 +1703,7 @@
             "type": "string"
           },
           "grid": {
-            "default": true,
+            "default": false,
             "title": "Grid",
             "type": "boolean"
           },
@@ -2242,7 +2242,7 @@
             "default": {
               "color": null,
               "coordinate_scale": "linear",
-              "grid": true,
+              "grid": false,
               "legend_position": "best",
               "linestyle": "solid",
               "linewidth": 2.0,
@@ -2872,7 +2872,7 @@
             "$ref": "#/$defs/SurfaceProfileFigure",
             "default": {
               "coordinate_scale": "linear",
-              "grid": true,
+              "grid": false,
               "layout": "separate_fields",
               "normalize_values": false,
               "value_scale": "linear"
@@ -3018,7 +3018,7 @@
             "type": "string"
           },
           "grid": {
-            "default": true,
+            "default": false,
             "title": "Grid",
             "type": "boolean"
           },
@@ -3253,6 +3253,19 @@
       "TransientWavepacketAnalysis": {
         "additionalProperties": false,
         "properties": {
+          "arrival_edge_margin_s": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Arrival Edge Margin S"
+          },
           "band_max_hz": {
             "exclusiveMinimum": 0,
             "title": "Band Max Hz",
@@ -3297,6 +3310,24 @@
             "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
             "title": "Id",
             "type": "string"
+          },
+          "minimum_arrival_r_squared": {
+            "default": 0.8,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Minimum Arrival R Squared",
+            "type": "number"
+          },
+          "minimum_baseline_samples": {
+            "default": 8,
+            "exclusiveMinimum": 0,
+            "title": "Minimum Baseline Samples",
+            "type": "integer"
+          },
+          "minimum_packet_snr_db": {
+            "default": 6.0,
+            "title": "Minimum Packet Snr Db",
+            "type": "number"
           },
           "overlap_fraction": {
             "default": 0.75,
@@ -3349,6 +3380,11 @@
             ],
             "default": null,
             "title": "Record Start Time S"
+          },
+          "require_monotonic_arrivals": {
+            "default": true,
+            "title": "Require Monotonic Arrivals",
+            "type": "boolean"
           },
           "stft_segment_samples": {
             "default": 2048,
@@ -3688,7 +3724,7 @@
           "line_defaults": {
             "color": null,
             "coordinate_scale": "linear",
-            "grid": true,
+            "grid": false,
             "legend_position": "best",
             "linestyle": "solid",
             "linewidth": 2.0,
@@ -3761,6 +3797,18 @@
             "default": "pelec",
             "title": "Solver",
             "type": "string"
+          },
+          "solver_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Solver Revision"
           },
           "solver_units": {
             "$ref": "#/$defs/SolverUnits",
@@ -4189,6 +4237,12 @@
             "title": "Memory Limit Gb",
             "type": "number"
           },
+          "parallel_task_timeout_s": {
+            "default": 21600.0,
+            "exclusiveMinimum": 0,
+            "title": "Parallel Task Timeout S",
+            "type": "number"
+          },
           "scratch_directory": {
             "anyOf": [
               {
@@ -4271,6 +4325,19 @@
       "PlotfileInput": {
         "additionalProperties": false,
         "properties": {
+          "identity_manifest": {
+            "anyOf": [
+              {
+                "format": "path",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Identity Manifest"
+          },
           "prefix": {
             "default": "plt",
             "title": "Prefix",
@@ -4298,6 +4365,12 @@
               },
               "compact_file": {
                 "type": "string"
+              },
+              "identity_manifest": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -4311,6 +4384,12 @@
               },
               "compact_file": {
                 "type": "null"
+              },
+              "identity_manifest": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -4339,6 +4418,19 @@
             ],
             "default": null,
             "title": "Compact File"
+          },
+          "identity_manifest": {
+            "anyOf": [
+              {
+                "format": "path",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Identity Manifest"
           }
         },
         "title": "ProbeInput",
@@ -4352,6 +4444,7 @@
         "default": {
           "fft_batch_size": 32,
           "memory_limit_gb": 8.0,
+          "parallel_task_timeout_s": 21600.0,
           "scratch_directory": null,
           "workers": 1
         }

@@ -9,3 +9,7 @@ Delta*
 configs/local/*.json
 *.egg-info/
 .venv/
+build/
+pelecpost/_version.py
+!requirements/
+!requirements/*.txt

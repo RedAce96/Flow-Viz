@@ -81,6 +81,7 @@ PRODUCT_DEFINITIONS: dict[str, dict[str, Any]] = {
         },
     },
     "wave.wavenumber": {
+        "schema_version": 2,
         "axes": {"frequency": ("frequency_hz",), "space": ("x_center_m",)},
         "value_keys": (
             "alpha_real_rad_m", "alpha_imag_rad_m", "alpha_real_ci95_rad_m",
@@ -98,9 +99,9 @@ PRODUCT_DEFINITIONS: dict[str, dict[str, Any]] = {
         },
         "validity_by_value": {
             "alpha_real_rad_m": ("phase_valid_mask",),
-            "alpha_imag_rad_m": ("phase_valid_mask",),
+            "alpha_imag_rad_m": ("growth_valid_mask",),
             "alpha_real_ci95_rad_m": ("phase_valid_mask",),
-            "alpha_imag_ci95_rad_m": ("phase_valid_mask",),
+            "alpha_imag_ci95_rad_m": ("growth_valid_mask",),
             "phase_speed_m_s": ("phase_valid_mask",),
             "phase_fit_r_squared": ("phase_valid_mask",),
             "amplification_rate_per_m": ("growth_valid_mask",),
@@ -207,20 +208,29 @@ PRODUCT_DEFINITIONS: dict[str, dict[str, Any]] = {
             "ideal_spectrum_j_m": ("frequency",),
             "processed_complex_w_m": ("frequency",),
         },
+        "value_units": {
+            "source_power_w_m": "W/m",
+            "physical_complex_j_m": "J/m",
+            "physical_spectrum_j_m": "J/m",
+            "ideal_spectrum_j_m": "J/m",
+            "processed_complex_w_m": "W/m",
+        },
     },
     "pulse.transfer": {
+        "schema_version": 2,
         "axes": {"frequency": ("frequency_hz",), "space": ("probe_x_m",)},
         "value_keys": (
-            "source_spectrum_j_m", "transfer", "transfer_magnitude",
+            "source_power_spectrum_w_m", "transfer", "transfer_magnitude",
             "transfer_phase_rad", "baseline",
         ),
         "value_dimensions": {
-            "source_spectrum_j_m": ("frequency",),
+            "source_power_spectrum_w_m": ("frequency",),
             "transfer": ("frequency", "space"),
             "transfer_magnitude": ("frequency", "space"),
             "transfer_phase_rad": ("frequency", "space"),
             "baseline": ("space",),
         },
+        "value_units": {"source_power_spectrum_w_m": "W/m"},
         "validity_by_value": {
             "transfer": ("valid_frequency",),
             "transfer_magnitude": ("valid_frequency",),
@@ -242,8 +252,10 @@ PRODUCT_DEFINITIONS: dict[str, dict[str, Any]] = {
     "transient.group_velocity": {
         "json_value_paths": (
             "group_velocity_m_s", "confidence_interval_95_m_s",
-            "arrival_time_regression_r_squared", "slope_s_m",
-            "slope_standard_error_s_m", "probe_count",
+            "slope_confidence_interval_95_s_m", "arrival_time_regression_r_squared",
+            "slope_s_m", "slope_standard_error_s_m", "probe_count",
+            "degrees_of_freedom", "t_multiplier_95", "minimum_snr_db",
+            "resolved_edge_margin_s", "baseline_sample_count",
         ),
     },
     "nonlinear.triads": {
@@ -358,7 +370,7 @@ def product_contract(
             pass
     return {
         "schema": "pelecpost.product",
-        "schema_version": 1,
+        "schema_version": int(definition.get("schema_version", 1)),
         "product_type": product_type,
         "axes": axes,
         "coordinate_arrays": axes,

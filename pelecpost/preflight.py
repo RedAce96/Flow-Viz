@@ -13,6 +13,7 @@ import numpy as np
 
 from pelecpost.config.models import ResolvedProject
 from pelecpost.io import InputInventory, inspect_project
+from pelecpost.io.identity import validate_input_manifest
 from pelecpost.runtime.parallel import available_cpu_count
 from pelecpost.workflows import build_workflow_graph, workflow_for
 
@@ -259,6 +260,11 @@ def _geometry_points(project: ResolvedProject) -> np.ndarray | None:
     return None
 
 
+def _resolve(project: ResolvedProject, path: Path) -> Path:
+    expanded = path.expanduser()
+    return expanded if expanded.is_absolute() else (project.root / expanded).resolve()
+
+
 def create_plan(project: ResolvedProject, inventory: InputInventory | None = None) -> PreflightPlan:
     inventory = inventory or inspect_project(project)
     graph = build_workflow_graph(project)
@@ -268,8 +274,56 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
     geometry = project.case_file.geometry.type
     analysis_contracts: dict[str, dict[str, Any]] = {}
 
+    def check_identity_manifest(
+        manifest: Path, source: Path, prefix: str | None, label: str,
+    ) -> None:
+        try:
+            validate_input_manifest(
+                manifest, expected_source=source, expected_prefix=prefix,
+            )
+        except (OSError, ValueError) as exc:
+            findings.append(Finding(
+                Severity.BLOCKER, "STALE_INPUT_MANIFEST",
+                f"{label} identity manifest is stale, incomplete, or invalid: {exc}",
+            ))
+
+    plot_config = project.machine_file.inputs.plotfiles
+    if plot_config and plot_config.identity_manifest:
+        check_identity_manifest(
+            _resolve(project, plot_config.identity_manifest),
+            _resolve(project, plot_config.source), plot_config.prefix, "plotfile",
+        )
+    for baseline_id, baseline in project.machine_file.inputs.baselines.items():
+        if baseline.identity_manifest:
+            check_identity_manifest(
+                _resolve(project, baseline.identity_manifest),
+                _resolve(project, baseline.source), baseline.prefix,
+                f"baseline {baseline_id!r}",
+            )
+    for probe_id, probe in project.machine_file.inputs.probe_sets.items():
+        if probe.compact_file:
+            source = _resolve(project, probe.compact_file)
+            manifest = (
+                _resolve(project, probe.identity_manifest)
+                if probe.identity_manifest
+                else source.with_name(source.name + ".manifest.json")
+            )
+            if manifest.is_file():
+                check_identity_manifest(manifest, source, None, f"probe set {probe_id!r}")
+            elif probe.identity_manifest:
+                findings.append(Finding(
+                    Severity.BLOCKER, "INPUT_MANIFEST_MISSING",
+                    f"Configured identity manifest for probe set {probe_id!r} is missing: {manifest}",
+                ))
+
     if not project.enabled_analyses:
         findings.append(Finding(Severity.INFO, "NO_ANALYSES", "No analyses are enabled."))
+
+    if case.solver_revision is None:
+        findings.append(Finding(
+            Severity.WARNING, "SOLVER_REVISION_MISSING",
+            "case.solver_revision is not configured; solver provenance cannot be pinned.",
+        ))
 
     for analysis in project.enabled_analyses:
         analysis_probes = _analysis_probe_inventory(inventory, analysis)
@@ -895,6 +949,13 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                     "Packet group-velocity regression requires at least three distinct selected "
                     "streamwise probe coordinates.", analysis.id,
                 ))
+            if analysis.baseline_end_time_s is None:
+                findings.append(Finding(
+                    Severity.WARNING, "PACKET_BASELINE_UNCONFIGURED",
+                    "No transient baseline_end_time_s is configured; execution will continue "
+                    "but measurement evidence cannot classify the packet as supported.",
+                    analysis.id,
+                ))
 
     for label, item in (("plotfile", inventory.plotfiles),):
         if item is not None:
@@ -1024,6 +1085,9 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
     concurrent = largest
     sampling["resource_estimate"] = {
         "workers": configured_workers,
+        "parallel_task_timeout_s": float(
+            project.machine_file.compute.parallel_task_timeout_s
+        ),
         "workers_semantics": "safe maximum within independent workflow stages",
         "largest_workflow_peak_gb": largest,
         "estimated_concurrent_peak_gb": concurrent,
