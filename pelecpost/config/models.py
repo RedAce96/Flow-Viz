@@ -664,6 +664,8 @@ class SinglePulseAnalysis(ProbeAnalysis):
     minimum_baseline_samples: PositiveInt = 8
     minimum_relative_source_amplitude: float = Field(default=1.0e-3, gt=0.0, lt=1.0)
     frequency_max_hz: PositiveFloat | None = None
+    source_history_id: str | None = None
+    maximum_source_energy_relative_error: NonNegativeFloat = 0.01
 
 
 class TemporalWavenumberDisabled(StrictModel):
@@ -859,6 +861,12 @@ class PlotfileInput(StrictModel):
     identity_manifest: Path | None = None
 
 
+class SourceHistoryInput(StrictModel):
+    source: Path
+    prefix: str = "thermal-source.segment"
+    identity_manifest: Path | None = None
+
+
 class ProbeInput(StrictModel):
     compact_file: Path | None = None
     binary_files: tuple[str, ...] = ()
@@ -911,12 +919,13 @@ class InputConfig(StrictModel):
     probe_sets: dict[str, ProbeInput] = Field(default_factory=dict)
     archived_runs: dict[str, Path] = Field(default_factory=dict)
     baselines: dict[str, PlotfileInput] = Field(default_factory=dict)
+    source_histories: dict[str, SourceHistoryInput] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def named_sources(self) -> "InputConfig":
         for field_name, values in (
             ("probe_sets", self.probe_sets), ("archived_runs", self.archived_runs),
-            ("baselines", self.baselines),
+            ("baselines", self.baselines), ("source_histories", self.source_histories),
         ):
             if any(not name.strip() for name in values):
                 raise ValueError(f"{field_name} names cannot be empty")

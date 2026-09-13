@@ -2602,6 +2602,12 @@
             "title": "Id",
             "type": "string"
           },
+          "maximum_source_energy_relative_error": {
+            "default": 0.01,
+            "minimum": 0,
+            "title": "Maximum Source Energy Relative Error",
+            "type": "number"
+          },
           "minimum_baseline_samples": {
             "default": 8,
             "exclusiveMinimum": 0,
@@ -2669,6 +2675,18 @@
             ],
             "default": null,
             "title": "Record Start Time S"
+          },
+          "source_history_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source History Id"
           },
           "start_time_s": {
             "default": 0.0,
@@ -4302,6 +4320,13 @@
             },
             "title": "Probe Sets",
             "type": "object"
+          },
+          "source_histories": {
+            "additionalProperties": {
+              "$ref": "#/$defs/SourceHistoryInput"
+            },
+            "title": "Source Histories",
+            "type": "object"
           }
         },
         "title": "InputConfig",
@@ -4435,6 +4460,39 @@
         },
         "title": "ProbeInput",
         "type": "object"
+      },
+      "SourceHistoryInput": {
+        "additionalProperties": false,
+        "properties": {
+          "identity_manifest": {
+            "anyOf": [
+              {
+                "format": "path",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Identity Manifest"
+          },
+          "prefix": {
+            "default": "thermal-source.segment",
+            "title": "Prefix",
+            "type": "string"
+          },
+          "source": {
+            "format": "path",
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "SourceHistoryInput",
+        "type": "object"
       }
     },
     "additionalProperties": false,
@@ -4455,7 +4513,8 @@
           "archived_runs": {},
           "baselines": {},
           "plotfiles": null,
-          "probe_sets": {}
+          "probe_sets": {},
+          "source_histories": {}
         }
       },
       "outputs": {

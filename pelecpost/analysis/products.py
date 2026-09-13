@@ -196,6 +196,7 @@ PRODUCT_DEFINITIONS: dict[str, dict[str, Any]] = {
         "value_units": {"power": "variable^2"},
     },
     "pulse.source_spectrum": {
+        "schema_version": 2,
         "axes": {"time": ("time_s",), "frequency": ("frequency_hz",)},
         "value_keys": (
             "source_power_w_m", "physical_complex_j_m", "physical_spectrum_j_m",
@@ -217,7 +218,7 @@ PRODUCT_DEFINITIONS: dict[str, dict[str, Any]] = {
         },
     },
     "pulse.transfer": {
-        "schema_version": 2,
+        "schema_version": 3,
         "axes": {"frequency": ("frequency_hz",), "space": ("probe_x_m",)},
         "value_keys": (
             "source_power_spectrum_w_m", "transfer", "transfer_magnitude",
@@ -236,6 +237,19 @@ PRODUCT_DEFINITIONS: dict[str, dict[str, Any]] = {
             "transfer_magnitude": ("valid_frequency",),
             "transfer_phase_rad": ("valid_frequency",),
         },
+    },
+    "pulse.source_audit": {
+        "schema_version": 1,
+        "json_value_paths": (
+            "configured_requested_energy_j_m", "analytic_retained_energy_j_m",
+            "measured_deposited_energy_j_m", "signed_relative_energy_error",
+            "absolute_relative_energy_error", "capture_ratio",
+            "measured_peak_time_s", "measured_energy_weighted_time_centroid_s",
+            "requested_pulse_center_time_s", "measured_peak_time_offset_s",
+            "measured_centroid_time_offset_s", "spatial_centroid_m.x",
+            "spatial_centroid_m.y", "rms_widths_m.x", "rms_widths_m.y",
+            "configured_maximum_relative_error",
+        ),
     },
     "spectral.confidence": {
         "json_value_paths": (

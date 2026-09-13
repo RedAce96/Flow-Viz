@@ -125,11 +125,12 @@ Quiescent-baseline and finite-record source/response deconvolution.
 - Required plotfile fields: none
 - Dependencies: none
 - Conflicts: none
-- Artifact IDs: pulse.source_spectrum, pulse.transfer, pulse.validity, pulse.transfer_magnitude.figure, pulse.transfer_phase.figure, probe.raw_history.figure, probe.method_ready.figure
+- Artifact IDs: pulse.source_audit, pulse.source_audit.figure, pulse.source_spectrum, pulse.transfer, pulse.validity, pulse.transfer_magnitude.figure, pulse.transfer_phase.figure, probe.raw_history.figure, probe.method_ready.figure
 
 Assumptions:
 
-- The configured pulse model represents the source history.
+- A configured measured source history is complete and represents the discrete thermal deposition;
+- without one, results are explicitly modeled-source-only.
 
 Interpretation limits:
 

@@ -6,6 +6,13 @@ Artifact IDs are independent of directory spelling. Each record includes schema 
 
 Comparison must reject incompatible schema, variable, unit, coordinate, and preprocessing provenance. Reports regenerate from the run directory without simulation inputs.
 
+The single-pulse recipe registers `pulse.source_audit` alongside the measured
+or modeled source spectrum and transfer products. A configured measured
+thermal-source history is reported in 2-D J/m terms, with its deposited energy,
+moments, geometry, implementation revisions, and completeness status. Without
+that input the audit is retained as `modeled_only` and cannot claim measured
+source-deposition support.
+
 Every run also registers `run.measurement-evidence`. It is derived only from
 the artifact ledger, records explicit decision thresholds, and conservatively
 classifies measured propagation, packet kinematics, FDR-controlled nonlinear

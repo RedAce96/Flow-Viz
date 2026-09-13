@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -78,6 +79,61 @@ def _resolve_product(context: WorkflowContext, reference: Any, product_id: str) 
     )
 
 
+def _optional_source_audit(
+    context: WorkflowContext, reference: Any,
+) -> dict[str, Any] | None:
+    """Load the pulse source audit when the referenced analysis produced one."""
+    try:
+        product = _resolve_product(context, reference, "pulse.source_audit")
+    except ValueError:
+        return None
+    try:
+        payload = json.loads(product.path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read source audit {product.label!r}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"source audit {product.label!r} is not a JSON object")
+    return payload
+
+
+def _same_forcing_value(
+    left: Any, right: Any,
+) -> bool | None:
+    if left is None or right is None:
+        return None
+    try:
+        return math.isclose(float(left), float(right), rel_tol=1.0e-12, abs_tol=1.0e-15)
+    except (TypeError, ValueError):
+        return None
+
+
+def _source_forcing_comparison(
+    baseline: dict[str, Any] | None, comparison: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if baseline is None or comparison is None:
+        return None
+    requested_left = baseline.get("configured_requested_energy_j_m")
+    requested_right = comparison.get("configured_requested_energy_j_m")
+    deposited_left = baseline.get("measured_deposited_energy_j_m")
+    deposited_right = comparison.get("measured_deposited_energy_j_m")
+    return {
+        "baseline": {
+            "requested_energy_j_m": requested_left,
+            "deposited_energy_j_m": deposited_left,
+            "source_basis": baseline.get("source_basis"),
+            "status": baseline.get("status"),
+        },
+        "comparison": {
+            "requested_energy_j_m": requested_right,
+            "deposited_energy_j_m": deposited_right,
+            "source_basis": comparison.get("source_basis"),
+            "status": comparison.get("status"),
+        },
+        "equal_requested_forcing": _same_forcing_value(requested_left, requested_right),
+        "equal_measured_forcing": _same_forcing_value(deposited_left, deposited_right),
+    }
+
+
 def _normalised_preprocessing(metadata: dict[str, Any]) -> Any:
     preprocessing = metadata.get("provenance", {}).get("preprocessing")
     if preprocessing is None:
@@ -131,6 +187,14 @@ def _validate_product_pair(left: _Product, right: _Product) -> dict[str, Any]:
             f"{left_contract.get('schema_version', 1)} vs "
             f"{right_contract.get('schema_version', 1)}; migrate the older artifact "
             "or regenerate both products with the same contract version"
+        )
+    left_basis = left.metadata.get("provenance", {}).get("source_basis")
+    right_basis = right.metadata.get("provenance", {}).get("source_basis")
+    if left_basis is not None and right_basis is not None and left_basis != right_basis:
+        raise ValueError(
+            "pulse products use incompatible source bases: "
+            f"{left_basis!r} vs {right_basis!r}; migrate or regenerate both products "
+            "with measured or modeled source data"
         )
     if left.path.suffix.lower() == ".npz" and not left_contract.get("value_keys"):
         raise ValueError(f"product {left.label!r} has no registered typed value arrays")
@@ -380,7 +444,10 @@ def _validity_for_value(
                 )
             ]
             if len(dimensions) != 1:
-                continue
+                raise ValueError(
+                    f"validity field {key!r} cannot be unambiguously aligned to "
+                    f"value {value_key!r} with shape {value.shape}"
+                )
             shape = [1] * value.ndim
             shape[dimensions[0]] = len(raw)
             expanded = np.broadcast_to(raw_valid.reshape(shape), value.shape)
@@ -625,6 +692,10 @@ def run_case_comparison(context: WorkflowContext) -> None:
             "baseline": left.metadata.get("provenance", {}).get("preprocessing"),
             "comparison": right.metadata.get("provenance", {}).get("preprocessing"),
         }
+    source_forcing = _source_forcing_comparison(
+        _optional_source_audit(context, analysis.baseline),
+        _optional_source_audit(context, analysis.comparison),
+    )
     payload = {
         "schema": "pelecpost.comparison",
         "schema_version": 1,
@@ -635,6 +706,7 @@ def run_case_comparison(context: WorkflowContext) -> None:
         "alignment_applied": alignment_records,
         "preprocessing": preprocessing_records,
         "metrics": all_metrics,
+        "source_forcing_comparison": source_forcing,
         "interpretation": "Typed product differences after explicit axis and metadata validation.",
     }
     metrics_path = context.data_dir / "comparison_metrics.json"

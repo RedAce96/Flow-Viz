@@ -135,9 +135,13 @@ RECIPES: dict[str, RecipeDefinition] = {
             "Quiescent-baseline and finite-record source/response deconvolution.",
             inputs=("probe_sets",),
             fields=(),
-            assumptions=("The configured pulse model represents the source history.",),
+            assumptions=(
+                "A configured measured source history is complete and represents the discrete thermal deposition;",
+                "without one, results are explicitly modeled-source-only.",
+            ),
             outputs=(
-                "pulse.source_spectrum", "pulse.transfer", "pulse.validity",
+                "pulse.source_audit", "pulse.source_audit.figure", "pulse.source_spectrum",
+                "pulse.transfer", "pulse.validity",
                 "pulse.transfer_magnitude.figure", "pulse.transfer_phase.figure",
                 "probe.raw_history.figure", "probe.method_ready.figure",
             ),

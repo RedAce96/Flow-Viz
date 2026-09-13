@@ -182,6 +182,10 @@ def _input_fingerprints(project: ResolvedProject) -> list[dict[str, Any]]:
         source = configured_source if configured_source.is_absolute() else project.root / configured_source
         for path in collect_payloads(source, baseline.prefix):
             result.append(_fingerprint(path, input_id=f"inputs.baselines.{baseline_id}"))
+    for source_id, source_config in project.machine_file.inputs.source_histories.items():
+        source = _resolve(project, source_config.source)
+        for path in collect_payloads(source, source_config.prefix):
+            result.append(_fingerprint(path, input_id=f"inputs.source_histories.{source_id}"))
     sidecars: list[tuple[Path, str]] = []
     if plotfiles and plotfiles.identity_manifest:
         sidecars.append((_resolve(project, plotfiles.identity_manifest), "inputs.plotfiles.manifest"))
@@ -199,6 +203,12 @@ def _input_fingerprints(project: ResolvedProject) -> list[dict[str, Any]]:
             sidecars.append((
                 _resolve(project, baseline.identity_manifest),
                 f"inputs.baselines.{baseline_id}.manifest",
+            ))
+    for source_id, source_config in project.machine_file.inputs.source_histories.items():
+        if source_config.identity_manifest:
+            sidecars.append((
+                _resolve(project, source_config.identity_manifest),
+                f"inputs.source_histories.{source_id}.manifest",
             ))
     for path, input_id in sidecars:
         if path.is_file():
@@ -283,6 +293,13 @@ def _input_identities(project: ResolvedProject) -> list[dict[str, Any]]:
         result.append(_identity_record(
             source, prefix=config.prefix, manifest_path=manifest,
             input_id=f"inputs.baselines.{baseline_id}",
+        ))
+    for source_id, config in inputs.source_histories.items():
+        source = _resolve(project, config.source)
+        manifest = _resolve(project, config.identity_manifest) if config.identity_manifest else None
+        result.append(_identity_record(
+            source, prefix=config.prefix, manifest_path=manifest,
+            input_id=f"inputs.source_histories.{source_id}",
         ))
     return result
 

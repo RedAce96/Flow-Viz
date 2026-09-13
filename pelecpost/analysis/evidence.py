@@ -17,6 +17,7 @@ THRESHOLDS = {
     "minimum_pod_subspace_cosine": 0.90,
     "maximum_dmd_frequency_relative_range": 0.10,
     "maximum_dmd_condition_number": 1.0e8,
+    "maximum_source_energy_relative_error": 0.01,
 }
 
 
@@ -155,6 +156,32 @@ def _loads(artifact: Artifact) -> dict[str, Any]:
     }
 
 
+def _source_audit(run_dir: Path, artifact: Artifact) -> dict[str, Any]:
+    value = _read_json(run_dir, artifact)
+    basis = value.get("source_basis", "unknown")
+    raw_error = value.get("absolute_relative_energy_error")
+    error = float(raw_error) if raw_error is not None else np.nan
+    if basis == "modeled" or value.get("status") == "modeled_only":
+        status = "modeled_source_only"
+    elif value.get("status") == "supported" and value.get("complete") and np.isfinite(error):
+        status = "supported_measured_source_deposition"
+    elif value.get("status") == "outside_energy_tolerance":
+        status = "outside_energy_tolerance"
+    else:
+        status = "invalid_measurement"
+    return {
+        "analysis_id": artifact.recipe_instance,
+        "status": status,
+        "source_basis": basis,
+        "deposited_energy_j_m": value.get("measured_deposited_energy_j_m"),
+        "requested_energy_j_m": value.get("configured_requested_energy_j_m"),
+        "absolute_relative_energy_error": raw_error,
+        "resolved_thresholds": value.get("resolved_thresholds", {}),
+        "complete": bool(value.get("complete", False)),
+        "meaning": "Discrete PeleC thermal-source deposition before transport, refluxing, reactions, or reset terms.",
+    }
+
+
 def build_evidence_report(run_dir: Path, registry: ArtifactRegistry) -> dict[str, Any]:
     """Classify only evidence that exists in the artifact registry."""
     domains = {
@@ -177,6 +204,11 @@ def build_evidence_report(run_dir: Path, registry: ArtifactRegistry) -> dict[str
         "aerodynamic_loads": [
             _loads(artifact)
             for artifact in _matching(registry, ".forces.components")
+        ],
+        "source_deposition": [
+            _source_audit(run_dir, artifact)
+            for artifact in registry.artifacts
+            if artifact.id.endswith(".pulse.source_audit")
         ],
     }
     return {

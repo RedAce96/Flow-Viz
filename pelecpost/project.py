@@ -37,9 +37,12 @@ ANALYSES_TEMPLATE = {"schema_version": 1, "analyses": []}
 
 MACHINE_TEMPLATE = {
     "schema_version": 1,
-    "inputs": {"probe_sets": {}, "archived_runs": {}},
+    "inputs": {"probe_sets": {}, "archived_runs": {}, "source_histories": {}},
     "outputs": {"root": "runs"},
-    "compute": {"workers": 1, "memory_limit_gb": 8.0, "fft_batch_size": 32},
+    "compute": {
+        "workers": 1, "memory_limit_gb": 8.0, "fft_batch_size": 32,
+        "parallel_task_timeout_s": 21600.0,
+    },
 }
 
 

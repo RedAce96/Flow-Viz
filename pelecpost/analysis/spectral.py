@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 from collections.abc import Callable
@@ -30,6 +31,15 @@ from pelecpost.config.models import (
 )
 from pelecpost.errors import UnsupportedCapabilityError
 from pelecpost.io.signals import open_probe_signal_workspace
+from pelecpost.io.thermal_source import (
+    build_source_audit,
+    canonicalize_segments,
+    count_intersecting_pulses,
+    discover_source_segments,
+    measured_source_spectrum,
+    rebin_history,
+    validate_history_configuration,
+)
 from pelecpost.runtime.context import WorkflowContext
 from pelecpost.runtime.parallel import ParallelTask, plan_parallel_stage, stage_readonly_array
 
@@ -859,7 +869,7 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
         },
     )
     response_complex = np.fft.rfft(response, axis=0) / len(time)
-    source = reviewed_spectral.compute_single_pulse_source_spectrum(
+    modeled_source = reviewed_spectral.compute_single_pulse_source_spectrum(
         time,
         energy_per_pulse=analysis.energy_per_pulse_j_m,
         pulse_fwhm_s=analysis.pulse_fwhm_s,
@@ -869,6 +879,63 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
         mean_subtraction="mean",
         window="none",
     )
+    source_basis = "modeled"
+    source = modeled_source
+    source_audit: dict[str, Any] = {
+        "schema": "pelecpost.pulse-source-audit", "schema_version": 1,
+        "status": "modeled_only", "source_basis": "modeled", "complete": False,
+        "configured_requested_energy_j_m": analysis.energy_per_pulse_j_m,
+        "analytic_retained_energy_j_m": analysis.energy_per_pulse_j_m * float(
+            math.erf(analysis.cutoff_sigma / np.sqrt(2.0))
+        ),
+        "measured_deposited_energy_j_m": None,
+        "signed_relative_energy_error": None, "absolute_relative_energy_error": None,
+        "capture_ratio": None, "one_percent_gate": False,
+        "configured_maximum_relative_error": analysis.maximum_source_energy_relative_error,
+        "resolved_thresholds": {
+            "maximum_source_energy_relative_error": analysis.maximum_source_energy_relative_error,
+        },
+        "source_history": None,
+        "measured_peak_time_s": None,
+        "measured_energy_weighted_time_centroid_s": None,
+        "requested_pulse_center_time_s": analysis.start_time_s + 0.5 * analysis.pulse_period_s,
+        "measured_peak_time_offset_s": None,
+        "measured_centroid_time_offset_s": None,
+        "spatial_centroid_m": {"x": None, "y": None},
+        "rms_widths_m": {"x": None, "y": None},
+        "interpretation": "No measured thermal-source history was configured; this is a modeled-source-only result.",
+    }
+    history_id = analysis.source_history_id
+    if history_id is not None:
+        try:
+            history_config = context.project.machine_file.inputs.source_histories[history_id]
+        except KeyError as exc:
+            raise ValueError(f"unknown source_history_id {history_id!r}") from exc
+        history_source = history_config.source.expanduser()
+        if not history_source.is_absolute():
+            history_source = (context.project.root / history_source).resolve()
+        history = canonicalize_segments(
+            discover_source_segments(history_source, history_config.prefix)
+        )
+        validate_history_configuration(history, analysis)
+        if count_intersecting_pulses(history, float(time[0]), float(time[-1])) > 1:
+            raise ValueError(
+                "measured single-pulse processing found more than one pulse in the selected record; "
+                "pulse-train association remains out of scope"
+            )
+        rebinned = rebin_history(history, time)
+        source_audit = build_source_audit(
+            history, rebinned,
+            requested_energy_j_m=analysis.energy_per_pulse_j_m,
+            pulse_fwhm_s=analysis.pulse_fwhm_s,
+            cutoff_sigma=analysis.cutoff_sigma,
+            maximum_relative_error=analysis.maximum_source_energy_relative_error,
+            start_time_s=analysis.start_time_s,
+        )
+        source_audit["source_history_id"] = history_id
+        source_basis = "measured"
+        source = measured_source_spectrum(rebinned, modeled=modeled_source)
+    source_path = context.data_dir / "single_pulse_source_spectrum.npz"
     transfer = reviewed_spectral.compute_single_pulse_transfer_function(
         source["processed_complex"], response_complex,
         minimum_relative_source_amplitude=analysis.minimum_relative_source_amplitude,
@@ -877,14 +944,15 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
     keep = np.ones_like(frequency, dtype=bool)
     if analysis.frequency_max_hz is not None:
         keep &= frequency <= analysis.frequency_max_hz
-    source_path = context.data_dir / "single_pulse_source_spectrum.npz"
     np.savez_compressed(
         source_path, time_s=source["time_s"], source_power_w_m=source["power"],
+        modeled_source_power_w_m=modeled_source["power"],
         frequency_hz=frequency[keep], physical_complex_j_m=source["physical_complex"][keep],
         physical_spectrum_j_m=source["physical_spectrum"][keep],
         ideal_spectrum_j_m=source["ideal_spectrum"][keep],
         processed_complex_w_m=source["processed_complex"][keep],
         sigma_s=np.array(source["sigma_s"]), center_s=np.array(source["center_s"]),
+        source_basis=np.array(source_basis),
     )
     context.register(
         artifact_id="pulse.source_spectrum", path=source_path, kind="array",
@@ -895,7 +963,9 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
         ),
         provenance={"energy_per_pulse_j_m": analysis.energy_per_pulse_j_m,
                     "pulse_fwhm_s": analysis.pulse_fwhm_s,
-                    "pulse_period_s": analysis.pulse_period_s},
+                    "pulse_period_s": analysis.pulse_period_s,
+                    "source_basis": source_basis,
+                    "source_history_id": history_id},
     )
     path = context.data_dir / "single_pulse_response.npz"
     np.savez_compressed(
@@ -914,7 +984,46 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
             "bins are masked. The separately registered physical source transform retains J/m units."
         ),
         provenance={"estimator": "finite_record_single_pulse", "baseline_end_time_s": baseline_end,
-                    "time_grid_policy": analysis.time_grid_policy, "resampled": resampled},
+                    "time_grid_policy": analysis.time_grid_policy, "resampled": resampled,
+                    "source_basis": source_basis, "source_history_id": history_id},
+    )
+    audit_path = context.data_dir / "pulse_source_audit.json"
+    audit_path.write_text(json.dumps(source_audit, indent=2, default=str) + "\n", encoding="utf-8")
+    context.register(
+        artifact_id="pulse.source_audit", path=audit_path, kind="json", variable="source_power",
+        units="J/m", coordinate_metadata={"time": "s", "space": "m"},
+        interpretation=(
+            "Measured discrete thermal-source deposition compared with the configured analytical target; "
+            "modeled-only records are explicitly downgraded."
+        ), provenance={"source_basis": source_basis, "source_history_id": history_id},
+    )
+    audit_figure_path = context.figure_dir / "source_audit.png"
+    fig, axes = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
+    axes[0].plot(time, source["power"], label=f"{source_basis} source power")
+    axes[0].plot(time, modeled_source["power"], "--", label="modeled source power")
+    axes[0].set_ylabel("Power [W/m]")
+    axes[0].legend()
+    axes[0].grid(False)
+    measured_cumulative = np.cumsum(source["power"]) * float(np.median(np.diff(time)))
+    modeled_cumulative = np.cumsum(modeled_source["power"]) * float(np.median(np.diff(time)))
+    axes[1].plot(time, measured_cumulative, label="used-source cumulative energy")
+    axes[1].plot(time, modeled_cumulative, "--", label="modeled cumulative energy")
+    axes[1].set_xlabel("Time [s]")
+    axes[1].set_ylabel("Cumulative energy [J/m]")
+    axes[1].legend()
+    axes[1].grid(False)
+    fig.suptitle(
+        f"Source audit: {source_audit.get('status')} | "
+        f"deposited={source_audit.get('measured_deposited_energy_j_m')} J/m"
+    )
+    fig.tight_layout()
+    fig.savefig(audit_figure_path, dpi=180)
+    plt.close(fig)
+    context.register(
+        artifact_id="pulse.source_audit.figure", path=audit_figure_path, kind="figure",
+        variable="source_power", units="W/m", coordinate_metadata={"time": "s"},
+        interpretation="Measured and modeled thermal-source histories and cumulative energy.",
+        provenance={"source_basis": source_basis, "source_history_id": history_id},
     )
     register_probe_line_overlay(
         context, artifact_id="pulse.transfer_magnitude.figure",

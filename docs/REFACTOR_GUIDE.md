@@ -616,14 +616,17 @@ the benchmark is a reference measurement, not a pass/fail limit.
 
 ### Category 1 artifact-contract migration
 
-The Category 1 release intentionally increments `pulse.transfer` and
-`wave.wavenumber` product contracts to version 2. A pulse transfer archive now
+The Category 1 release increments `pulse.transfer` to version 3 and
+`wave.wavenumber` to version 2. `pulse.source_spectrum` is version 2. A pulse transfer archive now
 stores its finite-record denominator as `source_power_spectrum_w_m` and reports
 transfer units as `<response-unit>/(W/m)`. The physical continuous-time source
-transform remains in `pulse.source_spectrum` with J/m units. Regenerate older
-artifacts before comparing them; mixed contract versions are rejected with a
-migration-oriented error. Version-2 wavenumber comparisons likewise require the
-new growth-validity semantics.
+transform remains in `pulse.source_spectrum` with J/m units. When a measured
+PeleC thermal-source history is configured, the measured rebinned power is used
+as the denominator and `pulse.source_audit` records the discrete capture result;
+without one, the result is explicitly `MODELED_SOURCE_ONLY`. Regenerate older
+artifacts before comparing them; mixed contract versions or measured/modeled
+source bases are rejected with migration-oriented errors. Version-2 wavenumber
+comparisons likewise require the new growth-validity semantics.
 
 The former JSON and global workflow-switch interface is archived under
 `legacy/` and is not accepted by the current CLI. Migration is:

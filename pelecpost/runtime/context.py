@@ -166,6 +166,14 @@ class WorkflowContext:
                 probe_set_id = linkage.probe_set_id
             if probe_set_id and probe_set_id in self.plan.inventory.probe_sets:
                 sources.append(self.plan.inventory.probe_sets[probe_set_id].source)
+        source_history_id = getattr(self.analysis, "source_history_id", None)
+        if source_history_id:
+            source_config = self.project.machine_file.inputs.source_histories.get(source_history_id)
+            if source_config is not None:
+                source_path = source_config.source.expanduser()
+                if not source_path.is_absolute():
+                    source_path = (self.project.root / source_path).resolve()
+                sources.append(str(source_path))
         if "archived_runs" in required_inputs and self.analysis.recipe != "case_comparison":
             sources.extend(str(path) for path in self.plan.inventory.archived_runs.values())
         if self.analysis.recipe == "case_comparison":

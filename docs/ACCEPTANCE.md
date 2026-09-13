@@ -12,19 +12,24 @@ against an explicit commit, environment, and test command.
   prepared in the uncommitted working tree.
 - Test environment: local `.venv`, CPython 3.14.7 on macOS arm64; CI remains
   authoritative for the supported Python 3.11 and 3.12 environments.
-- `./.venv/bin/python -m pytest -q tests test_engineering.py`: **276 passed,
-  1 skipped, 58 subtests passed** in 103.06 seconds. The optional standalone
+- `./.venv/bin/python -m pytest -q tests test_engineering.py`: **280 passed,
+  1 skipped, 58 subtests passed** in 98.10 seconds. The optional standalone
   `compressible_similarity` module remains the only expected skip.
 - `./.venv/bin/python -m pytest -q tests/test_category1.py`: passed, including
   packet Student-t uncertainty, unresolved reciprocal intervals, payload-aware
   identity manifests, contract migration rejection, and task timeout coverage.
+- `./.venv/bin/python -m pytest -q tests/test_thermal_source.py tests/test_unified_probe_comparison.py`:
+  **19 passed**, including segmented-history canonicalization, exact energy
+  preserving rebinning, source audit calculations, and required validity-mask
+  failures.
 - `./.venv/bin/python -m compileall -q pelecpost tests pp_functions_database.py`:
   passed.
 - `./.venv/bin/ruff check --select F401 pelecpost tests`: passed after removing
   only confirmed unused imports. Broader Ruff modernization remains outside this
   release.
 - `./.venv/bin/mypy pelecpost`: the repository has pre-existing typing errors
-  under the local mypy/numpy combination; CI pins and runs the supported
+  under the local Python 3.14/mypy 2.3.1/NumPy 2.5.3 combination (NumPy's
+  Python-3.12-only type syntax is rejected); CI pins and runs the supported
   Python 3.11/3.12 job as the typing gate.
 - `git diff --check`: passed.
 - `./.venv/bin/python -m build --wheel --no-isolation --outdir /tmp/flow-viz-dist`:
@@ -69,21 +74,26 @@ against an explicit commit, environment, and test command.
 
 ## Category 1 scope and evidence links
 
-This release supports PeleC, two-dimensional numerical recipes. It does not
-claim support for historical MFC scripts; those are compatibility context only
-and are not the current PeleC API. Internal validation and certification labels
+This release supports PeleC, two-dimensional numerical recipes, with measured
+thermal-source deposition available through the R05 segmented-history path.
+The diagnostic producer also compiles for 3-D, but Flow Viz remains limited to
+2-D J/m source histories. It does not claim support for historical MFC scripts;
+those are compatibility context only and are not the current PeleC API. Internal validation and certification labels
 must point to their supporting tests: runtime containment and finalization are
 covered by `tests/test_parallel.py` and `tests/test_runtime.py`, typed product
 comparison by `tests/test_unified_probe_comparison.py` and
-`tests/test_category1.py`, and engineering acceptance by `test_engineering.py`.
-The remaining limitations and uncompleted review IDs are R05, R07, R09–R14,
-and R16–R17.
+`tests/test_category1.py`, measured source history by
+`tests/test_thermal_source.py`, and engineering acceptance by
+`test_engineering.py`. The remaining limitations and uncompleted review IDs
+are R07, R09–R14, and R16–R17.
 
 ## Deliberate limits
 
-No 3-D numerical algorithm is implemented. General EB results are validated but
-not externally certified. Probe-derived modes, GIP screening, wave diagnostics,
-bicoherence, and force–probe linkage are measurement evidence and do not establish
-LST/PSE attribution or causality. Pulse-transfer products are response per
-source-power (W/m); the physical continuous-time source transform is reported
-separately in J/m.
+No 3-D Flow Viz numerical algorithm is implemented. General EB results are
+validated but not externally certified. Probe-derived modes, GIP screening,
+wave diagnostics, bicoherence, and force–probe linkage are measurement evidence
+and do not establish LST/PSE attribution or causality. Pulse-transfer products
+are response per source-power (W/m); the physical continuous-time source
+transform is reported separately in J/m. The thermal-source history is the
+discrete source contribution before transport, fluxes, reactions, refluxing, or
+energy-reset terms; it is not a net domain-energy balance.

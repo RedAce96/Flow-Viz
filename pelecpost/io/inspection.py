@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import json
 from pathlib import Path
 from typing import Any
@@ -79,6 +79,7 @@ class InputInventory:
     archived_metadata: dict[str, dict[str, dict[str, Any]]]
     archived_errors: dict[str, str]
     baselines: dict[str, tuple[str, ...]]
+    source_histories: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -335,6 +336,13 @@ def inspect_project(project: ResolvedProject) -> InputInventory:
             path.name for path in sorted(source.glob(f"{config.prefix}*"))
             if (path / "Header").is_file()
         ) if source.is_dir() else ()
+    source_histories = {}
+    for name, config in project.machine_file.inputs.source_histories.items():
+        source = _resolve(project, config.source)
+        source_histories[name] = tuple(
+            path.name for path in sorted(source.glob(f"{config.prefix}*.csv"))
+            if path.is_file()
+        ) if source.is_dir() else ((source.name,) if source.is_file() else ())
     archived_runs = {
         name: _resolve(project, path)
         for name, path in project.machine_file.inputs.archived_runs.items()
@@ -384,4 +392,5 @@ def inspect_project(project: ResolvedProject) -> InputInventory:
         archived_metadata=archived_metadata,
         archived_errors=archived_errors,
         baselines=baselines,
+        source_histories=source_histories,
     )

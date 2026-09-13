@@ -14,6 +14,10 @@ import numpy as np
 from pelecpost.config.models import ResolvedProject
 from pelecpost.io import InputInventory, inspect_project
 from pelecpost.io.identity import validate_input_manifest
+from pelecpost.io.thermal_source import (
+    canonicalize_segments, count_intersecting_pulses, discover_source_segments,
+    validate_history_configuration,
+)
 from pelecpost.runtime.parallel import available_cpu_count
 from pelecpost.workflows import build_workflow_graph, workflow_for
 
@@ -315,6 +319,13 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
                     Severity.BLOCKER, "INPUT_MANIFEST_MISSING",
                     f"Configured identity manifest for probe set {probe_id!r} is missing: {manifest}",
                 ))
+    for source_id, source_config in project.machine_file.inputs.source_histories.items():
+        if source_config.identity_manifest:
+            check_identity_manifest(
+                _resolve(project, source_config.identity_manifest),
+                _resolve(project, source_config.source), source_config.prefix,
+                f"source history {source_id!r}",
+            )
 
     if not project.enabled_analyses:
         findings.append(Finding(Severity.INFO, "NO_ANALYSES", "No analyses are enabled."))
@@ -337,6 +348,40 @@ def create_plan(project: ResolvedProject, inventory: InputInventory | None = Non
             "required_fields": list(workflow.metadata.required_fields),
             "expected_artifact_ids": list(workflow.artifact_declarations_for(analysis)),
         }
+        if analysis.recipe == "single_pulse_response":
+            source_id = analysis.source_history_id
+            if source_id is None:
+                findings.append(Finding(
+                    Severity.WARNING, "MODELED_SOURCE_ONLY",
+                    "No source_history_id is configured; the pulse response will use the analytical "
+                    "source model and cannot claim measured-source deposition support.", analysis.id,
+                ))
+            else:
+                source_config = project.machine_file.inputs.source_histories.get(source_id)
+                if source_config is None:
+                    findings.append(Finding(
+                        Severity.BLOCKER, "SOURCE_HISTORY_NOT_CONFIGURED",
+                        f"source_history_id {source_id!r} is not present in machine.yaml.", analysis.id,
+                    ))
+                else:
+                    source = _resolve(project, source_config.source)
+                    try:
+                        history = canonicalize_segments(discover_source_segments(source, source_config.prefix))
+                        validate_history_configuration(history, analysis)
+                        if history.rows:
+                            start_time = min(float(row["time_start_s"]) for row in history.rows)
+                            end_time = max(float(row["time_end_s"]) for row in history.rows)
+                            if count_intersecting_pulses(history, start_time, end_time) > 1:
+                                findings.append(Finding(
+                                    Severity.BLOCKER, "SOURCE_HISTORY_PULSE_TRAIN",
+                                    "The configured measured history contains more than one pulse in its retained window; "
+                                    "pulse-train association remains out of scope.", analysis.id,
+                                ))
+                    except (OSError, ValueError) as exc:
+                        findings.append(Finding(
+                            Severity.BLOCKER, "SOURCE_HISTORY_INVALID",
+                            f"Configured source history {source_id!r} is missing or invalid: {exc}", analysis.id,
+                        ))
         for validation in workflow.validate(project, analysis, inventory):
             findings.append(Finding(
                 Severity(validation.level), validation.code, validation.message, analysis.id,

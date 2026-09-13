@@ -298,6 +298,31 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "growth_valid_mask"):
                 _array_metrics(product, product, ComparisonAlignment())
 
+    def test_declared_mask_with_ambiguous_shape_fails_comparison(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "wave.npz"
+            arrays = {
+                "frequency_hz": np.array([1.0, 2.0]),
+                "x_center_m": np.array([0.0, 1.0]),
+                "alpha_real_rad_m": np.ones((2, 2)),
+                "alpha_imag_rad_m": np.ones((2, 2)),
+                "alpha_real_ci95_rad_m": np.ones((2, 2)),
+                "alpha_imag_ci95_rad_m": np.ones((2, 2)),
+                "amplification_rate_per_m": np.ones((2, 2)),
+                "phase_speed_m_s": np.ones((2, 2)),
+                "coherence_squared": np.ones((2, 2)),
+                "phase_fit_r_squared": np.ones((2, 2)),
+                "amplitude_fit_r_squared": np.ones((2, 2)),
+                "spatial_alias_margin": np.ones((2, 2)),
+                "phase_valid_mask": np.ones(2, dtype=bool),
+                "growth_valid_mask": np.ones((2, 2), dtype=bool),
+            }
+            np.savez(path, **arrays)
+            product = _Product("wave", _product_metadata(path, "wave.wavenumber"), path)
+            with self.assertRaisesRegex(ValueError, "phase_valid_mask"):
+                _array_metrics(product, product, ComparisonAlignment())
+
     def test_typed_product_adapters_cover_wave_nonlinear_and_modal_outputs(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

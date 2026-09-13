@@ -536,6 +536,8 @@ after each workflow and are not run artifacts.
 | `minimum_baseline_samples` | no | `integer` | `8` | greater than: `0` |
 | `minimum_relative_source_amplitude` | no | `number` | `0.001` | greater than: `0.0`; less than: `1.0` |
 | `frequency_max_hz` | no | `number \| null` | `null` | — |
+| `source_history_id` | no | `string \| null` | `null` | — |
+| `maximum_source_energy_relative_error` | no | `number` | `0.01` | minimum: `0` |
 
 ### `SurfaceArcLocation`
 
@@ -710,7 +712,7 @@ after each workflow and are not run artifacts.
 | Field | Required | Type | Default | Rules |
 | --- | --- | --- | --- | --- |
 | `schema_version` | no | `1` | `1` | — |
-| `inputs` | no | `InputConfig` | `{"archived_runs": {}, "baselines": {}, "plotfiles": null, "probe_sets": {}}` | — |
+| `inputs` | no | `InputConfig` | `{"archived_runs": {}, "baselines": {}, "plotfiles": null, "probe_sets": {}, "source_histories": {}}` | — |
 | `outputs` | yes | `OutputConfig` | — | — |
 | `compute` | no | `ComputeConfig` | `{"fft_batch_size": 32, "memory_limit_gb": 8.0, "parallel_task_timeout_s": 21600.0, "scratch_directory": null, "workers": 1}` | — |
 
@@ -732,6 +734,7 @@ after each workflow and are not run artifacts.
 | `probe_sets` | no | `mapping[string, ProbeInput]` | — | — |
 | `archived_runs` | no | `mapping[string, string]` | — | — |
 | `baselines` | no | `mapping[string, PlotfileInput]` | — | — |
+| `source_histories` | no | `mapping[string, SourceHistoryInput]` | — | — |
 
 ### `OutputConfig`
 
@@ -753,6 +756,14 @@ after each workflow and are not run artifacts.
 | --- | --- | --- | --- | --- |
 | `compact_file` | no | `string \| null` | `null` | — |
 | `binary_files` | no | `array[string]` | `[]` | — |
+| `identity_manifest` | no | `string \| null` | `null` | — |
+
+### `SourceHistoryInput`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `source` | yes | `string` | — | — |
+| `prefix` | no | `string` | `"thermal-source.segment"` | — |
 | `identity_manifest` | no | `string \| null` | `null` | — |
 
 Repository maintainers regenerate this reference, the recipe reference, and example
