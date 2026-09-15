@@ -67,6 +67,18 @@ def render_probe_panels(
         else:
             order = np.argsort(x_first)
         chosen = order[np.unique(np.linspace(0, len(order) - 1, min(len(order), 6), dtype=int))]
+        # Put equal-distance positions together in each row: leftmost with
+        # rightmost, then work inward. The input columns remain unchanged for
+        # the numerical comparison and signed spatial transforms.
+        paired = []
+        left, right = 0, len(chosen) - 1
+        while left <= right:
+            paired.append(int(chosen[left]))
+            if right != left:
+                paired.append(int(chosen[right]))
+            left += 1
+            right -= 1
+        chosen = np.asarray(paired, dtype=int)
         rows = (len(chosen) + 1) // 2
         fig, axes = plt.subplots(rows, 2, figsize=(12, max(3.5, 2.7 * rows)), squeeze=False)
         specs = {

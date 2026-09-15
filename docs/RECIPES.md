@@ -242,6 +242,8 @@ When the selected products include `spectral.probe_signals`, the comparison
 also writes paired raw histories, a 2 µs history zoom, per-probe FFT amplitude
 overlays, separately normalized FFT shapes, and a gated normalized-shape ratio
 in dB. Probe panels omit locations that have zero disturbance in both cases.
+The panel layout places the leftmost and rightmost selected probes together,
+then works inward, so mirrored distances are adjacent regardless of YAML order.
 `spectral.psd` adds paired Welch PSD curves. Put `wave.komega` first to
 make the main comparison figure
 a shared-scale signed frequency–wavenumber map with a logarithmic positive-

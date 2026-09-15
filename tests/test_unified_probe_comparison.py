@@ -202,6 +202,10 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
                 titles = [axis.get_title() for axis in figure.axes]
                 self.assertTrue(all("Probe 0 ·" not in title for title in titles))
                 self.assertTrue(all("Probe 320 ·" not in title for title in titles))
+                self.assertEqual(
+                    [title.split(" ·")[0] for title in titles],
+                    ["Probe 120", "Probe 200", "Probe 150", "Probe 170"],
+                )
             finally:
                 plt.close(figure)
 
