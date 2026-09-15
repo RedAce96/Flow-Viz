@@ -3,19 +3,37 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import h5py
+import matplotlib.pyplot as plt
 import numpy as np
 
-from pelecpost.analysis.comparison import _Product, _array_metrics, _json_metrics
+from pelecpost.analysis.comparison import (
+    _array_metrics,
+    _json_metrics,
+    _Product,
+    _render_product_overlay,
+)
+from pelecpost.analysis.comparison_figures import (
+    render_komega_comparison,
+    render_probe_panels,
+)
+from pelecpost.analysis.probe_plotting import build_probe_overlay_figure
 from pelecpost.analysis.products import product_contract
-from pelecpost.analysis.spectral import _prepare_fft_grid, spectrum_from_signal
+from pelecpost.analysis.spectral import (
+    _prepare_fft_grid,
+    _si_conversion,
+    spectrum_from_signal,
+)
 from pelecpost.analysis.temporal_wavenumber import compute_temporal_wavenumber
+from pelecpost.config.loader import write_project_schema
 from pelecpost.config.models import (
     ComparisonAlignment,
+    PresentationConfig,
     ProbeInput,
 )
-from pelecpost.config.loader import write_project_schema
 from pelecpost.io.signals import open_probe_signal_workspace
 from pelecpost.preflight import create_plan
 from pelecpost.workflows import build_workflow_graph
@@ -36,6 +54,233 @@ def _product_metadata(path: Path, product_id: str, units: str = "Pa") -> dict:
 
 
 class UnifiedProbeComparisonTests(unittest.TestCase):
+    def test_probe_overlay_legend_stays_above_axes_and_uses_microseconds(self):
+        figure = build_probe_overlay_figure(
+            PresentationConfig(),
+            np.array([0.0, 1e-6]),
+            np.array([[1.0, 2.0, 3.0, 4.0], [2.0, 3.0, 4.0, 5.0]]),
+            ["Probe 120", "Probe 150", "Probe 170", "Probe 200"],
+            "Time [s]",
+            "Pressure [Pa]",
+        )
+        try:
+            self.assertIsNone(figure.axes[0].get_legend())
+            self.assertEqual(len(figure.legends), 1)
+            self.assertEqual(figure.axes[0].get_xlabel(), "Time [µs]")
+            np.testing.assert_allclose(figure.axes[0].lines[0].get_xdata(), [0.0, 1.0])
+            figure.canvas.draw()
+            renderer = figure.canvas.get_renderer()
+            self.assertGreater(
+                figure.legends[0].get_window_extent(renderer).y0,
+                figure.axes[0].get_window_extent(renderer).y1,
+            )
+        finally:
+            plt.close(figure)
+
+    def test_vorticity_probe_unit_is_invariant_under_cgs_length_units(self):
+        self.assertEqual(_si_conversion("vorticity", "1/s", "cgs"), (1.0, "1/s"))
+
+    def test_frequency_comparison_uses_positive_physical_frequency(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            first, second = directory / "asym.npz", directory / "gaus.npz"
+            common = {
+                "x_m": np.array([0.0235, 0.0265]),
+                "probe_indices": np.array([120, 200]),
+                "frequency_hz": np.array([0.0, 1e5, 2e5, 3e5]),
+                "signal_unit": np.array("Pa"),
+            }
+            np.savez(
+                first,
+                **common,
+                amplitude=np.array(
+                    [
+                        [0.0, 0.0],
+                        [10.0, 9.0],
+                        [5.0, 4.0],
+                        [2.0, 1.0],
+                    ]
+                ),
+            )
+            np.savez(
+                second,
+                **common,
+                amplitude=np.array(
+                    [
+                        [0.0, 0.0],
+                        [8.0, 7.0],
+                        [6.0, 5.0],
+                        [3.0, 2.0],
+                    ]
+                ),
+            )
+            with patch("pelecpost.analysis.comparison_figures.plt.close") as close:
+                result = render_probe_panels(
+                    first,
+                    second,
+                    "asym.spectral.probe_signals",
+                    "gaus.spectral.probe_signals",
+                    "pressure",
+                    directory / "frequency.png",
+                    kind="fft",
+                )
+            figure = close.call_args.args[0]
+            try:
+                self.assertTrue(result.is_file())
+                for axis in figure.axes:
+                    self.assertEqual(len(axis.lines), 2)
+                    np.testing.assert_allclose(axis.lines[0].get_xdata(), [1e5, 2e5, 3e5])
+                    self.assertEqual(axis.get_xscale(), "log")
+            finally:
+                plt.close(figure)
+
+    def test_normalized_fft_ratio_identifies_enrichment_and_masks_weak_bins(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            first, second = directory / "asym.npz", directory / "gaus.npz"
+            common = {
+                "x_m": np.array([0.025]),
+                "probe_indices": np.array([160]),
+                "frequency_hz": np.array([0.0, 1e5, 2e5, 3e5]),
+                "signal_unit": np.array("Pa"),
+            }
+            np.savez(first, **common, amplitude=np.array([[0.0], [10.0], [1.0], [0.001]]))
+            np.savez(second, **common, amplitude=np.array([[0.0], [1.0], [10.0], [0.001]]))
+            with patch("pelecpost.analysis.comparison_figures.plt.close") as close:
+                result = render_probe_panels(
+                    first,
+                    second,
+                    "asym.spectral.probe_signals",
+                    "gaus.spectral.probe_signals",
+                    "pressure",
+                    directory / "ratio.png",
+                    kind="fft_shape_ratio",
+                )
+            figure = close.call_args.args[0]
+            try:
+                self.assertTrue(result.is_file())
+                ratio = np.asarray(figure.axes[0].lines[0].get_ydata())
+                self.assertLess(ratio[0], 0)
+                self.assertGreater(ratio[1], 0)
+                self.assertTrue(np.isnan(ratio[2]))
+            finally:
+                plt.close(figure)
+
+    def test_paired_probe_panels_omit_two_flat_endpoint_probes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            first, second = directory / "asym.npz", directory / "gaus.npz"
+            common = {
+                "x_m": np.linspace(0.019, 0.031, 6),
+                "probe_indices": np.array([0, 120, 150, 170, 200, 320]),
+                "frequency_hz": np.array([0.0, 1e5, 2e5]),
+                "signal_unit": np.array("Pa"),
+            }
+            amplitudes = np.array(
+                [
+                    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                    [0.0, 2.0, 3.0, 4.0, 5.0, 0.0],
+                    [0.0, 1.0, 2.0, 3.0, 4.0, 0.0],
+                ]
+            )
+            np.savez(first, **common, amplitude=amplitudes)
+            np.savez(second, **common, amplitude=0.8 * amplitudes)
+            with patch("pelecpost.analysis.comparison_figures.plt.close") as close:
+                result = render_probe_panels(
+                    first,
+                    second,
+                    "asym-pressure-spectrum.spectral.probe_signals",
+                    "gaus-pressure-spectrum.spectral.probe_signals",
+                    "pressure",
+                    directory / "four_probes.png",
+                    kind="fft",
+                )
+            figure = close.call_args.args[0]
+            try:
+                self.assertTrue(result.is_file())
+                self.assertEqual(len(figure.axes), 4)
+                titles = [axis.get_title() for axis in figure.axes]
+                self.assertTrue(all("Probe 0 ·" not in title for title in titles))
+                self.assertTrue(all("Probe 320 ·" not in title for title in titles))
+            finally:
+                plt.close(figure)
+
+    def test_signed_k_comparison_has_shared_axes_and_gated_power_ratio(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            first, second = directory / "asym.npz", directory / "gaus.npz"
+            frequency = np.array([2e5, 3e5, 4e5])
+            wavenumber = np.array([-1000.0, 0.0, 1000.0])
+            a = np.array([[1.0, 4.0, 1.0], [0.1, 2.0, 0.1], [0.001, 1.0, 0.001]])
+            b = 2 * a
+            b[-1, -1] = 1e-6
+            np.savez(first, frequency_hz=frequency, wavenumber_rad_m=wavenumber, power=a)
+            np.savez(second, frequency_hz=frequency, wavenumber_rad_m=wavenumber, power=b)
+            with patch("pelecpost.analysis.comparison_figures.plt.close") as close:
+                result = render_komega_comparison(
+                    first,
+                    second,
+                    "asym.wave.komega",
+                    "gaus.wave.komega",
+                    directory / "map.png",
+                    directory / "signed_k.png",
+                    (2e5, 4e5),
+                    "(Pa)^2",
+                )
+            figures = [call.args[0] for call in close.call_args_list]
+            try:
+                self.assertIsNotNone(result)
+                self.assertTrue(all(path.is_file() for path in result))
+                ratio = np.asarray(figures[0].axes[2].images[0].get_array())
+                self.assertAlmostEqual(ratio[0, 1], 10 * np.log10(2))
+                self.assertTrue(np.isnan(ratio[-1, -1]))
+                self.assertEqual(figures[0].axes[0].get_ylabel(), "Frequency [MHz]")
+                self.assertEqual(figures[0].axes[0].get_yscale(), "log")
+                self.assertGreater(figures[0].axes[0].get_ylim()[0], 0.0)
+            finally:
+                for figure in figures:
+                    plt.close(figure)
+
+    def test_probe_comparison_figure_uses_shared_time_axes_and_paired_traces(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            figure_dir = Path(temporary)
+            paths = [figure_dir / "asym.npz", figure_dir / "gaus.npz"]
+            for path, peak in zip(paths, (900.0, 800.0)):
+                np.savez(
+                    path,
+                    x_m=np.array([0.0235, 0.0265]),
+                    probe_indices=np.array([120, 200]),
+                    raw_time_s=np.array([0.0, 1e-6, 2e-6]),
+                    raw_values=np.array([[760.0, 760.0], [peak, peak], [760.0, 760.0]]),
+                    signal_unit=np.array("Pa"),
+                )
+            left = _Product(
+                "asym-spectrum.spectral.probe_signals",
+                {"variable": "pressure"},
+                paths[0],
+            )
+            right = _Product(
+                "gaus-spectrum.spectral.probe_signals",
+                {"variable": "pressure"},
+                paths[1],
+            )
+            with patch("pelecpost.analysis.comparison.plt.close") as close:
+                result = _render_product_overlay(
+                    SimpleNamespace(figure_dir=figure_dir),
+                    left,
+                    right,
+                )
+            figure = close.call_args.args[0]
+            try:
+                self.assertTrue(result.is_file())
+                self.assertEqual(len(figure.axes), 2)
+                for axis in figure.axes:
+                    self.assertEqual(len(axis.lines), 2)
+                    np.testing.assert_allclose(axis.lines[0].get_xdata(), [0, 1, 2])
+                    self.assertEqual(axis.get_xlabel(), "Time [µs]")
+            finally:
+                plt.close(figure)
+
     def test_probe_input_requires_exactly_one_nonempty_source(self):
         with self.assertRaisesRegex(ValueError, "requires compact_file or binary_files"):
             ProbeInput()
@@ -67,16 +312,20 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
 
     def test_local_comparison_adds_analysis_dependencies(self):
         with tempfile.TemporaryDirectory() as temporary:
-            project = preflight_fixtures.PreflightTests().project(Path(temporary), [
-                {"id": "asym", "recipe": "probe_spectrum", "variable": "pressure"},
-                {"id": "gaus", "recipe": "probe_spectrum", "variable": "pressure"},
-                {
-                    "id": "compare", "recipe": "case_comparison",
-                    "baseline": {"analysis_id": "asym"},
-                    "comparison": {"analysis_id": "gaus"},
-                    "product_ids": ["spectral.psd"],
-                },
-            ])
+            project = preflight_fixtures.PreflightTests().project(
+                Path(temporary),
+                [
+                    {"id": "asym", "recipe": "probe_spectrum", "variable": "pressure"},
+                    {"id": "gaus", "recipe": "probe_spectrum", "variable": "pressure"},
+                    {
+                        "id": "compare",
+                        "recipe": "case_comparison",
+                        "baseline": {"analysis_id": "asym"},
+                        "comparison": {"analysis_id": "gaus"},
+                        "product_ids": ["spectral.psd"],
+                    },
+                ],
+            )
             graph = build_workflow_graph(project)
             self.assertEqual(
                 set(graph.node("analysis.compare").dependencies),
@@ -93,22 +342,33 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
             binary_values = helper.write_probe_v2(binary, samples=17, probes=5)
             selected = np.array([4, 1, 3])
             hdf5_workspace = open_probe_signal_workspace(
-                compact, "p", selected, si_factor=0.1, memory_limit_gb=1.0,
+                compact,
+                "p",
+                selected,
+                si_factor=0.1,
+                memory_limit_gb=1.0,
             )
             pbin_workspace = open_probe_signal_workspace(
-                (str(binary),), "p", selected, si_factor=0.1, memory_limit_gb=1.0,
+                (str(binary),),
+                "p",
+                selected,
+                si_factor=0.1,
+                memory_limit_gb=1.0,
             )
             try:
                 np.testing.assert_array_equal(hdf5_workspace.time_s, pbin_workspace.time_s)
                 np.testing.assert_array_equal(hdf5_workspace.x_m, pbin_workspace.x_m)
                 np.testing.assert_allclose(
-                    hdf5_workspace.values, compact_values[:, selected] * 0.1,
+                    hdf5_workspace.values,
+                    compact_values[:, selected] * 0.1,
                 )
                 np.testing.assert_allclose(
-                    pbin_workspace.values, binary_values[:, selected] * 0.1,
+                    pbin_workspace.values,
+                    binary_values[:, selected] * 0.1,
                 )
                 np.testing.assert_allclose(
-                    hdf5_workspace.values, pbin_workspace.values,
+                    hdf5_workspace.values,
+                    pbin_workspace.values,
                 )
             finally:
                 hdf5_workspace.close()
@@ -120,7 +380,10 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
             time = np.array([0.0, 1.0, 2.2, 3.2]) * 1.0e-6
             values = np.column_stack((time, time**2))
             _, _, _, resampled, cleanup = _prepare_fft_grid(
-                time, values, "resample_uniform", scratch,
+                time,
+                values,
+                "resample_uniform",
+                scratch,
             )
             self.assertTrue(resampled)
             self.assertIsNotNone(cleanup)
@@ -136,20 +399,33 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
             values = np.column_stack((time, time**2))
             with self.assertRaises(ValueError):
                 spectrum_from_signal(
-                    time, values, end_time_s=None, window="invalid",
-                    detrend="mean", welch_segment_samples=None,
-                    overlap_fraction=0.5, time_grid_policy="resample_uniform",
-                    frequency_max_hz=None, scratch_directory=scratch,
+                    time,
+                    values,
+                    end_time_s=None,
+                    window="invalid",
+                    detrend="mean",
+                    welch_segment_samples=None,
+                    overlap_fraction=0.5,
+                    time_grid_policy="resample_uniform",
+                    frequency_max_hz=None,
+                    scratch_directory=scratch,
                 )
             self.assertFalse(list(scratch.glob("*.mmap")))
 
     def test_nonuniform_source_is_a_preflight_blocker_for_require_uniform(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            project = preflight_fixtures.PreflightTests().project(root, [{
-                "id": "spectrum", "recipe": "probe_spectrum", "variable": "pressure",
-                "time_grid_policy": "require_uniform",
-            }])
+            project = preflight_fixtures.PreflightTests().project(
+                root,
+                [
+                    {
+                        "id": "spectrum",
+                        "recipe": "probe_spectrum",
+                        "variable": "pressure",
+                        "time_grid_policy": "require_uniform",
+                    }
+                ],
+            )
             with h5py.File(root / "probes.h5", "r+") as archive:
                 time = np.arange(1024, dtype=float) * 1.0e-6
                 time[2] = 2.1e-6
@@ -168,8 +444,11 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
             # The right file reverses both physical axes and uses unrelated labels.
             np.savez(left_path, frequency_hz=frequency, x_m=x_left, psd=left_values)
             np.savez(
-                right_path, frequency_hz=frequency[::-1], x_m=x_left[::-1],
-                probe_indices=np.array([902, 901, 900]), psd=left_values[::-1, ::-1],
+                right_path,
+                frequency_hz=frequency[::-1],
+                x_m=x_left[::-1],
+                probe_indices=np.array([902, 901, 900]),
+                psd=left_values[::-1, ::-1],
             )
             left = _Product("left", _product_metadata(left_path, "spectral.psd"), left_path)
             right = _Product("right", _product_metadata(right_path, "spectral.psd"), right_path)
@@ -184,11 +463,14 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
             left_path = root / "left.npz"
             right_path = root / "right.npz"
             np.savez(
-                left_path, frequency_hz=np.array([1.0, 2.0, 3.0]),
-                x_m=np.array([0.0, 1.0]), psd=np.array([[1.0, 2.0], [2.0, 3.0], [3.0, 4.0]]),
+                left_path,
+                frequency_hz=np.array([1.0, 2.0, 3.0]),
+                x_m=np.array([0.0, 1.0]),
+                psd=np.array([[1.0, 2.0], [2.0, 3.0], [3.0, 4.0]]),
             )
             np.savez(
-                right_path, frequency_hz=np.array([1.0, 1.5, 2.0, 2.5, 3.0]),
+                right_path,
+                frequency_hz=np.array([1.0, 1.5, 2.0, 2.5, 3.0]),
                 x_m=np.array([0.0, 1.0]),
                 psd=np.array([[1.0, 2.0], [1.5, 2.5], [2.0, 3.0], [2.5, 3.5], [3.0, 4.0]]),
             )
@@ -201,8 +483,10 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
 
             right_intersection = root / "right-intersection.npz"
             np.savez(
-                right_intersection, frequency_hz=np.array([2.0, 3.0, 4.0]),
-                x_m=np.array([0.0, 1.0]), psd=np.array([[2.0, 3.0], [3.0, 4.0], [4.0, 5.0]]),
+                right_intersection,
+                frequency_hz=np.array([2.0, 3.0, 4.0]),
+                x_m=np.array([0.0, 1.0]),
+                psd=np.array([[2.0, 3.0], [3.0, 4.0], [4.0, 5.0]]),
             )
             right = _Product(
                 "right-intersection",
@@ -210,7 +494,9 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
                 right_intersection,
             )
             metrics, details = _array_metrics(
-                left, right, ComparisonAlignment(frequency="intersection"),
+                left,
+                right,
+                ComparisonAlignment(frequency="intersection"),
             )
             self.assertEqual(metrics[0]["linf_difference"], 0.0)
             self.assertEqual(details["psd"]["frequency"]["sample_count"], 2)
@@ -220,8 +506,18 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
             root = Path(temporary)
             left_path = root / "left.npz"
             right_path = root / "right.npz"
-            np.savez(left_path, frequency_hz=np.array([1.0, 2.0]), x_m=np.array([0.0, 1.0]), psd=np.ones((2, 2)))
-            np.savez(right_path, frequency_hz=np.array([1.0, 2.0]), x_m=np.array([0.0, 2.0]), psd=np.ones((2, 2)))
+            np.savez(
+                left_path,
+                frequency_hz=np.array([1.0, 2.0]),
+                x_m=np.array([0.0, 1.0]),
+                psd=np.ones((2, 2)),
+            )
+            np.savez(
+                right_path,
+                frequency_hz=np.array([1.0, 2.0]),
+                x_m=np.array([0.0, 2.0]),
+                psd=np.ones((2, 2)),
+            )
             left = _Product("left", _product_metadata(left_path, "spectral.psd"), left_path)
             right = _Product("right", _product_metadata(right_path, "spectral.psd"), right_path)
             with self.assertRaisesRegex(ValueError, "strict comparison axes differ"):
@@ -230,17 +526,21 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
             complex_left = root / "complex-left.npz"
             complex_right = root / "complex-right.npz"
             np.savez(
-                complex_left, frequency_hz=np.array([1.0, 2.0]),
+                complex_left,
+                frequency_hz=np.array([1.0, 2.0]),
                 relative_time_s=np.array([0.0, 1.0]),
                 complex_stft=np.array([[1 + 1j, 2 + 0j], [3 + 4j, 5 + 0j]]),
             )
             np.savez(
-                complex_right, frequency_hz=np.array([1.0, 2.0]),
+                complex_right,
+                frequency_hz=np.array([1.0, 2.0]),
                 relative_time_s=np.array([0.0, 1.0]),
                 complex_stft=np.array([[1 - 1j, 2 + 0j], [3 - 4j, 5 + 0j]]),
             )
             left = _Product("left", _product_metadata(complex_left, "transient.stft"), complex_left)
-            right = _Product("right", _product_metadata(complex_right, "transient.stft"), complex_right)
+            right = _Product(
+                "right", _product_metadata(complex_right, "transient.stft"), complex_right
+            )
             metrics, _ = _array_metrics(left, right, ComparisonAlignment())
             self.assertEqual(metrics[0]["linf_difference"], 0.0)
 
@@ -336,50 +636,67 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
                     "complex_stft": np.ones((2, 3), dtype=complex),
                 },
                 "wave.wavenumber": {
-                    "frequency_hz": frequency, "x_center_m": x,
+                    "frequency_hz": frequency,
+                    "x_center_m": x,
                     **{
-                        key: np.ones((2, 3)) for key in (
-                            "alpha_real_rad_m", "alpha_imag_rad_m",
-                            "alpha_real_ci95_rad_m", "alpha_imag_ci95_rad_m",
-                            "amplification_rate_per_m", "phase_speed_m_s",
-                            "coherence_squared", "phase_fit_r_squared",
-                            "amplitude_fit_r_squared", "spatial_alias_margin",
-                            "phase_valid_mask", "growth_valid_mask",
+                        key: np.ones((2, 3))
+                        for key in (
+                            "alpha_real_rad_m",
+                            "alpha_imag_rad_m",
+                            "alpha_real_ci95_rad_m",
+                            "alpha_imag_ci95_rad_m",
+                            "amplification_rate_per_m",
+                            "phase_speed_m_s",
+                            "coherence_squared",
+                            "phase_fit_r_squared",
+                            "amplitude_fit_r_squared",
+                            "spatial_alias_margin",
+                            "phase_valid_mask",
+                            "growth_valid_mask",
                         )
                     },
                 },
                 "wave.komega": {
                     "frequency_hz": frequency,
                     "wavenumber_rad_m": np.array([-1.0, 0.0, 1.0]),
-                    "power": np.ones((2, 3)), "amplitude": np.ones((2, 3)),
+                    "power": np.ones((2, 3)),
+                    "amplitude": np.ones((2, 3)),
                 },
                 "nonlinear.bicoherence": {
                     "triad_labels": np.array(["f1+f2", "f1+f3", "f2+f3"]),
                     **{
-                        key: np.ones(3) for key in (
-                        "observed_bicoherence_squared",
-                        "surrogate_median_bicoherence_squared",
-                        "surrogate_95_bicoherence_squared", "empirical_p_value",
-                        "fdr_adjusted_p_value", "significant_fdr",
+                        key: np.ones(3)
+                        for key in (
+                            "observed_bicoherence_squared",
+                            "surrogate_median_bicoherence_squared",
+                            "surrogate_95_bicoherence_squared",
+                            "empirical_p_value",
+                            "fdr_adjusted_p_value",
+                            "significant_fdr",
                         )
                     },
                 },
                 "modal.pod": {
-                    "coordinates_m": x, "modes": np.ones((3, 2)),
+                    "coordinates_m": x,
+                    "modes": np.ones((3, 2)),
                     "temporal_coefficients": np.ones((4, 2)),
-                    "singular_values": np.ones(2), "energy_fraction": np.ones(2),
+                    "singular_values": np.ones(2),
+                    "energy_fraction": np.ones(2),
                     "mean": np.ones(3),
                 },
                 "modal.spod": {
-                    "frequency_hz": frequency, "coordinates_m": x,
+                    "frequency_hz": frequency,
+                    "coordinates_m": x,
                     "eigenvalues": np.ones((2, 2)),
                     "modes": np.ones((2, 2, 3), dtype=complex),
                 },
                 "modal.dmd": {
-                    "frequency_hz": frequency, "coordinates_m": x,
+                    "frequency_hz": frequency,
+                    "coordinates_m": x,
                     "modes": np.ones((3, 2), dtype=complex),
                     "eigenvalues": np.ones(2, dtype=complex),
-                    "growth_rate_per_s": np.ones(2), "amplitudes": np.ones(2, dtype=complex),
+                    "growth_rate_per_s": np.ones(2),
+                    "amplitudes": np.ones(2, dtype=complex),
                     "retained_condition_number": np.array(1.0),
                 },
             }
@@ -389,10 +706,14 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
                 np.savez(left_path, **arrays)
                 np.savez(right_path, **arrays)
                 left = _Product(
-                    "left", _product_metadata(left_path, product_id), left_path,
+                    "left",
+                    _product_metadata(left_path, product_id),
+                    left_path,
                 )
                 right = _Product(
-                    "right", _product_metadata(right_path, product_id), right_path,
+                    "right",
+                    _product_metadata(right_path, product_id),
+                    right_path,
                 )
                 metrics, _ = _array_metrics(left, right, ComparisonAlignment())
                 self.assertTrue(metrics, product_id)
@@ -404,19 +725,24 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
         x = np.arange(32, dtype=float) * 2.0e-3
         frequency = 25_000.0
         wavenumber = 2.0 * np.pi / (len(x) * (x[1] - x[0])) * 2.0
-        envelope = np.exp(-((time - 0.0010) / 0.00012) ** 2)
+        envelope = np.exp(-(((time - 0.0010) / 0.00012) ** 2))
         values = envelope[:, None] * np.cos(
             2.0 * np.pi * frequency * time[:, None] - wavenumber * x[None, :]
         )
         analysis = __import__(
             "pelecpost.config.models", fromlist=["DirectionalWaveAnalysis"]
         ).DirectionalWaveAnalysis(
-            id="wave", recipe="directional_wave", probe_set_id="default",
-            variable="pressure", frequency_min_hz=15_000.0,
+            id="wave",
+            recipe="directional_wave",
+            probe_set_id="default",
+            variable="pressure",
+            frequency_min_hz=15_000.0,
             frequency_max_hz=35_000.0,
-            expected_speed_min_m_s=100.0, expected_speed_max_m_s=2_000.0,
+            expected_speed_min_m_s=100.0,
+            expected_speed_max_m_s=2_000.0,
             temporal_wavenumber={
-                "enabled": True, "window_duration_s": 256.0e-6,
+                "enabled": True,
+                "window_duration_s": 256.0e-6,
                 "minimum_relative_energy_db": -20.0,
             },
         )
@@ -435,14 +761,17 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
             right = root / "right.json"
             left.write_text(
                 '{"segment_count": 2, "frequency_resolution_hz": 4.0, '
-                '"interpretation": "baseline"}\n', encoding="utf-8",
+                '"interpretation": "baseline"}\n',
+                encoding="utf-8",
             )
             right.write_text(
                 '{"segment_count": 2, "frequency_resolution_hz": 4.0, '
-                '"interpretation": "different label"}\n', encoding="utf-8",
+                '"interpretation": "different label"}\n',
+                encoding="utf-8",
             )
             metrics = _json_metrics(
-                left, right,
+                left,
+                right,
                 ("segment_count", "frequency_resolution_hz"),
             )
             self.assertEqual(len(metrics), 2)

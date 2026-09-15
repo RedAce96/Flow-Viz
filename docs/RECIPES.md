@@ -238,6 +238,19 @@ Schema- and provenance-checked comparison of existing artifacts.
 - Conflicts: none
 - Artifact IDs: comparison.metrics, comparison.figures, comparison.overlay_figure
 
+When the selected products include `spectral.probe_signals`, the comparison
+also writes paired raw histories, a 2 µs history zoom, per-probe FFT amplitude
+overlays, separately normalized FFT shapes, and a gated normalized-shape ratio
+in dB. Probe panels omit locations that have zero disturbance in both cases.
+`spectral.psd` adds paired Welch PSD curves. Put `wave.komega` first to
+make the main comparison figure
+a shared-scale signed frequency–wavenumber map with a logarithmic positive-
+frequency axis and power-ratio panel; it
+also adds absolute and normalized band-integrated signed-k curves. Ratio-map
+pixels below 40 dB of the shared peak in either case are masked. The summary
+chart uses relative L2 differences so quantities with different physical
+units are not placed on a common absolute-difference axis.
+
 Assumptions:
 
 - Compared artifacts use compatible coordinates and preprocessing.
@@ -248,3 +261,40 @@ Interpretation limits:
 
 All current numerical recipes support 2-D only. Inspection recognizes 3-D datasets,
 but planning blocks unsupported algorithms before expensive loading.
+
+## Probe histories with separate panel scales
+
+`probe_spectrum`, `single_pulse`, and other probe recipes can save named raw
+history views alongside the regular overlay. Set `probe_plotting.trace_views`
+to choose a time range and probe groups. Each group gets its own vertical axis;
+`value_limits` is optional when a fixed axis is needed. For one two-probe group,
+`pair_difference: true` adds a difference panel. The view reads only the record
+selected by the analysis's `record_start_time_s` and `end_time_s`.
+
+```yaml
+probe_plotting:
+  mode: both
+  normalization: none
+  label: index
+  trace_views:
+    - id: pulse-symmetry
+      title: Symmetric near-source probe response
+      time_end_s: 1.25e-7
+      groups:
+        - title: Near-source
+          probe_indices: [150, 170]
+      pair_difference: true
+    - id: symmetric-pairs
+      title: Symmetric probe pairs on separate vertical scales
+      time_end_s: 1.0e-5
+      groups:
+        - title: Near-source
+          probe_indices: [150, 170]
+        - title: Outer
+          probe_indices: [120, 200]
+```
+
+The resulting figures are `trace_pulse-symmetry.png` and
+`trace_symmetric-pairs.png` in the analysis figure directory. These settings
+are already present in the focused `Flow-Viz/Post-Processing/analyses.yaml`
+recipe for both kernel cases and both pressure and temperature.

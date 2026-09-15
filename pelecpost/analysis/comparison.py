@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 from pelecpost.config.models import CaseComparisonAnalysis, ComparisonAlignment
 from pelecpost.runtime.context import WorkflowContext
 
+from .comparison_figures import render_komega_comparison, render_probe_panels
 from .executors import executor
 from .products import product_contract
 
@@ -617,13 +618,15 @@ def _array_metrics(
 
 
 def _render_summary(context: WorkflowContext, metrics: list[dict[str, Any]]) -> Path:
-    path = context.figure_dir / "comparison_linf.png"
-    fig, axis = plt.subplots(figsize=(max(7, 0.35 * len(metrics)), 5))
-    labels = [item["quantity"] for item in metrics]
-    values = [item["linf_difference"] for item in metrics]
-    axis.bar(np.arange(len(values)), values)
-    axis.set_xticks(np.arange(len(labels)), labels, rotation=60, ha="right")
-    axis.set_ylabel("Maximum absolute difference")
+    path = context.figure_dir / "comparison_relative_l2.png"
+    fig, axis = plt.subplots(figsize=(11, max(4, 0.4 * len(metrics))))
+    labels = [f"{item['product_id'].split('.')[-1]} · {item['quantity']}"
+              for item in metrics]
+    values = [100.0 * item["relative_l2_difference"] for item in metrics]
+    axis.barh(np.arange(len(values)), values)
+    axis.set_yticks(np.arange(len(labels)), labels)
+    axis.invert_yaxis()
+    axis.set_xlabel("Relative L2 difference [% of baseline]")
     axis.grid(False)
     fig.tight_layout()
     fig.savefig(path, dpi=180)
@@ -633,6 +636,13 @@ def _render_summary(context: WorkflowContext, metrics: list[dict[str, Any]]) -> 
 
 def _render_product_overlay(context: WorkflowContext, left: _Product, right: _Product) -> Path:
     path = context.figure_dir / "comparison_overlay.png"
+    if left.label.endswith(".spectral.probe_signals"):
+        rendered = render_probe_panels(
+            left.path, right.path, left.label, right.label,
+            str(left.metadata.get("variable") or "signal"), path, kind="raw",
+        )
+        if rendered is not None:
+            return rendered
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     if left.path.suffix.lower() != ".npz":
         for axis in axes:
@@ -670,10 +680,12 @@ def run_case_comparison(context: WorkflowContext) -> None:
     alignment_records: dict[str, Any] = {}
     preprocessing_records: dict[str, Any] = {}
     first_pair: tuple[_Product, _Product] | None = None
+    product_pairs: dict[str, tuple[_Product, _Product]] = {}
     for product_id in analysis.product_ids:
         left = _resolve_product(context, analysis.baseline, product_id)
         right = _resolve_product(context, analysis.comparison, product_id)
         contract_pair = _validate_product_pair(left, right)
+        product_pairs[product_id] = (left, right)
         if first_pair is None:
             first_pair = (left, right)
         if left.path.suffix.lower() == ".json":
@@ -727,14 +739,70 @@ def run_case_comparison(context: WorkflowContext) -> None:
     summary_path = _render_summary(context, all_metrics)
     context.register(
         artifact_id="comparison.figures", path=summary_path, kind="figure", variable=None,
-        units="artifact-dependent", coordinate_metadata={},
-        interpretation="Maximum absolute differences for typed comparison values.",
+        units="%", coordinate_metadata={},
+        interpretation="Relative L2 differences for each comparable typed quantity.",
     )
     if first_pair is None:
         raise ValueError("case_comparison requires at least one product")
-    overlay_path = _render_product_overlay(context, *first_pair)
+    overlay_path: Path | None = None
+    if analysis.product_ids[0] == "wave.komega":
+        left, right = first_pair
+        settings = left.metadata.get("provenance", {}).get("preprocessing") or {}
+        band = (
+            float(settings.get("frequency_min_hz", 0.0)),
+            float(settings.get("frequency_max_hz", np.inf)),
+        )
+        rendered = render_komega_comparison(
+            left.path, right.path, left.label, right.label,
+            context.figure_dir / "comparison_overlay.png",
+            context.figure_dir / "comparison_signed_k.png", band,
+            str(left.metadata.get("units") or "variable²"),
+        )
+        if rendered is not None:
+            overlay_path, spectrum_path = rendered
+            context.register(
+                artifact_id="comparison.signed_k_figure", path=spectrum_path,
+                kind="figure", variable=left.metadata.get("variable"),
+                units=left.metadata.get("units"),
+                coordinate_metadata={"wavenumber": "rad/m"},
+                interpretation=(
+                    "Absolute and unit-normalized band-integrated signed "
+                    "wavenumber power for the two cases."
+                ),
+            )
+    if overlay_path is None:
+        overlay_path = _render_product_overlay(context, *first_pair)
     context.register(
         artifact_id="comparison.overlay_figure", path=overlay_path, kind="figure", variable=None,
         units="artifact-dependent", coordinate_metadata={},
-        interpretation="Generic baseline/comparison visualization for the first selected product.",
+        interpretation="Baseline and comparison visualization for the first selected product.",
     )
+    for product_id, kinds in (
+        ("spectral.probe_signals", (
+            ("raw_zoom", "comparison_time_zoom.png", "comparison.time_zoom_figure"),
+            ("fft", "comparison_fft.png", "comparison.fft_figure"),
+            ("fft_shape", "comparison_fft_shape.png", "comparison.fft_shape_figure"),
+            ("fft_shape_ratio", "comparison_fft_shape_ratio.png",
+             "comparison.fft_shape_ratio_figure"),
+        )),
+        ("spectral.psd", (
+            ("psd", "comparison_psd.png", "comparison.psd_figure"),
+        )),
+    ):
+        if product_id not in product_pairs:
+            continue
+        left, right = product_pairs[product_id]
+        for kind, filename, artifact_id in kinds:
+            path = render_probe_panels(
+                left.path, right.path, left.label, right.label,
+                str(left.metadata.get("variable") or "signal"),
+                context.figure_dir / filename, kind=kind,
+            )
+            if path is not None:
+                context.register(
+                    artifact_id=artifact_id, path=path, kind="figure",
+                    variable=left.metadata.get("variable"),
+                    units="artifact-dependent",
+                    coordinate_metadata={"probe_x": "m"},
+                    interpretation=f"Paired {kind} probe curves on physical axes.",
+                )

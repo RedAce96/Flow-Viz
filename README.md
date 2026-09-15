@@ -23,6 +23,17 @@ The report is written to the new timestamped run's `report/index.html`. A failed
 
 The clean-break interface does not accept legacy JSON or old workflow flags. The root `pelec_post.py` is only a launcher, so existing SLURM wrappers can continue forwarding `$@`; pass new CLI arguments such as `run /path/to/project`.
 
+## Redraw the transferred kernel results
+
+From this checkout, run `python replot_saved_kernel_products.py`. It reads the
+exported `Delta_Outputs` folder and the focused `Flow-Viz/Post-Processing`
+project by default, then writes new pressure figures and arrays to
+`Delta_Outputs/replotted-frequency-wave`. The selected first-10-µs probe FFT
+and Welch PSD are recomputed from saved pressure histories. The shared signed
+frequency–wavenumber maps are redrawn from exported power arrays; changing
+their original spatial or temporal transform requires the server probe files.
+The script accepts `--export`, `--project`, and `--output` to use other paths.
+
 ## Configuration ownership
 
 - `case.yaml`: case identity, gas, freestream reference, geometry, and solver units.

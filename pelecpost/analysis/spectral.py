@@ -57,6 +57,7 @@ FIELD_NAMES = {
     "y_velocity": ("y_velocity", "v", "yvel"),
     "pressure": ("pressure", "p"),
     "temperature": ("temperature", "T", "temp"),
+    "vorticity": ("vorticity", "omega_z"),
 }
 SI = {
     "density": (1000.0, "kg/m^3"),
@@ -64,6 +65,7 @@ SI = {
     "y_velocity": (0.01, "m/s"),
     "pressure": (0.1, "Pa"),
     "temperature": (1.0, "K"),
+    "vorticity": (1.0, "1/s"),
 }
 MAX_PROBES_PER_FIGURE = 8
 
@@ -80,14 +82,23 @@ def _coherence_batch_worker(payload: dict[str, Any]) -> dict[str, Any]:
     frequency = None
     for pair_index, first, second in payload["pairs"]:
         pair_frequency, pair_coherence = coherence(
-            matrix[:, int(first)], matrix[:, int(second)],
-            fs=float(payload["fs"]), window=window_name, nperseg=segment,
-            noverlap=overlap, detrend=detrend_value,
+            matrix[:, int(first)],
+            matrix[:, int(second)],
+            fs=float(payload["fs"]),
+            window=window_name,
+            nperseg=segment,
+            noverlap=overlap,
+            detrend=detrend_value,
         )
         _, pair_cross = csd(
-            matrix[:, int(first)], matrix[:, int(second)],
-            fs=float(payload["fs"]), window=window_name, nperseg=segment,
-            noverlap=overlap, detrend=detrend_value, scaling="density",
+            matrix[:, int(first)],
+            matrix[:, int(second)],
+            fs=float(payload["fs"]),
+            window=window_name,
+            nperseg=segment,
+            noverlap=overlap,
+            detrend=detrend_value,
+            scaling="density",
         )
         frequency = pair_frequency
         rows.append((int(pair_index), pair_coherence))
@@ -106,8 +117,7 @@ def _field(variable: str, fields: tuple[str, ...]) -> str:
     raise KeyError(f"No storage field maps to {variable!r}")
 
 
-def _si_conversion(variable: str, source_unit: str | None, solver_units: str
-) -> tuple[float, str]:
+def _si_conversion(variable: str, source_unit: str | None, solver_units: str) -> tuple[float, str]:
     """Return a conversion from the inspected source unit into public SI."""
     unit = (source_unit or "").strip().lower().replace(" ", "")
     si_units = {
@@ -116,10 +126,15 @@ def _si_conversion(variable: str, source_unit: str | None, solver_units: str
         "x_velocity": {"m/s", "m·s^-1"},
         "y_velocity": {"m/s", "m·s^-1"},
         "temperature": {"k", "kelvin"},
+        "vorticity": {"1/s", "s^-1", "s-1", "hz"},
     }
     public_units = {
-        "pressure": "Pa", "density": "kg/m^3", "x_velocity": "m/s",
-        "y_velocity": "m/s", "temperature": "K",
+        "pressure": "Pa",
+        "density": "kg/m^3",
+        "x_velocity": "m/s",
+        "y_velocity": "m/s",
+        "temperature": "K",
+        "vorticity": "1/s",
     }
     if variable not in si_units:
         raise KeyError(f"No SI conversion is defined for {variable!r}")
@@ -132,6 +147,7 @@ def _si_conversion(variable: str, source_unit: str | None, solver_units: str
         "x_velocity": {"cm/s"},
         "y_velocity": {"cm/s"},
         "temperature": set(),
+        "vorticity": set(),
     }
     if unit in cgs[variable] or unit == "cgs":
         return SI[variable][0], public_unit
@@ -152,7 +168,9 @@ def load_probe_signal(
     if configured_variable is None:
         raise TypeError(f"Recipe {analysis.recipe!r} has no probe variable")
     return load_probe_variable(
-        context, configured_variable.value, getattr(analysis, "probe_indices", ()),
+        context,
+        configured_variable.value,
+        getattr(analysis, "probe_indices", ()),
         probe_set_id=analysis.probe_set_id,
         start_time_s=getattr(analysis, "record_start_time_s", None),
         end_time_s=getattr(analysis, "end_time_s", None),
@@ -197,7 +215,8 @@ def load_probe_variable(
     if selected.size == 0 or np.any(selected < 0) or np.any(selected >= inventory.probe_count):
         raise ValueError("probe_indices contain no valid probes")
     factor, unit = _si_conversion(
-        variable, inventory.field_units.get(storage_field),
+        variable,
+        inventory.field_units.get(storage_field),
         context.project.case_file.case.solver_units.value,
     )
     scratch = context.project.machine_file.compute.scratch_directory
@@ -224,8 +243,12 @@ def load_probe_variable(
                 patterns.append(str(configured))
         source_spec = tuple(patterns)
     workspace = open_probe_signal_workspace(
-        source_spec, storage_field, selected, si_factor=factor,
-        memory_limit_gb=memory_limit, scratch_directory=scratch,
+        source_spec,
+        storage_field,
+        selected,
+        si_factor=factor,
+        memory_limit_gb=memory_limit,
+        scratch_directory=scratch,
     )
     context.add_cleanup(workspace.close)
     time = workspace.time_s
@@ -249,7 +272,11 @@ def load_probe_variable(
         "read_block_rows": workspace.read_block_rows,
     }
     return (
-        variable, unit, time, workspace.x_m, values,
+        variable,
+        unit,
+        time,
+        workspace.x_m,
+        values,
         workspace.selected_probe_indices,
     )
 
@@ -272,9 +299,7 @@ def _prepare_fft_grid(
     if not np.all(np.isfinite(differences)) or np.any(differences <= 0.0):
         raise ValueError("probe time must be finite and strictly increasing")
     dt = float(np.median(differences))
-    uniform = np.allclose(
-        differences, dt, rtol=1.0e-9, atol=max(abs(dt) * 1.0e-9, 1.0e-15)
-    )
+    uniform = np.allclose(differences, dt, rtol=1.0e-9, atol=max(abs(dt) * 1.0e-9, 1.0e-15))
     if uniform:
         return time, values, dt, False, None
     if time_grid_policy == "require_uniform":
@@ -289,9 +314,7 @@ def _prepare_fft_grid(
     cleanup: Callable[[], None] | None = None
     try:
         if scratch_directory is None:
-            uniform_values = np.empty(
-                (sample_count, values.shape[1]), dtype=np.float64
-            )
+            uniform_values = np.empty((sample_count, values.shape[1]), dtype=np.float64)
         else:
             scratch = Path(scratch_directory)
             scratch.mkdir(parents=True, exist_ok=True)
@@ -301,7 +324,9 @@ def _prepare_fft_grid(
             os.close(descriptor)
             spill_path = Path(temporary_name)
             uniform_values = np.memmap(
-                spill_path, mode="w+", dtype=np.float64,
+                spill_path,
+                mode="w+",
+                dtype=np.float64,
                 shape=(sample_count, values.shape[1]),
             )
 
@@ -346,7 +371,9 @@ def _prepare_fft_grid(
 
 
 def prepare_probe_time_grid(
-    context: WorkflowContext, time: np.ndarray, values: np.ndarray,
+    context: WorkflowContext,
+    time: np.ndarray,
+    values: np.ndarray,
     policy: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray, float, bool, Callable[[], None] | None]:
     """Apply the analysis-wide time-grid policy to a loaded probe signal."""
@@ -354,7 +381,8 @@ def prepare_probe_time_grid(
     if scratch is not None and not scratch.is_absolute():
         scratch = (context.project.root / scratch).resolve()
     return _prepare_fft_grid(
-        time, values,
+        time,
+        values,
         policy or getattr(context.analysis, "time_grid_policy", "resample_uniform"),
         scratch,
     )
@@ -441,8 +469,14 @@ def spectrum_from_signal(
         window_name = "boxcar" if window == "rectangular" else window
         scipy_detrend = {"mean": "constant", "linear": "linear", "none": False}[detrend]
         frequency, psd = welch(
-            fft_values, fs=1.0 / dt, window=window_name, nperseg=segment,
-            noverlap=overlap, detrend=scipy_detrend, axis=0, scaling="density",
+            fft_values,
+            fs=1.0 / dt,
+            window=window_name,
+            nperseg=segment,
+            noverlap=overlap,
+            detrend=scipy_detrend,
+            axis=0,
+            scaling="density",
             return_onesided=True,
         )
         if frequency_max_hz is not None:
@@ -488,6 +522,7 @@ def _plot_probe_time_fft(
     unit: str,
     detrend: str,
     window: str,
+    dpi: int = 180,
 ) -> tuple[Path, ...]:
     """Write one row of raw history, processed history, and FFT per probe."""
     paths: list[Path] = []
@@ -496,49 +531,59 @@ def _plot_probe_time_fft(
         stop = min(start + MAX_PROBES_PER_FIGURE, len(selected))
         rows = stop - start
         page_path = (
-            path if page_count == 1
-            else path.with_name(f"{path.stem}_{page:03d}{path.suffix}")
+            path if page_count == 1 else path.with_name(f"{path.stem}_{page:03d}{path.suffix}")
         )
         fig, axes = plt.subplots(
-            rows, 3, figsize=(15.0, max(3.2, 3.0 * rows)), squeeze=False
+            rows,
+            3,
+            figsize=(15.0, max(3.5, 2.5 * rows)),
+            squeeze=False,
+            constrained_layout=True,
         )
-        for row, (probe_index, coordinate) in enumerate(
-            zip(selected[start:stop], x_m[start:stop])
-        ):
+        fig.suptitle(f"Probe histories and FFT · {detrend} detrend · {window} window")
+        for row, (probe_index, coordinate) in enumerate(zip(selected[start:stop], x_m[start:stop])):
             raw_axis, processed_axis, fft_axis = axes[row]
             column = start + row
-            label = f"Probe {probe_index} - x={coordinate * 100.0:.3f} cm"
-            raw_axis.plot(raw_time, raw_values[:, column], color="tab:blue", linewidth=1.0)
-            raw_axis.set_title(f"{label} - Raw")
-            raw_axis.set_xlabel("Time [s]")
+            label = f"Probe {probe_index} · x={coordinate * 100.0:.3f} cm"
+            raw_axis.plot(raw_time * 1e6, raw_values[:, column], color="tab:blue", linewidth=1.2)
+            raw_axis.set_title(label, fontsize=10)
+            if row == rows - 1:
+                raw_axis.set_xlabel("Time [µs]")
             raw_axis.set_ylabel(f"Signal [{unit}]")
             raw_axis.grid(False)
 
             processed_axis.plot(
-                time, processed_values[:, column], color="tab:orange", linewidth=1.0
+                time * 1e6, processed_values[:, column], color="tab:orange", linewidth=1.2
             )
-            processed_axis.set_title(f"{label} - Processed ({detrend}, {window})")
-            processed_axis.set_xlabel("Time [s]")
-            processed_axis.set_ylabel(f"Signal [{unit}]")
+            processed_axis.set_title("Processed", fontsize=10)
+            if row == rows - 1:
+                processed_axis.set_xlabel("Time [µs]")
+            processed_axis.set_ylabel(f"Disturbance [{unit}]")
             processed_axis.grid(False)
 
             keep = (frequency > 0.0) & (amplitude[:, column] > 0.0)
             if np.any(keep):
                 fft_axis.loglog(
-                    frequency[keep], amplitude[keep, column],
-                    color="tab:green", linewidth=1.0,
+                    frequency[keep],
+                    amplitude[keep, column],
+                    color="tab:green",
+                    linewidth=1.0,
                 )
             else:
                 fft_axis.text(
-                    0.5, 0.5, "No positive spectral amplitude",
-                    transform=fft_axis.transAxes, ha="center", va="center",
+                    0.5,
+                    0.5,
+                    "No positive spectral amplitude",
+                    transform=fft_axis.transAxes,
+                    ha="center",
+                    va="center",
                 )
-            fft_axis.set_title(f"{label} - FFT")
-            fft_axis.set_xlabel("Frequency [Hz]")
-            fft_axis.set_ylabel(f"|Amplitude| [{unit}]")
+            fft_axis.set_title("FFT amplitude", fontsize=10)
+            if row == rows - 1:
+                fft_axis.set_xlabel("Frequency [Hz]")
+            fft_axis.set_ylabel(f"Amplitude [{unit}]")
             fft_axis.grid(False)
-        fig.tight_layout()
-        fig.savefig(page_path, dpi=180)
+        fig.savefig(page_path, dpi=dpi, bbox_inches="tight")
         plt.close(fig)
         paths.append(page_path)
     return tuple(paths)
@@ -552,9 +597,11 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
     if scratch is not None and not scratch.is_absolute():
         scratch = (context.project.root / scratch).resolve()
     products = spectrum_from_signal(
-        time, values,
+        time,
+        values,
         end_time_s=analysis.end_time_s,
-        window=analysis.window, detrend=analysis.detrend,
+        window=analysis.window,
+        detrend=analysis.detrend,
         welch_segment_samples=analysis.welch_segment_samples,
         overlap_fraction=analysis.overlap_fraction,
         time_grid_policy=analysis.time_grid_policy,
@@ -578,9 +625,15 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
     overlap = products["overlap"]
     _ = processed_preview
     register_probe_trace_figures(
-        context, raw_time=time, raw_values=values, prepared_time=fft_time,
-        prepared_values=processed_preview, x_m=x_m, selected=selected,
-        variable=variable, units=unit,
+        context,
+        raw_time=time,
+        raw_values=values,
+        prepared_time=fft_time,
+        prepared_values=processed_preview,
+        x_m=x_m,
+        selected=selected,
+        variable=variable,
+        units=unit,
         preprocessing={
             "time_grid_policy": analysis.time_grid_policy,
             "window": analysis.window,
@@ -603,7 +656,10 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
         resampled=np.array(resampled),
     )
     context.register(
-        artifact_id="spectral.psd", path=data_path, kind="array", variable=variable,
+        artifact_id="spectral.psd",
+        path=data_path,
+        kind="array",
+        variable=variable,
         units=f"({unit})^2/Hz",
         coordinate_metadata={"frequency": "Hz", "probe_x": "m"},
         interpretation="One-sided Welch power spectral density; peaks are descriptive stationary content.",
@@ -613,7 +669,8 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
                 "fallback) to public SI"
             ),
             "window": analysis.window,
-            "detrend": analysis.detrend, "segment_samples": segment,
+            "detrend": analysis.detrend,
+            "segment_samples": segment,
             "overlap_samples": overlap,
             "time_grid_policy": analysis.time_grid_policy,
             "resampled": resampled,
@@ -633,12 +690,17 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
     confidence_path = context.data_dir / "spectral_confidence.json"
     confidence_path.write_text(json.dumps(confidence, indent=2) + "\n", encoding="utf-8")
     context.register(
-        artifact_id="spectral.confidence", path=confidence_path, kind="json",
-        variable=variable, units=None,
+        artifact_id="spectral.confidence",
+        path=confidence_path,
+        kind="json",
+        variable=variable,
+        units=None,
         interpretation="Degrees of freedom are approximate because overlapped windowed segments are correlated.",
     )
     order = np.argsort(x_m)
-    pair_columns = np.column_stack((order[:-1], order[1:])) if len(order) > 1 else np.empty((0, 2), dtype=int)
+    pair_columns = (
+        np.column_stack((order[:-1], order[1:])) if len(order) > 1 else np.empty((0, 2), dtype=int)
+    )
     window_name = "boxcar" if analysis.window == "rectangular" else analysis.window
     scipy_detrend = {"mean": "constant", "linear": "linear", "none": False}[analysis.detrend]
     coherence_frequency = np.fft.rfftfreq(segment, dt)
@@ -647,18 +709,35 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
         phase_values = []
         for first, second in pair_columns:
             pair_frequency, pair_coherence = coherence(
-                products["fft_values"][:, first], products["fft_values"][:, second], fs=1.0 / dt, window=window_name,
-                nperseg=segment, noverlap=overlap, detrend=scipy_detrend,
+                products["fft_values"][:, first],
+                products["fft_values"][:, second],
+                fs=1.0 / dt,
+                window=window_name,
+                nperseg=segment,
+                noverlap=overlap,
+                detrend=scipy_detrend,
             )
             _, pair_cross = csd(
-                products["fft_values"][:, first], products["fft_values"][:, second], fs=1.0 / dt, window=window_name,
-                nperseg=segment, noverlap=overlap, detrend=scipy_detrend, scaling="density",
+                products["fft_values"][:, first],
+                products["fft_values"][:, second],
+                fs=1.0 / dt,
+                window=window_name,
+                nperseg=segment,
+                noverlap=overlap,
+                detrend=scipy_detrend,
+                scaling="density",
             )
             coherence_frequency = pair_frequency
             coherence_values.append(pair_coherence)
             phase_values.append(np.angle(pair_cross))
-        coherence_matrix = np.asarray(coherence_values).T if coherence_values else np.empty((len(coherence_frequency), 0))
-        phase_matrix = np.asarray(phase_values).T if phase_values else np.empty((len(coherence_frequency), 0))
+        coherence_matrix = (
+            np.asarray(coherence_values).T
+            if coherence_values
+            else np.empty((len(coherence_frequency), 0))
+        )
+        phase_matrix = (
+            np.asarray(phase_values).T if phase_values else np.empty((len(coherence_frequency), 0))
+        )
     else:
         scratch_dir = context.project.machine_file.compute.scratch_directory
         if scratch_dir is None:
@@ -666,7 +745,9 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
         elif not scratch_dir.is_absolute():
             scratch_dir = (context.project.root / scratch_dir).resolve()
         matrix_spec, matrix_cleanup = stage_readonly_array(
-            products["fft_values"], scratch_dir, prefix="coherence-fft-values-",
+            products["fft_values"],
+            scratch_dir,
+            prefix="coherence-fft-values-",
         )
         context.add_cleanup(matrix_cleanup)
         pair_count = len(pair_columns)
@@ -678,26 +759,44 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
             if not len(batch):
                 continue
             payload_pairs = [
-                (int(pair_index), int(pair_columns[pair_index, 0]), int(pair_columns[pair_index, 1]))
+                (
+                    int(pair_index),
+                    int(pair_columns[pair_index, 0]),
+                    int(pair_columns[pair_index, 1]),
+                )
                 for pair_index in batch
             ]
-            tasks.append(ParallelTask(
-                index, f"coherence-batch-{index:03d}", {
-                    "fft_values_path": matrix_spec.path,
-                    "pairs": payload_pairs, "fs": 1.0 / dt,
-                    "window": window_name, "detrend": scipy_detrend,
-                    "segment": segment, "overlap": overlap,
-                }, {"pair_indices": [int(item) for item in batch]},
-            ))
+            tasks.append(
+                ParallelTask(
+                    index,
+                    f"coherence-batch-{index:03d}",
+                    {
+                        "fft_values_path": matrix_spec.path,
+                        "pairs": payload_pairs,
+                        "fs": 1.0 / dt,
+                        "window": window_name,
+                        "detrend": scipy_detrend,
+                        "segment": segment,
+                        "overlap": overlap,
+                    },
+                    {"pair_indices": [int(item) for item in batch]},
+                )
+            )
         parent_gb = float((context.resource_metadata or {}).get("parent_resident_gb", 0.25))
         per_worker_gb = max(0.05, 0.15 + products["fft_values"].nbytes / 1024**3)
         stage_plan = plan_parallel_stage(
-            "probe-coherence-batches", requested_workers=worker_count,
-            task_count=len(tasks), memory_limit_gb=float(context.project.machine_file.compute.memory_limit_gb),
-            parent_resident_gb=parent_gb, per_worker_peak_gb=per_worker_gb,
+            "probe-coherence-batches",
+            requested_workers=worker_count,
+            task_count=len(tasks),
+            memory_limit_gb=float(context.project.machine_file.compute.memory_limit_gb),
+            parent_resident_gb=parent_gb,
+            per_worker_peak_gb=per_worker_gb,
         )
         batch_results = context.run_parallel_stage(
-            "probe-coherence-batches", tasks, _coherence_batch_worker, stage_plan,
+            "probe-coherence-batches",
+            tasks,
+            _coherence_batch_worker,
+            stage_plan,
         )
         coherence_values_by_pair: dict[int, np.ndarray] = {}
         phase_values_by_pair: dict[int, np.ndarray] = {}
@@ -707,12 +806,16 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
                 coherence_frequency = payload["frequency"]
             coherence_values_by_pair.update(payload["coherence"])
             phase_values_by_pair.update(payload["phase"])
-        coherence_matrix = np.column_stack([
-            coherence_values_by_pair[index] for index in range(pair_count)
-        ]) if pair_count else np.empty((len(coherence_frequency), 0))
-        phase_matrix = np.column_stack([
-            phase_values_by_pair[index] for index in range(pair_count)
-        ]) if pair_count else np.empty((len(coherence_frequency), 0))
+        coherence_matrix = (
+            np.column_stack([coherence_values_by_pair[index] for index in range(pair_count)])
+            if pair_count
+            else np.empty((len(coherence_frequency), 0))
+        )
+        phase_matrix = (
+            np.column_stack([phase_values_by_pair[index] for index in range(pair_count)])
+            if pair_count
+            else np.empty((len(coherence_frequency), 0))
+        )
     coherence_keep = np.ones(len(coherence_frequency), dtype=bool)
     if analysis.frequency_max_hz is not None:
         coherence_keep &= coherence_frequency <= analysis.frequency_max_hz
@@ -722,23 +825,34 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
         frequency_hz=coherence_frequency[coherence_keep],
         coherence_squared=coherence_matrix[coherence_keep],
         cross_phase_rad=phase_matrix[coherence_keep],
-        upstream_probe_indices=selected[pair_columns[:, 0]] if len(pair_columns) else np.array([], dtype=int),
-        downstream_probe_indices=selected[pair_columns[:, 1]] if len(pair_columns) else np.array([], dtype=int),
+        upstream_probe_indices=selected[pair_columns[:, 0]]
+        if len(pair_columns)
+        else np.array([], dtype=int),
+        downstream_probe_indices=selected[pair_columns[:, 1]]
+        if len(pair_columns)
+        else np.array([], dtype=int),
         upstream_x_m=x_m[pair_columns[:, 0]] if len(pair_columns) else np.array([]),
         downstream_x_m=x_m[pair_columns[:, 1]] if len(pair_columns) else np.array([]),
         convention=np.array("conj(upstream) * downstream"),
     )
     context.register(
-        artifact_id="spectral.coherence", path=coherence_path, kind="array",
-        variable=variable, units="dimensionless", coordinate_metadata={"frequency": "Hz", "probe_x": "m"},
+        artifact_id="spectral.coherence",
+        path=coherence_path,
+        kind="array",
+        variable=variable,
+        units="dimensionless",
+        coordinate_metadata={"frequency": "Hz", "probe_x": "m"},
         interpretation=(
             "Magnitude-squared coherence and downstream-minus-upstream cross phase for "
             "adjacent probes ordered by physical x coordinate."
         ),
-        provenance={"segment_samples": segment, "overlap_samples": overlap,
-                    "pair_count": len(pair_columns),
-                    "time_grid_policy": analysis.time_grid_policy,
-                    "resampled": resampled},
+        provenance={
+            "segment_samples": segment,
+            "overlap_samples": overlap,
+            "pair_count": len(pair_columns),
+            "time_grid_policy": analysis.time_grid_policy,
+            "resampled": resampled,
+        },
     )
     processed_values = products["processed_values"]
     fft_frequency = products["fft_frequency"]
@@ -760,44 +874,82 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
         convention=np.array("single-sided coherent-gain-corrected FFT amplitude"),
     )
     context.register(
-        artifact_id="spectral.probe_signals", path=signal_path, kind="array",
-        variable=variable, units=unit,
+        artifact_id="spectral.probe_signals",
+        path=signal_path,
+        kind="array",
+        variable=variable,
+        units=unit,
         coordinate_metadata={"time": "s", "frequency": "Hz", "probe_x": "m"},
         interpretation=(
             "Selected probe histories and configured-detrend/window single-sided FFT amplitudes."
         ),
-        provenance={"time_grid_policy": analysis.time_grid_policy, "resampled": resampled,
-                    "window": analysis.window, "detrend": analysis.detrend},
+        provenance={
+            "time_grid_policy": analysis.time_grid_policy,
+            "resampled": resampled,
+            "window": analysis.window,
+            "detrend": analysis.detrend,
+        },
     )
     positive_fft = fft_frequency > 0.0
     register_probe_line_overlay(
-        context, artifact_id="spectral.fft_overlay.figure",
-        filename="fft_overlay", x=fft_frequency[positive_fft],
-        values=fft_amplitude[positive_fft], x_label="Frequency [Hz]",
-        y_label=f"Amplitude [{unit}]", variable=variable, units=unit,
-        selected=selected, x_m=x_m,
+        context,
+        artifact_id="spectral.fft_overlay.figure",
+        filename="fft_overlay",
+        x=fft_frequency[positive_fft],
+        values=fft_amplitude[positive_fft],
+        x_label="Frequency [Hz]",
+        y_label=f"Amplitude [{unit}]",
+        variable=variable,
+        units=unit,
+        selected=selected,
+        x_m=x_m,
         interpretation="Single-sided FFT amplitude overlaid for every selected probe.",
-        provenance={"time_grid_policy": analysis.time_grid_policy,
-                    "window": analysis.window, "detrend": analysis.detrend},
-        log_x=True, log_y=True,
+        provenance={
+            "time_grid_policy": analysis.time_grid_policy,
+            "window": analysis.window,
+            "detrend": analysis.detrend,
+        },
+        log_x=True,
+        log_y=True,
     )
     positive_psd = frequency > 0.0
     register_probe_line_overlay(
-        context, artifact_id="spectral.psd_overlay.figure",
-        filename="psd_overlay", x=frequency[positive_psd], values=psd[positive_psd],
-        x_label="Frequency [Hz]", y_label=f"PSD [({unit})²/Hz]",
-        variable=variable, units=f"({unit})^2/Hz", selected=selected, x_m=x_m,
+        context,
+        artifact_id="spectral.psd_overlay.figure",
+        filename="psd_overlay",
+        x=frequency[positive_psd],
+        values=psd[positive_psd],
+        x_label="Frequency [Hz]",
+        y_label=f"PSD [({unit})²/Hz]",
+        variable=variable,
+        units=f"({unit})^2/Hz",
+        selected=selected,
+        x_m=x_m,
         interpretation="One-sided Welch PSD overlaid for every selected probe.",
-        provenance={"time_grid_policy": analysis.time_grid_policy,
-                    "window": analysis.window, "detrend": analysis.detrend},
-        log_x=True, log_y=True,
+        provenance={
+            "time_grid_policy": analysis.time_grid_policy,
+            "window": analysis.window,
+            "detrend": analysis.detrend,
+        },
+        log_x=True,
+        log_y=True,
     )
     probe_figure_path = context.figure_dir / "probe_time_fft.png"
     if analysis.probe_plotting.mode in {"panels", "both"}:
         probe_figure_paths = _plot_probe_time_fft(
-            probe_figure_path, time, values, fft_time, processed_values,
-            fft_frequency, fft_amplitude, x_m, selected, unit,
-            analysis.detrend, analysis.window,
+            probe_figure_path,
+            time,
+            values,
+            fft_time,
+            processed_values,
+            fft_frequency,
+            fft_amplitude,
+            x_m,
+            selected,
+            unit,
+            analysis.detrend,
+            analysis.window,
+            dpi=int(context.project.analyses_file.presentation.figure.dpi),
         )
         for page, path in enumerate(probe_figure_paths, start=1):
             context.register(
@@ -806,14 +958,22 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
                     if len(probe_figure_paths) == 1
                     else f"spectral.probe_figure.{page:03d}"
                 ),
-                path=path, kind="figure", variable=variable, units=unit,
+                path=path,
+                kind="figure",
+                variable=variable,
+                units=unit,
                 coordinate_metadata={"time": "s", "frequency": "Hz", "probe_x": "m"},
                 interpretation=(
                     "Per-probe raw history, processed history, and single-sided FFT amplitude."
                 ),
-                provenance={"time_grid_policy": analysis.time_grid_policy, "resampled": resampled,
-                            "window": analysis.window, "detrend": analysis.detrend,
-                            "page": page, "page_count": len(probe_figure_paths)},
+                provenance={
+                    "time_grid_policy": analysis.time_grid_policy,
+                    "resampled": resampled,
+                    "window": analysis.window,
+                    "detrend": analysis.detrend,
+                    "page": page,
+                    "page_count": len(probe_figure_paths),
+                },
             )
     figure_path = context.figure_dir / "stationary_spectrum.png"
     fig, axis = plt.subplots(figsize=(9, 5))
@@ -825,7 +985,9 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
     else:
         axis.plot(frequency[positive], median[positive], label="probe median")
         axis.text(0.5, 0.5, "No positive spectral power", transform=axis.transAxes, ha="center")
-    axis.fill_between(frequency[positive], lower[positive], upper[positive], alpha=0.25, label="10–90%")
+    axis.fill_between(
+        frequency[positive], lower[positive], upper[positive], alpha=0.25, label="10–90%"
+    )
     axis.set_xlabel("Frequency [Hz]")
     axis.set_ylabel(f"PSD [({unit})²/Hz]")
     axis.grid(False)
@@ -834,8 +996,12 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
     fig.savefig(figure_path, dpi=180)
     plt.close(fig)
     context.register(
-        artifact_id="spectral.figure", path=figure_path, kind="figure", variable=variable,
-        units=f"({unit})^2/Hz", coordinate_metadata={"frequency": "Hz"},
+        artifact_id="spectral.figure",
+        path=figure_path,
+        kind="figure",
+        variable=variable,
+        units=f"({unit})^2/Hz",
+        coordinate_metadata={"frequency": "Hz"},
         interpretation="Median stationary spectrum with the 10th–90th percentile probe envelope.",
     )
 
@@ -858,9 +1024,15 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
     response = baseline["disturbance"]
     response -= np.mean(response, axis=0, keepdims=True)
     register_probe_trace_figures(
-        context, raw_time=raw_time, raw_values=raw_values,
-        prepared_time=time, prepared_values=response, x_m=x_m, selected=selected,
-        variable=variable, units=unit,
+        context,
+        raw_time=raw_time,
+        raw_values=raw_values,
+        prepared_time=time,
+        prepared_values=response,
+        x_m=x_m,
+        selected=selected,
+        variable=variable,
+        units=unit,
         preprocessing={
             "time_grid_policy": analysis.time_grid_policy,
             "baseline_end_time_s": baseline_end,
@@ -882,15 +1054,19 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
     source_basis = "modeled"
     source = modeled_source
     source_audit: dict[str, Any] = {
-        "schema": "pelecpost.pulse-source-audit", "schema_version": 1,
-        "status": "modeled_only", "source_basis": "modeled", "complete": False,
+        "schema": "pelecpost.pulse-source-audit",
+        "schema_version": 1,
+        "status": "modeled_only",
+        "source_basis": "modeled",
+        "complete": False,
         "configured_requested_energy_j_m": analysis.energy_per_pulse_j_m,
-        "analytic_retained_energy_j_m": analysis.energy_per_pulse_j_m * float(
-            math.erf(analysis.cutoff_sigma / np.sqrt(2.0))
-        ),
+        "analytic_retained_energy_j_m": analysis.energy_per_pulse_j_m
+        * float(math.erf(analysis.cutoff_sigma / np.sqrt(2.0))),
         "measured_deposited_energy_j_m": None,
-        "signed_relative_energy_error": None, "absolute_relative_energy_error": None,
-        "capture_ratio": None, "one_percent_gate": False,
+        "signed_relative_energy_error": None,
+        "absolute_relative_energy_error": None,
+        "capture_ratio": None,
+        "one_percent_gate": False,
         "configured_maximum_relative_error": analysis.maximum_source_energy_relative_error,
         "resolved_thresholds": {
             "maximum_source_energy_relative_error": analysis.maximum_source_energy_relative_error,
@@ -925,7 +1101,8 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
             )
         rebinned = rebin_history(history, time)
         source_audit = build_source_audit(
-            history, rebinned,
+            history,
+            rebinned,
             requested_energy_j_m=analysis.energy_per_pulse_j_m,
             pulse_fwhm_s=analysis.pulse_fwhm_s,
             cutoff_sigma=analysis.cutoff_sigma,
@@ -937,7 +1114,8 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
         source = measured_source_spectrum(rebinned, modeled=modeled_source)
     source_path = context.data_dir / "single_pulse_source_spectrum.npz"
     transfer = reviewed_spectral.compute_single_pulse_transfer_function(
-        source["processed_complex"], response_complex,
+        source["processed_complex"],
+        response_complex,
         minimum_relative_source_amplitude=analysis.minimum_relative_source_amplitude,
     )
     frequency = source["frequency_hz"]
@@ -945,57 +1123,86 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
     if analysis.frequency_max_hz is not None:
         keep &= frequency <= analysis.frequency_max_hz
     np.savez_compressed(
-        source_path, time_s=source["time_s"], source_power_w_m=source["power"],
+        source_path,
+        time_s=source["time_s"],
+        source_power_w_m=source["power"],
         modeled_source_power_w_m=modeled_source["power"],
-        frequency_hz=frequency[keep], physical_complex_j_m=source["physical_complex"][keep],
+        frequency_hz=frequency[keep],
+        physical_complex_j_m=source["physical_complex"][keep],
         physical_spectrum_j_m=source["physical_spectrum"][keep],
         ideal_spectrum_j_m=source["ideal_spectrum"][keep],
         processed_complex_w_m=source["processed_complex"][keep],
-        sigma_s=np.array(source["sigma_s"]), center_s=np.array(source["center_s"]),
+        sigma_s=np.array(source["sigma_s"]),
+        center_s=np.array(source["center_s"]),
         source_basis=np.array(source_basis),
     )
     context.register(
-        artifact_id="pulse.source_spectrum", path=source_path, kind="array",
-        variable="source_power", units="J/m", coordinate_metadata={"time": "s", "frequency": "Hz"},
+        artifact_id="pulse.source_spectrum",
+        path=source_path,
+        kind="array",
+        variable="source_power",
+        units="J/m",
+        coordinate_metadata={"time": "s", "frequency": "Hz"},
         interpretation=(
             "Code-matched finite Gaussian pulse history, physical continuous-time spectrum, "
             "and processed spectrum used for deconvolution."
         ),
-        provenance={"energy_per_pulse_j_m": analysis.energy_per_pulse_j_m,
-                    "pulse_fwhm_s": analysis.pulse_fwhm_s,
-                    "pulse_period_s": analysis.pulse_period_s,
-                    "source_basis": source_basis,
-                    "source_history_id": history_id},
+        provenance={
+            "energy_per_pulse_j_m": analysis.energy_per_pulse_j_m,
+            "pulse_fwhm_s": analysis.pulse_fwhm_s,
+            "pulse_period_s": analysis.pulse_period_s,
+            "source_basis": source_basis,
+            "source_history_id": history_id,
+        },
     )
     path = context.data_dir / "single_pulse_response.npz"
     np.savez_compressed(
-        path, frequency_hz=frequency[keep],
+        path,
+        frequency_hz=frequency[keep],
         source_power_spectrum_w_m=np.abs(source["processed_complex"][keep]),
-        transfer=transfer["transfer"][keep], transfer_magnitude=transfer["magnitude"][keep],
-        transfer_phase_rad=transfer["phase_rad"][keep], valid_frequency=transfer["valid_frequency"][keep],
-        baseline=baseline["baseline"], baseline_sample_count=np.array(baseline["baseline_sample_count"]),
-        probe_x_m=x_m, response_unit=np.array(unit),
+        transfer=transfer["transfer"][keep],
+        transfer_magnitude=transfer["magnitude"][keep],
+        transfer_phase_rad=transfer["phase_rad"][keep],
+        valid_frequency=transfer["valid_frequency"][keep],
+        baseline=baseline["baseline"],
+        baseline_sample_count=np.array(baseline["baseline_sample_count"]),
+        probe_x_m=x_m,
+        response_unit=np.array(unit),
     )
     context.register(
-        artifact_id="pulse.transfer", path=path, kind="array", variable=variable,
-        units=f"{unit}/(W/m)", coordinate_metadata={"frequency": "Hz", "probe_x": "m"},
+        artifact_id="pulse.transfer",
+        path=path,
+        kind="array",
+        variable=variable,
+        units=f"{unit}/(W/m)",
+        coordinate_metadata={"frequency": "Hz", "probe_x": "m"},
         interpretation=(
             "Finite-record single-pulse response/source-power ratio; invalid low-source "
             "bins are masked. The separately registered physical source transform retains J/m units."
         ),
-        provenance={"estimator": "finite_record_single_pulse", "baseline_end_time_s": baseline_end,
-                    "time_grid_policy": analysis.time_grid_policy, "resampled": resampled,
-                    "source_basis": source_basis, "source_history_id": history_id},
+        provenance={
+            "estimator": "finite_record_single_pulse",
+            "baseline_end_time_s": baseline_end,
+            "time_grid_policy": analysis.time_grid_policy,
+            "resampled": resampled,
+            "source_basis": source_basis,
+            "source_history_id": history_id,
+        },
     )
     audit_path = context.data_dir / "pulse_source_audit.json"
     audit_path.write_text(json.dumps(source_audit, indent=2, default=str) + "\n", encoding="utf-8")
     context.register(
-        artifact_id="pulse.source_audit", path=audit_path, kind="json", variable="source_power",
-        units="J/m", coordinate_metadata={"time": "s", "space": "m"},
+        artifact_id="pulse.source_audit",
+        path=audit_path,
+        kind="json",
+        variable="source_power",
+        units="J/m",
+        coordinate_metadata={"time": "s", "space": "m"},
         interpretation=(
             "Measured discrete thermal-source deposition compared with the configured analytical target; "
             "modeled-only records are explicitly downgraded."
-        ), provenance={"source_basis": source_basis, "source_history_id": history_id},
+        ),
+        provenance={"source_basis": source_basis, "source_history_id": history_id},
     )
     audit_figure_path = context.figure_dir / "source_audit.png"
     fig, axes = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
@@ -1020,28 +1227,44 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
     fig.savefig(audit_figure_path, dpi=180)
     plt.close(fig)
     context.register(
-        artifact_id="pulse.source_audit.figure", path=audit_figure_path, kind="figure",
-        variable="source_power", units="W/m", coordinate_metadata={"time": "s"},
+        artifact_id="pulse.source_audit.figure",
+        path=audit_figure_path,
+        kind="figure",
+        variable="source_power",
+        units="W/m",
+        coordinate_metadata={"time": "s"},
         interpretation="Measured and modeled thermal-source histories and cumulative energy.",
         provenance={"source_basis": source_basis, "source_history_id": history_id},
     )
     register_probe_line_overlay(
-        context, artifact_id="pulse.transfer_magnitude.figure",
-        filename="transfer_magnitude_overlay", x=frequency[keep],
-        values=np.abs(transfer["magnitude"][keep]), x_label="Frequency [Hz]",
-        y_label=f"Transfer magnitude [{unit}/(W/m)]", variable=variable,
+        context,
+        artifact_id="pulse.transfer_magnitude.figure",
+        filename="transfer_magnitude_overlay",
+        x=frequency[keep],
+        values=np.abs(transfer["magnitude"][keep]),
+        x_label="Frequency [Hz]",
+        y_label=f"Transfer magnitude [{unit}/(W/m)]",
+        variable=variable,
         units=f"{unit}/(W/m)",
-        selected=selected, x_m=x_m,
+        selected=selected,
+        x_m=x_m,
         interpretation="Finite-record transfer magnitude overlaid for every selected probe.",
         provenance={"valid_frequency_mask": "invalid source bins omitted"},
-        log_x=True, log_y=True,
+        log_x=True,
+        log_y=True,
     )
     register_probe_line_overlay(
-        context, artifact_id="pulse.transfer_phase.figure",
-        filename="transfer_phase_overlay", x=frequency[keep],
-        values=transfer["phase_rad"][keep], x_label="Frequency [Hz]",
-        y_label="Transfer phase [rad]", variable=variable, units="rad",
-        selected=selected, x_m=x_m,
+        context,
+        artifact_id="pulse.transfer_phase.figure",
+        filename="transfer_phase_overlay",
+        x=frequency[keep],
+        values=transfer["phase_rad"][keep],
+        x_label="Frequency [Hz]",
+        y_label="Transfer phase [rad]",
+        variable=variable,
+        units="rad",
+        selected=selected,
+        x_m=x_m,
         interpretation="Finite-record transfer phase overlaid for every selected probe.",
         provenance={"valid_frequency_mask": "invalid source bins omitted"},
         log_x=True,
@@ -1054,12 +1277,18 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
     quality_path = context.data_dir / "pulse_validity.json"
     quality_path.write_text(json.dumps(quality, indent=2) + "\n", encoding="utf-8")
     context.register(
-        artifact_id="pulse.validity", path=quality_path, kind="json", variable=variable,
-        units=None, interpretation="Baseline and source-amplitude quality gates for pulse deconvolution.",
+        artifact_id="pulse.validity",
+        path=quality_path,
+        kind="json",
+        variable=variable,
+        units=None,
+        interpretation="Baseline and source-amplitude quality gates for pulse deconvolution.",
     )
 
 
-def _komega_ridge(spectrum: dict, minimum_hz: float, maximum_hz: float) -> tuple[np.ndarray, np.ndarray]:
+def _komega_ridge(
+    spectrum: dict, minimum_hz: float, maximum_hz: float
+) -> tuple[np.ndarray, np.ndarray]:
     frequency = np.asarray(spectrum["frequency_hz"], dtype=float)
     wavenumber = np.asarray(spectrum["wavenumber_rad_per_m"], dtype=float)
     power = np.asarray(spectrum["power"], dtype=float)
@@ -1071,13 +1300,12 @@ def _komega_ridge(spectrum: dict, minimum_hz: float, maximum_hz: float) -> tuple
     return frequency[selected], ridge
 
 
-def _ridge_difference(reference: tuple[np.ndarray, np.ndarray], candidate: tuple[np.ndarray, np.ndarray]) -> dict:
+def _ridge_difference(
+    reference: tuple[np.ndarray, np.ndarray], candidate: tuple[np.ndarray, np.ndarray]
+) -> dict:
     frequency, ridge = reference
     candidate_frequency, candidate_ridge = candidate
-    common = (
-        (frequency >= candidate_frequency[0])
-        & (frequency <= candidate_frequency[-1])
-    )
+    common = (frequency >= candidate_frequency[0]) & (frequency <= candidate_frequency[-1])
     if not np.any(common):
         raise ValueError("k-omega sensitivity spectra have no common frequency bins")
     interpolated = np.interp(frequency[common], candidate_frequency, candidate_ridge)
@@ -1100,19 +1328,31 @@ def _komega_sensitivity(
     reference = _komega_ridge(full, analysis.frequency_min_hz, analysis.frequency_max_hz)
     alternate_window = "hann" if analysis.temporal_window == "rectangular" else "rectangular"
     alternate = reviewed_spectral.compute_wavenumber_frequency_spectrum(
-        values, time, x_m, temporal_window=alternate_window,
-        spatial_window=analysis.spatial_window, temporal_mean_subtraction="mean",
+        values,
+        time,
+        x_m,
+        temporal_window=alternate_window,
+        spatial_window=analysis.spatial_window,
+        temporal_mean_subtraction="mean",
     )
     half = len(time) // 2
     if half < 8:
         raise ValueError("k-omega block sensitivity requires at least 16 temporal samples")
     first = reviewed_spectral.compute_wavenumber_frequency_spectrum(
-        values[:half], time[:half], x_m, temporal_window=analysis.temporal_window,
-        spatial_window=analysis.spatial_window, temporal_mean_subtraction="mean",
+        values[:half],
+        time[:half],
+        x_m,
+        temporal_window=analysis.temporal_window,
+        spatial_window=analysis.spatial_window,
+        temporal_mean_subtraction="mean",
     )
     second = reviewed_spectral.compute_wavenumber_frequency_spectrum(
-        values[-half:], time[-half:], x_m, temporal_window=analysis.temporal_window,
-        spatial_window=analysis.spatial_window, temporal_mean_subtraction="mean",
+        values[-half:],
+        time[-half:],
+        x_m,
+        temporal_window=analysis.temporal_window,
+        spatial_window=analysis.spatial_window,
+        temporal_mean_subtraction="mean",
     )
     return {
         "schema_version": 1,
@@ -1146,20 +1386,28 @@ def run_directional_wave(context: WorkflowContext) -> None:
     if cleanup is not None:
         context.add_cleanup(cleanup)
     register_probe_trace_figures(
-        context, raw_time=raw_time, raw_values=raw_values,
-        prepared_time=time, prepared_values=values, x_m=x_m, selected=selected,
-        variable=variable, units=unit,
-        preprocessing={"time_grid_policy": analysis.time_grid_policy,
-                       "resampled": resampled},
+        context,
+        raw_time=raw_time,
+        raw_values=raw_values,
+        prepared_time=time,
+        prepared_values=values,
+        x_m=x_m,
+        selected=selected,
+        variable=variable,
+        units=unit,
+        preprocessing={"time_grid_policy": analysis.time_grid_policy, "resampled": resampled},
     )
     speed_bounds = None
     if analysis.expected_speed_min_m_s is not None and analysis.expected_speed_max_m_s is not None:
         speed_bounds = (analysis.expected_speed_min_m_s, analysis.expected_speed_max_m_s)
     segment = min(16384, max(8, len(time) // 2))
     local = reviewed_spectral.compute_frequency_resolved_wavenumber(
-        values, x_m, 1.0 / np.median(np.diff(time)),
+        values,
+        x_m,
+        1.0 / np.median(np.diff(time)),
         (analysis.frequency_min_hz, analysis.frequency_max_hz),
-        nperseg=segment, noverlap=segment // 2,
+        nperseg=segment,
+        noverlap=segment // 2,
         spatial_window_size=min(101, len(x_m) if len(x_m) % 2 else len(x_m) - 1),
         spatial_step=max(1, len(x_m) // 20),
         fft_batch_size=context.project.machine_file.compute.fft_batch_size,
@@ -1167,19 +1415,25 @@ def run_directional_wave(context: WorkflowContext) -> None:
         phase_speed_bounds=speed_bounds,
     )
     komega = reviewed_spectral.compute_wavenumber_frequency_spectrum(
-        values, time, x_m, temporal_window=analysis.temporal_window,
-        spatial_window=analysis.spatial_window, temporal_mean_subtraction="mean",
+        values,
+        time,
+        x_m,
+        temporal_window=analysis.temporal_window,
+        spatial_window=analysis.spatial_window,
+        temporal_mean_subtraction="mean",
     )
     path = context.data_dir / "complex_wavenumber.npz"
     arrays = {
-        "frequency_hz": local["frequency_hz"], "x_center_m": local["x_center_m"],
+        "frequency_hz": local["frequency_hz"],
+        "x_center_m": local["x_center_m"],
         "alpha_real_rad_m": local["alpha_real_rad_per_m"],
         "alpha_imag_rad_m": local["alpha_imag_rad_per_m"],
         "alpha_real_ci95_rad_m": local["alpha_real_ci95_rad_per_m"],
         "alpha_imag_ci95_rad_m": local["alpha_imag_ci95_rad_per_m"],
         "amplification_rate_per_m": local["amplification_rate_per_m"],
         "phase_speed_m_s": local["phase_speed_m_per_s"],
-        "phase_valid_mask": local["phase_valid_mask"], "growth_valid_mask": local["growth_valid_mask"],
+        "phase_valid_mask": local["phase_valid_mask"],
+        "growth_valid_mask": local["growth_valid_mask"],
         "coherence_squared": local["mean_coherence_squared"],
         "phase_fit_r_squared": local["phase_fit_r_squared"],
         "amplitude_fit_r_squared": local["amplitude_fit_r_squared"],
@@ -1189,58 +1443,84 @@ def run_directional_wave(context: WorkflowContext) -> None:
     accepted = float(np.mean(local["phase_valid_mask"]))
     growth = float(np.mean(local["growth_valid_mask"]))
     context.register(
-        artifact_id="wave.wavenumber", path=path, kind="array", variable=variable,
-        units="rad/m", coordinate_metadata={"frequency": "Hz", "x": "m", "wavenumber": "rad/m"},
+        artifact_id="wave.wavenumber",
+        path=path,
+        kind="array",
+        variable=variable,
+        units="rad/m",
+        coordinate_metadata={"frequency": "Hz", "x": "m", "wavenumber": "rad/m"},
         interpretation="Coherence-gated dominant-wave estimate; it is not an LST/PSE eigensolution.",
-        provenance={"phase_convention": local["phase_convention"], "accepted_fraction": accepted,
-                    "growth_accepted_fraction": growth,
-                    "spatial_interval_method": local.get("spatial_interval_method"),
-                    "spatial_interval_independence_assumption": local.get(
-                        "spatial_interval_independence_assumption"
-                    ),
-                    "spatial_interval_degrees_of_freedom": local.get(
-                        "spatial_interval_degrees_of_freedom"
-                    ),
-                    "spatial_interval_t_multiplier": local.get(
-                        "spatial_interval_t_multiplier"
-                    ),
-                    "time_grid_policy": analysis.time_grid_policy, "resampled": resampled},
+        provenance={
+            "phase_convention": local["phase_convention"],
+            "accepted_fraction": accepted,
+            "growth_accepted_fraction": growth,
+            "spatial_interval_method": local.get("spatial_interval_method"),
+            "spatial_interval_independence_assumption": local.get(
+                "spatial_interval_independence_assumption"
+            ),
+            "spatial_interval_degrees_of_freedom": local.get("spatial_interval_degrees_of_freedom"),
+            "spatial_interval_t_multiplier": local.get("spatial_interval_t_multiplier"),
+            "time_grid_policy": analysis.time_grid_policy,
+            "resampled": resampled,
+        },
     )
     spectrum_path = context.data_dir / "local_spatial_spectrum.npz"
     np.savez_compressed(
-        spectrum_path, frequency_hz=local["frequency_hz"],
-        x_center_m=local["x_center_m"], spectral_power=local["spectral_power"],
+        spectrum_path,
+        frequency_hz=local["frequency_hz"],
+        x_center_m=local["x_center_m"],
+        spectral_power=local["spectral_power"],
         relative_spectral_power_db=local["relative_spectral_power_db"],
         adjacent_coherence_squared=local["adjacent_coherence_squared"],
-        probe_x_m=local["probe_x_sorted_m"], probe_indices=selected,
+        probe_x_m=local["probe_x_sorted_m"],
+        probe_indices=selected,
     )
     context.register(
-        artifact_id="wave.spatial_spectrum", path=spectrum_path, kind="array",
-        variable=variable, units=f"({unit})^2", coordinate_metadata={"frequency": "Hz", "x": "m"},
+        artifact_id="wave.spatial_spectrum",
+        path=spectrum_path,
+        kind="array",
+        variable=variable,
+        units=f"({unit})^2",
+        coordinate_metadata={"frequency": "Hz", "x": "m"},
         interpretation="Welch-averaged local spatial spectral power and adjacent-probe coherence.",
     )
     komega_path = context.data_dir / "komega_spectrum.npz"
     np.savez_compressed(
-        komega_path, frequency_hz=komega["frequency_hz"],
-        wavenumber_rad_m=komega["wavenumber_rad_per_m"], power=komega["power"],
+        komega_path,
+        frequency_hz=komega["frequency_hz"],
+        wavenumber_rad_m=komega["wavenumber_rad_per_m"],
+        power=komega["power"],
         amplitude=komega["amplitude"],
         native_frequency_resolution_hz=np.array(komega["native_frequency_resolution_hz"]),
-        native_wavenumber_resolution_rad_m=np.array(komega["native_wavenumber_resolution_rad_per_m"]),
+        native_wavenumber_resolution_rad_m=np.array(
+            komega["native_wavenumber_resolution_rad_per_m"]
+        ),
     )
     context.register(
-        artifact_id="wave.komega", path=komega_path, kind="array", variable=variable,
-        units=f"({unit})^2", coordinate_metadata={"frequency": "Hz", "wavenumber": "rad/m"},
+        artifact_id="wave.komega",
+        path=komega_path,
+        kind="array",
+        variable=variable,
+        units=f"({unit})^2",
+        coordinate_metadata={"frequency": "Hz", "wavenumber": "rad/m"},
         interpretation="Signed numerical k–omega map; positive k denotes downstream cos(omega t - k x).",
-        provenance={"temporal_window": analysis.temporal_window,
-                    "spatial_window": analysis.spatial_window,
-                    "direction_convention": komega["direction_convention"],
-                    "time_grid_policy": analysis.time_grid_policy, "resampled": resampled},
+        provenance={
+            "temporal_window": analysis.temporal_window,
+            "spatial_window": analysis.spatial_window,
+            "direction_convention": komega["direction_convention"],
+            "time_grid_policy": analysis.time_grid_policy,
+            "resampled": resampled,
+        },
     )
     if isinstance(analysis.temporal_wavenumber, TemporalWavenumberEnabled):
         from .temporal_wavenumber import compute_temporal_wavenumber_parallel
 
         summary, snapshots = compute_temporal_wavenumber_parallel(
-            context, values, time, x_m, analysis,
+            context,
+            values,
+            time,
+            x_m,
+            analysis,
         )
         temporal_path = context.data_dir / "temporal_wavenumber.npz"
         np.savez_compressed(
@@ -1267,8 +1547,11 @@ def run_directional_wave(context: WorkflowContext) -> None:
             "valid_time_count": int(np.count_nonzero(summary["valid_time_mask"])),
         }
         context.register(
-            artifact_id="wave.temporal_wavenumber", path=temporal_path, kind="array",
-            variable=variable, units=f"({unit})^2",
+            artifact_id="wave.temporal_wavenumber",
+            path=temporal_path,
+            kind="array",
+            variable=variable,
+            units=f"({unit})^2",
             coordinate_metadata={"time": "s", "wavenumber": "rad/m", "frequency": "Hz"},
             interpretation="Sliding-window band-integrated signed wavenumber ridge for a transient probe aperture.",
             provenance=temporal_provenance,
@@ -1276,18 +1559,29 @@ def run_directional_wave(context: WorkflowContext) -> None:
         snapshot_path = context.data_dir / "komega_snapshots.npz"
         np.savez_compressed(snapshot_path, **snapshots)
         context.register(
-            artifact_id="wave.komega_snapshots", path=snapshot_path, kind="array",
-            variable=variable, units=f"({unit})^2",
+            artifact_id="wave.komega_snapshots",
+            path=snapshot_path,
+            kind="array",
+            variable=variable,
+            units=f"({unit})^2",
             coordinate_metadata={"snapshot_time": "s", "frequency": "Hz", "wavenumber": "rad/m"},
             interpretation="Selected shared-scale time-localized signed f-k spectra.",
             provenance=temporal_provenance,
         )
         register_temporal_wavenumber_figures(
-            context, values=values, time_s=time, x_m=x_m, variable=variable,
-            units=unit, summary=summary, snapshots=snapshots,
+            context,
+            values=values,
+            time_s=time,
+            x_m=x_m,
+            variable=variable,
+            units=unit,
+            summary=summary,
+            snapshots=snapshots,
         )
         register_dispersion_figure(
-            context, variable=variable, units=unit,
+            context,
+            variable=variable,
+            units=unit,
             frequency_hz=local["frequency_hz"],
             phase_speed_m_s=local["phase_speed_m_per_s"],
             wavelength_m=local["wavelength_m"],
@@ -1298,16 +1592,23 @@ def run_directional_wave(context: WorkflowContext) -> None:
     sensitivity_path = context.data_dir / "komega_sensitivity.json"
     sensitivity_path.write_text(json.dumps(sensitivity, indent=2) + "\n", encoding="utf-8")
     context.register(
-        artifact_id="wave.komega_sensitivity", path=sensitivity_path, kind="json",
-        variable=variable, units="rad/m", coordinate_metadata={"frequency": "Hz"},
+        artifact_id="wave.komega_sensitivity",
+        path=sensitivity_path,
+        kind="json",
+        variable=variable,
+        units="rad/m",
+        coordinate_metadata={"frequency": "Hz"},
         interpretation=sensitivity["interpretation"],
     )
     figure_path = context.figure_dir / "komega.png"
     fig, axis = plt.subplots(figsize=(9, 6))
     image = axis.pcolormesh(
-        komega["wavenumber_rad_per_m"], komega["frequency_hz"],
+        komega["wavenumber_rad_per_m"],
+        komega["frequency_hz"],
         10.0 * np.log10(komega["power"] / max(float(np.nanmax(komega["power"])), 1e-300) + 1e-300),
-        shading="auto", vmin=-60, vmax=0,
+        shading="auto",
+        vmin=-60,
+        vmax=0,
     )
     axis.set_xlabel("Wavenumber [rad/m]")
     axis.set_ylabel("Frequency [Hz]")
@@ -1316,7 +1617,11 @@ def run_directional_wave(context: WorkflowContext) -> None:
     fig.savefig(figure_path, dpi=180)
     plt.close(fig)
     context.register(
-        artifact_id="wave.komega.figure", path=figure_path, kind="figure", variable=variable,
-        units="relative dB", coordinate_metadata={"frequency": "Hz", "wavenumber": "rad/m"},
+        artifact_id="wave.komega.figure",
+        path=figure_path,
+        kind="figure",
+        variable=variable,
+        units="relative dB",
+        coordinate_metadata={"frequency": "Hz", "wavenumber": "rad/m"},
         interpretation="Signed k–omega map; positive k denotes downstream cos(omega t - k x).",
     )

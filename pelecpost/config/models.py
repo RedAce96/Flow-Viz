@@ -397,12 +397,56 @@ class BaseAnalysis(StrictModel):
     presentation: PresentationOverride | None = None
 
 
+class ProbeTraceGroup(StrictModel):
+    title: str = Field(min_length=1)
+    probe_indices: tuple[int, ...] = Field(min_length=1)
+    value_limits: tuple[float, float] | None = None
+
+    @model_validator(mode="after")
+    def valid_group(self) -> "ProbeTraceGroup":
+        if len(self.probe_indices) != len(set(self.probe_indices)):
+            raise ValueError("trace group probe_indices must be unique")
+        if any(index < 0 for index in self.probe_indices):
+            raise ValueError("trace group probe_indices cannot be negative")
+        if self.value_limits is not None and self.value_limits[0] >= self.value_limits[1]:
+            raise ValueError("trace group value_limits must increase")
+        return self
+
+
+class ProbeTraceView(StrictModel):
+    id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+    title: str = Field(min_length=1)
+    time_start_s: float = Field(default=0.0, ge=0.0)
+    time_end_s: PositiveFloat | None = None
+    groups: tuple[ProbeTraceGroup, ...] = Field(min_length=1)
+    pair_difference: bool = False
+    grid: bool = True
+
+    @model_validator(mode="after")
+    def valid_view(self) -> "ProbeTraceView":
+        if self.time_end_s is not None and self.time_end_s <= self.time_start_s:
+            raise ValueError("trace view time_end_s must exceed time_start_s")
+        if self.pair_difference and (
+            len(self.groups) != 1 or len(self.groups[0].probe_indices) != 2
+        ):
+            raise ValueError("pair_difference requires one group containing two probes")
+        return self
+
+
 class ProbePlottingConfig(StrictModel):
     """Controls visual treatment of selected probe traces."""
 
     mode: Literal["overlay", "panels", "both"] = "both"
     normalization: Literal["none", "per_probe_peak"] = "none"
     label: Literal["index_coordinates", "coordinates", "index"] = "index_coordinates"
+    trace_views: tuple[ProbeTraceView, ...] = ()
+
+    @model_validator(mode="after")
+    def valid_trace_views(self) -> "ProbePlottingConfig":
+        ids = [view.id for view in self.trace_views]
+        if len(ids) != len(set(ids)):
+            raise ValueError("trace view ids must be unique")
+        return self
 
 
 class ProbeAnalysis(BaseAnalysis):
@@ -424,6 +468,14 @@ class ProbeAnalysis(BaseAnalysis):
             raise ValueError("probe_indices cannot contain negative values")
         if len(self.probe_indices) != len(set(self.probe_indices)):
             raise ValueError("probe_indices must be unique")
+        if self.probe_indices:
+            selected = set(self.probe_indices)
+            for view in self.probe_plotting.trace_views:
+                for group in view.groups:
+                    if not set(group.probe_indices) <= selected:
+                        raise ValueError(
+                            f"trace view {view.id} uses probes outside probe_indices"
+                        )
         return self
 
 

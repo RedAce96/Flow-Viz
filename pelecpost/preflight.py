@@ -81,6 +81,7 @@ PROBE_FIELD_ALIASES = {
     "y_velocity": ("y_velocity", "v", "yvel"),
     "pressure": ("pressure", "p"),
     "temperature": ("temperature", "T", "temp"),
+    "vorticity": ("vorticity", "omega_z"),
 }
 
 
