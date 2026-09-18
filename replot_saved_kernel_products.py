@@ -186,12 +186,24 @@ def replot(export: Path, project_dir: Path, output: Path) -> Path:
 
     compare = output / "figures" / "compare-frequency"
     compare.mkdir(parents=True, exist_ok=True)
+    frequency_options = _analysis(project, "compare-pressure-frequency").fft_ratio_plotting
+    ratio_names = {
+        ("absolute", "db"): "fft_amplitude_ratio",
+        ("absolute", "linear"): "fft_amplitude_linear_ratio",
+        ("unit_l2", "db"): "fft_shape_ratio",
+        ("unit_l2", "linear"): "fft_shape_linear_ratio",
+    }
+    ratio_kinds = tuple(
+        ratio_names[(normalization, scale)]
+        for normalization in frequency_options.normalizations
+        for scale in frequency_options.scales
+    )
     for kind, name in (
         ("raw", "comparison_time.png"),
         ("raw_zoom", "comparison_time_zoom.png"),
         ("fft", "comparison_fft.png"),
         ("fft_shape", "comparison_fft_shape.png"),
-        ("fft_shape_ratio", "comparison_fft_shape_ratio.png"),
+        *((kind, f"comparison_{kind}.png") for kind in ratio_kinds),
     ):
         render_probe_panels(
             signals["asym"],
@@ -201,6 +213,7 @@ def replot(export: Path, project_dir: Path, output: Path) -> Path:
             "pressure",
             compare / name,
             kind=kind,
+            minimum_relative_amplitude=frequency_options.minimum_relative_amplitude,
         )
     render_probe_panels(
         psds["asym"],
@@ -213,21 +226,34 @@ def replot(export: Path, project_dir: Path, output: Path) -> Path:
     )
 
     wave = _analysis(project, "asym-pressure-wave")
+    wave_options = _analysis(project, "compare-pressure-wave").fft_ratio_plotting
     compare_wave = output / "figures" / "compare-wave"
     compare_wave.mkdir(parents=True, exist_ok=True)
     wave_sources = [
         export / "data" / f"{case}-wavenumber" / "komega_spectrum.npz" for case in ("asym", "gaus")
     ]
-    render_komega_comparison(
-        wave_sources[0],
-        wave_sources[1],
-        "asym-pressure-wave.wave.komega",
-        "gaus-pressure-wave.wave.komega",
-        compare_wave / "comparison_fk.png",
-        compare_wave / "comparison_signed_k.png",
-        (wave.frequency_min_hz, wave.frequency_max_hz),
-        "(Pa)²",
+    wave_views = tuple(
+        (normalization, scale)
+        for normalization in wave_options.normalizations
+        for scale in wave_options.scales
     )
+    for index, (normalization, scale) in enumerate(wave_views):
+        suffix = (
+            "fk_amplitude_linear_ratio" if normalization == "absolute" and scale == "linear"
+            else "fk_shape_ratio" if normalization == "unit_l2" and scale == "db"
+            else "fk_shape_linear_ratio" if normalization == "unit_l2"
+            else "fk_amplitude_ratio"
+        )
+        render_komega_comparison(
+            wave_sources[0], wave_sources[1],
+            "asym-pressure-wave.wave.komega", "gaus-pressure-wave.wave.komega",
+            compare_wave / ("comparison_fk.png" if index == 0 else f"comparison_{suffix}.png"),
+            compare_wave / "comparison_signed_k.png" if index == 0 else None,
+            (wave.frequency_min_hz, wave.frequency_max_hz), "(Pa)²",
+            ratio_scale=scale,
+            ratio_normalization=normalization,
+            minimum_relative_amplitude=wave_options.minimum_relative_amplitude,
+        )
 
     manifest = output / "replot_manifest.json"
     manifest.write_text(

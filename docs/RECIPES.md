@@ -240,16 +240,27 @@ Schema- and provenance-checked comparison of existing artifacts.
 
 When the selected products include `spectral.probe_signals`, the comparison
 also writes paired raw histories, a 2 µs history zoom, per-probe FFT amplitude
-overlays, separately normalized FFT shapes, and a gated normalized-shape ratio
-in dB. Probe panels omit locations that have zero disturbance in both cases.
+overlays, separately normalized FFT shapes, and amplitude-ratio figures. Set
+`fft_ratio_plotting.scales` to any selection of `db` and `linear`, and
+`fft_ratio_plotting.normalizations` to any selection of `absolute` and `unit_l2`.
+The defaults write all four combinations. The absolute linear ratio is
+`comparison amplitude / baseline amplitude` at each frequency; the dB view is
+`20 log10` of that ratio. Unit-L2 ratios compare spectral shape after each
+displayed spectrum is normalized. Ratio figures mask frequencies below 1% of
+either case's own FFT peak by default; change
+`fft_ratio_plotting.minimum_relative_amplitude` to adjust this cutoff. Probe
+panels omit locations that have zero disturbance in both cases.
 The panel layout places the leftmost and rightmost selected probes together,
 then works inward, so mirrored distances are adjacent regardless of YAML order.
 `spectral.psd` adds paired Welch PSD curves. Put `wave.komega` first to
 make the main comparison figure
 a shared-scale signed frequency–wavenumber map with a logarithmic positive-
-frequency axis and power-ratio panel; it
-also adds absolute and normalized band-integrated signed-k curves. Ratio-map
-pixels below 40 dB of the shared peak in either case are masked. The summary
+frequency axis and amplitude-ratio panel. The same ratio scale and normalization
+options generate additional f–k maps; the first selected combination is used in
+the main figure. Linear f–k amplitude ratios are the square root of the power
+ratio. The comparison also adds absolute and normalized band-integrated signed-k
+curves. Ratio-map pixels below the configured amplitude threshold relative to
+the shared peak in either case are masked. The summary
 chart uses relative L2 differences so quantities with different physical
 units are not placed on a common absolute-difference axis.
 
@@ -260,6 +271,16 @@ Assumptions:
 Interpretation limits:
 
 - Incompatible artifacts are rejected rather than interpolated silently.
+
+For example, on a `case_comparison` entry with `spectral.probe_signals` or
+`wave.komega`:
+
+```yaml
+fft_ratio_plotting:
+  scales: [db, linear]
+  normalizations: [absolute, unit_l2]
+  minimum_relative_amplitude: 0.01
+```
 
 All current numerical recipes support 2-D only. Inspection recognizes 3-D datasets,
 but planning blocks unsupported algorithms before expensive loading.

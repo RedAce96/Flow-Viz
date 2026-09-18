@@ -31,6 +31,7 @@ from pelecpost.analysis.temporal_wavenumber import compute_temporal_wavenumber
 from pelecpost.config.loader import write_project_schema
 from pelecpost.config.models import (
     ComparisonAlignment,
+    FFTRatioPlottingConfig,
     PresentationConfig,
     ProbeInput,
 )
@@ -54,6 +55,18 @@ def _product_metadata(path: Path, product_id: str, units: str = "Pa") -> dict:
 
 
 class UnifiedProbeComparisonTests(unittest.TestCase):
+    def test_fft_ratio_plotting_choices_validate(self):
+        options = FFTRatioPlottingConfig(
+            scales=("linear",), normalizations=("absolute",),
+            minimum_relative_amplitude=0.02,
+        )
+        self.assertEqual(options.scales, ("linear",))
+        self.assertEqual(options.normalizations, ("absolute",))
+        with self.assertRaises(ValueError):
+            FFTRatioPlottingConfig(scales=("linear", "linear"))
+        with self.assertRaises(ValueError):
+            FFTRatioPlottingConfig(minimum_relative_amplitude=0.0)
+
     def test_probe_overlay_legend_stays_above_axes_and_uses_microseconds(self):
         figure = build_probe_overlay_figure(
             PresentationConfig(),
@@ -166,6 +179,99 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
             finally:
                 plt.close(figure)
 
+    def test_absolute_fft_ratio_preserves_overall_gain_and_masks_weak_bins(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            first, second = directory / "asym.npz", directory / "gaus.npz"
+            common = {
+                "x_m": np.array([0.025]),
+                "probe_indices": np.array([160]),
+                "frequency_hz": np.array([0.0, 1e5, 2e5, 3e5]),
+                "signal_unit": np.array("Pa"),
+            }
+            np.savez(first, **common, amplitude=np.array([[0.0], [10.0], [5.0], [0.001]]))
+            np.savez(second, **common, amplitude=np.array([[0.0], [20.0], [10.0], [0.001]]))
+            with patch("pelecpost.analysis.comparison_figures.plt.close") as close:
+                result = render_probe_panels(
+                    first,
+                    second,
+                    "asym.spectral.probe_signals",
+                    "gaus.spectral.probe_signals",
+                    "pressure",
+                    directory / "absolute_ratio.png",
+                    kind="fft_amplitude_ratio",
+                )
+            figure = close.call_args.args[0]
+            try:
+                self.assertTrue(result.is_file())
+                axis = figure.axes[0]
+                np.testing.assert_allclose(axis.lines[0].get_ydata()[:2], 20 * np.log10(2))
+                self.assertTrue(np.isnan(axis.lines[0].get_ydata()[2]))
+                self.assertEqual(axis.get_xscale(), "log")
+                self.assertEqual(axis.get_yscale(), "linear")
+            finally:
+                plt.close(figure)
+
+    def test_linear_fft_ratio_is_centered_on_one(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            first, second = directory / "asym.npz", directory / "gaus.npz"
+            common = {
+                "x_m": np.array([0.025]),
+                "probe_indices": np.array([160]),
+                "frequency_hz": np.array([0.0, 1e5, 2e5]),
+                "signal_unit": np.array("Pa"),
+            }
+            np.savez(first, **common, amplitude=np.array([[0.0], [10.0], [5.0]]))
+            np.savez(second, **common, amplitude=np.array([[0.0], [20.0], [2.5]]))
+            with patch("pelecpost.analysis.comparison_figures.plt.close") as close:
+                result = render_probe_panels(
+                    first,
+                    second,
+                    "asym.spectral.probe_signals",
+                    "gaus.spectral.probe_signals",
+                    "pressure",
+                    directory / "linear_ratio.png",
+                    kind="fft_amplitude_linear_ratio",
+                )
+            figure = close.call_args.args[0]
+            try:
+                self.assertTrue(result.is_file())
+                ratio = figure.axes[0].lines[0].get_ydata()
+                np.testing.assert_allclose(ratio, [2.0, 0.5])
+                self.assertEqual(figure.axes[0].lines[1].get_ydata()[0], 1.0)
+                self.assertEqual(figure.axes[0].get_yscale(), "linear")
+            finally:
+                plt.close(figure)
+
+    def test_unit_normalized_linear_fft_ratio_removes_overall_scale(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            first, second = directory / "baseline.npz", directory / "comparison.npz"
+            common = {
+                "x_m": np.array([0.025]),
+                "probe_indices": np.array([160]),
+                "frequency_hz": np.array([0.0, 1e5, 2e5]),
+                "signal_unit": np.array("Pa"),
+            }
+            np.savez(first, **common, amplitude=np.array([[0.0], [10.0], [5.0]]))
+            np.savez(second, **common, amplitude=np.array([[0.0], [20.0], [10.0]]))
+            with patch("pelecpost.analysis.comparison_figures.plt.close") as close:
+                result = render_probe_panels(
+                    first, second,
+                    "baseline.spectral.probe_signals",
+                    "comparison.spectral.probe_signals",
+                    "pressure", directory / "shape_linear.png",
+                    kind="fft_shape_linear_ratio",
+                )
+            figure = close.call_args.args[0]
+            try:
+                self.assertTrue(result.is_file())
+                np.testing.assert_allclose(figure.axes[0].lines[0].get_ydata(), [1.0, 1.0])
+                self.assertEqual(figure.axes[0].lines[1].get_ydata()[0], 1.0)
+            finally:
+                plt.close(figure)
+
     def test_paired_probe_panels_omit_two_flat_endpoint_probes(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -244,6 +350,56 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
             finally:
                 for figure in figures:
                     plt.close(figure)
+
+    def test_signed_fk_linear_ratio_uses_amplitude_not_power(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            first, second = directory / "baseline.npz", directory / "comparison.npz"
+            common = {
+                "frequency_hz": np.array([2e5, 3e5]),
+                "wavenumber_rad_m": np.array([-1000.0, 0.0, 1000.0]),
+            }
+            a = np.array([[1.0, 4.0, 1.0], [1.0, 2.0, 1.0]])
+            np.savez(first, **common, power=a)
+            np.savez(second, **common, power=4.0 * a)
+            with patch("pelecpost.analysis.comparison_figures.plt.close") as close:
+                result = render_komega_comparison(
+                    first, second, "baseline.wave.komega", "comparison.wave.komega",
+                    directory / "linear_map.png", None, (2e5, 3e5),
+                    ratio_scale="linear",
+                )
+            figure = close.call_args.args[0]
+            try:
+                self.assertEqual(result, (directory / "linear_map.png", None))
+                ratio = np.asarray(figure.axes[2].images[0].get_array())
+                np.testing.assert_allclose(ratio, 2.0)
+                self.assertEqual(figure.axes[2].images[0].norm(1.0), 0.5)
+            finally:
+                plt.close(figure)
+
+    def test_signed_fk_unit_normalized_linear_ratio_removes_overall_scale(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            first, second = directory / "baseline.npz", directory / "comparison.npz"
+            common = {
+                "frequency_hz": np.array([2e5, 3e5]),
+                "wavenumber_rad_m": np.array([-1000.0, 0.0, 1000.0]),
+            }
+            a = np.array([[1.0, 4.0, 1.0], [1.0, 2.0, 1.0]])
+            np.savez(first, **common, power=a)
+            np.savez(second, **common, power=4.0 * a)
+            with patch("pelecpost.analysis.comparison_figures.plt.close") as close:
+                render_komega_comparison(
+                    first, second, "baseline.wave.komega", "comparison.wave.komega",
+                    directory / "shape_map.png", None, (2e5, 3e5),
+                    ratio_scale="linear", ratio_normalization="unit_l2",
+                )
+            figure = close.call_args.args[0]
+            try:
+                ratio = np.asarray(figure.axes[2].images[0].get_array())
+                np.testing.assert_allclose(ratio, 1.0)
+            finally:
+                plt.close(figure)
 
     def test_probe_comparison_figure_uses_shared_time_axes_and_paired_traces(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -174,6 +174,25 @@ after each workflow and are not run artifacts.
 | `comparison` | yes | `ComparisonReference` | — | — |
 | `product_ids` | yes | `array[string]` | — | minimum items: `1` |
 | `alignment` | no | `ComparisonAlignment` | — | — |
+| `fft_ratio_plotting` | no | `FFTRatioPlottingConfig` | dB and linear; absolute and unit L2 | — |
+
+### `FFTRatioPlottingConfig`
+
+Applies to both `spectral.probe_signals` and `wave.komega` case-comparison figures.
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `scales` | no | `array['db' \| 'linear']` | `[db, linear]` | nonempty, unique |
+| `normalizations` | no | `array['absolute' \| 'unit_l2']` | `[absolute, unit_l2]` | nonempty, unique |
+| `minimum_relative_amplitude` | no | `number` | `0.01` | strictly between 0 and 1 |
+
+`linear` displays comparison amplitude divided by baseline amplitude (equality is
+1). `db` displays 20 log₁₀ of that amplitude ratio (equality is 0 dB).
+`unit_l2` divides each amplitude spectrum by its own L2 norm over the displayed
+band before taking the ratio. `absolute` preserves the overall magnitude
+difference. Ratio values are shown only where both cases exceed the configured
+amplitude threshold; the frequency–wavenumber map uses its shared peak as the
+threshold reference.
 
 ### `ColorbarOverride`
 

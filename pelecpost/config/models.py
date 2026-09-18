@@ -860,12 +860,33 @@ class ComparisonAlignment(StrictModel):
     wavenumber_tolerance_rad_m: float = Field(default=1.0e-9, ge=0.0)
 
 
+class FFTRatioPlottingConfig(StrictModel):
+    """Amplitude-ratio views for paired probe FFT and frequency-wavenumber products."""
+
+    scales: tuple[Literal["db", "linear"], ...] = ("db", "linear")
+    normalizations: tuple[Literal["absolute", "unit_l2"], ...] = (
+        "absolute", "unit_l2"
+    )
+    minimum_relative_amplitude: float = Field(default=0.01, gt=0.0, lt=1.0)
+
+    @model_validator(mode="after")
+    def unique_views(self) -> FFTRatioPlottingConfig:
+        for name, values in (
+            ("scales", self.scales),
+            ("normalizations", self.normalizations),
+        ):
+            if not values or len(values) != len(set(values)):
+                raise ValueError(f"fft_ratio_plotting {name} must be nonempty and unique")
+        return self
+
+
 class CaseComparisonAnalysis(BaseAnalysis):
     recipe: Literal["case_comparison"]
     baseline: "ComparisonReference"
     comparison: "ComparisonReference"
     product_ids: tuple[str, ...] = Field(min_length=1, json_schema_extra={"uniqueItems": True})
     alignment: "ComparisonAlignment" = Field(default_factory=lambda: ComparisonAlignment())
+    fft_ratio_plotting: FFTRatioPlottingConfig = Field(default_factory=FFTRatioPlottingConfig)
 
     @model_validator(mode="after")
     def distinct_products(self) -> "CaseComparisonAnalysis":

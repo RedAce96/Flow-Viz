@@ -745,8 +745,26 @@ def run_case_comparison(context: WorkflowContext) -> None:
     if first_pair is None:
         raise ValueError("case_comparison requires at least one product")
     overlay_path: Path | None = None
+    ratio_kind_names = {
+        ("absolute", "db"): "fft_amplitude_ratio",
+        ("absolute", "linear"): "fft_amplitude_linear_ratio",
+        ("unit_l2", "db"): "fft_shape_ratio",
+        ("unit_l2", "linear"): "fft_shape_linear_ratio",
+    }
+    wave_ratio_names = {
+        ("absolute", "db"): "fk_amplitude_ratio",
+        ("absolute", "linear"): "fk_amplitude_linear_ratio",
+        ("unit_l2", "db"): "fk_shape_ratio",
+        ("unit_l2", "linear"): "fk_shape_linear_ratio",
+    }
+    ratio_views = [
+        (normalization, scale)
+        for normalization in analysis.fft_ratio_plotting.normalizations
+        for scale in analysis.fft_ratio_plotting.scales
+    ]
     if analysis.product_ids[0] == "wave.komega":
         left, right = first_pair
+        main_normalization, main_scale = ratio_views[0]
         settings = left.metadata.get("provenance", {}).get("preprocessing") or {}
         band = (
             float(settings.get("frequency_min_hz", 0.0)),
@@ -757,6 +775,11 @@ def run_case_comparison(context: WorkflowContext) -> None:
             context.figure_dir / "comparison_overlay.png",
             context.figure_dir / "comparison_signed_k.png", band,
             str(left.metadata.get("units") or "variable²"),
+            ratio_scale=main_scale,
+            ratio_normalization=main_normalization,
+            minimum_relative_amplitude=(
+                analysis.fft_ratio_plotting.minimum_relative_amplitude
+            ),
         )
         if rendered is not None:
             overlay_path, spectrum_path = rendered
@@ -770,6 +793,32 @@ def run_case_comparison(context: WorkflowContext) -> None:
                     "wavenumber power for the two cases."
                 ),
             )
+            for normalization, scale in ratio_views:
+                if (normalization, scale) == (main_normalization, main_scale):
+                    continue
+                suffix = wave_ratio_names[(normalization, scale)]
+                extra = render_komega_comparison(
+                    left.path, right.path, left.label, right.label,
+                    context.figure_dir / f"comparison_{suffix}.png",
+                    None, band,
+                    str(left.metadata.get("units") or "variable²"),
+                    ratio_scale=scale,
+                    ratio_normalization=normalization,
+                    minimum_relative_amplitude=(
+                        analysis.fft_ratio_plotting.minimum_relative_amplitude
+                    ),
+                )
+                if extra is not None:
+                    context.register(
+                        artifact_id=f"comparison.{suffix}_figure", path=extra[0],
+                        kind="figure", variable=left.metadata.get("variable"),
+                        units="dB" if scale == "db" else "ratio",
+                        coordinate_metadata={"frequency": "Hz", "wavenumber": "rad/m"},
+                        interpretation=(
+                            f"{normalization} {scale} comparison/baseline f-k FFT "
+                            "amplitude ratio; weak bins are masked."
+                        ),
+                    )
     if overlay_path is None:
         overlay_path = _render_product_overlay(context, *first_pair)
     context.register(
@@ -777,13 +826,17 @@ def run_case_comparison(context: WorkflowContext) -> None:
         units="artifact-dependent", coordinate_metadata={},
         interpretation="Baseline and comparison visualization for the first selected product.",
     )
+    probe_ratio_kinds = tuple(
+        (kind, f"comparison_{kind}.png", f"comparison.{kind}_figure")
+        for normalization, scale in ratio_views
+        for kind in (ratio_kind_names[(normalization, scale)],)
+    )
     for product_id, kinds in (
         ("spectral.probe_signals", (
             ("raw_zoom", "comparison_time_zoom.png", "comparison.time_zoom_figure"),
             ("fft", "comparison_fft.png", "comparison.fft_figure"),
+            *probe_ratio_kinds,
             ("fft_shape", "comparison_fft_shape.png", "comparison.fft_shape_figure"),
-            ("fft_shape_ratio", "comparison_fft_shape_ratio.png",
-             "comparison.fft_shape_ratio_figure"),
         )),
         ("spectral.psd", (
             ("psd", "comparison_psd.png", "comparison.psd_figure"),
@@ -797,12 +850,27 @@ def run_case_comparison(context: WorkflowContext) -> None:
                 left.path, right.path, left.label, right.label,
                 str(left.metadata.get("variable") or "signal"),
                 context.figure_dir / filename, kind=kind,
+                minimum_relative_amplitude=(
+                    analysis.fft_ratio_plotting.minimum_relative_amplitude
+                ),
             )
             if path is not None:
                 context.register(
                     artifact_id=artifact_id, path=path, kind="figure",
                     variable=left.metadata.get("variable"),
-                    units="artifact-dependent",
+                    units=(
+                        "dB" if kind in ("fft_amplitude_ratio", "fft_shape_ratio")
+                        else "ratio" if kind in (
+                            "fft_amplitude_linear_ratio", "fft_shape_linear_ratio"
+                        )
+                        else "artifact-dependent"
+                    ),
                     coordinate_metadata={"probe_x": "m"},
-                    interpretation=f"Paired {kind} probe curves on physical axes.",
+                    interpretation=(
+                        "Comparison/baseline single-sided FFT amplitude ratio "
+                        f"({kind}); bins below the configured amplitude "
+                        "threshold in either case are masked."
+                        if kind in ratio_kind_names.values()
+                        else f"Paired {kind} probe curves on physical axes."
+                    ),
                 )

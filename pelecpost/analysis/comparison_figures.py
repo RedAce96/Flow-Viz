@@ -6,9 +6,17 @@ from pathlib import Path
 
 import matplotlib
 import numpy as np
+from matplotlib.colors import LogNorm
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+_FFT_RATIO_KINDS = {
+    "fft_amplitude_ratio": ("absolute", "db"),
+    "fft_amplitude_linear_ratio": ("absolute", "linear"),
+    "fft_shape_ratio": ("unit_l2", "db"),
+    "fft_shape_linear_ratio": ("unit_l2", "linear"),
+}
 
 
 def _same_axis(first: np.ndarray, second: np.ndarray, atol: float) -> bool:
@@ -46,8 +54,11 @@ def render_probe_panels(
     *,
     kind: str,
     frequency_limit_hz: float | None = None,
+    minimum_relative_amplitude: float = 0.01,
 ) -> Path | None:
     """Draw both cases at each shared probe, using physical time or frequency."""
+    if not 0.0 < minimum_relative_amplitude < 1.0:
+        raise ValueError("minimum_relative_amplitude must lie in (0, 1)")
     with (
         np.load(first_path, allow_pickle=False) as first,
         np.load(second_path, allow_pickle=False) as second,
@@ -97,11 +108,34 @@ def render_probe_panels(
                 "Frequency [Hz]",
                 "Normalized FFT shape ratio",
             ),
+            "fft_amplitude_ratio": (
+                "frequency_hz",
+                "amplitude",
+                "Frequency [Hz]",
+                "FFT amplitude ratio",
+            ),
+            "fft_amplitude_linear_ratio": (
+                "frequency_hz",
+                "amplitude",
+                "Frequency [Hz]",
+                "Linear FFT amplitude ratio",
+            ),
+            "fft_shape_linear_ratio": (
+                "frequency_hz",
+                "amplitude",
+                "Frequency [Hz]",
+                "Linear normalized FFT shape ratio",
+            ),
             "psd": ("frequency_hz", "psd", "Frequency [Hz]", "Welch PSD"),
         }
         axis_key, value_key, x_label, title = specs[kind]
         unit_key = "psd_unit" if kind == "psd" else "signal_unit"
         unit = str(first[unit_key]) if unit_key in first else ""
+        baseline_name, comparison_name = _case_name(first_label), _case_name(second_label)
+        ratio_description = (
+            ("Normalized FFT amplitude" if kind.startswith("fft_shape") else "FFT amplitude")
+            + f" ratio ({comparison_name} / {baseline_name})"
+        )
         y_label = (
             f"{variable.capitalize()} [{unit}]"
             if kind.startswith("raw") and unit
@@ -111,12 +145,14 @@ def render_probe_panels(
             if kind == "psd" and unit
             else "Normalized amplitude"
             if kind == "fft_shape"
-            else "Gaussian / Asymmetric [dB]"
-            if kind == "fft_shape_ratio"
+            else f"{ratio_description} [×]"
+            if kind in _FFT_RATIO_KINDS and _FFT_RATIO_KINDS[kind][1] == "linear"
+            else f"{ratio_description} [dB]"
+            if kind in _FFT_RATIO_KINDS
             else variable.capitalize()
         )
         for axis, column in zip(axes.flat, chosen):
-            if kind == "fft_shape_ratio":
+            if kind in _FFT_RATIO_KINDS:
                 x = np.asarray(first[axis_key], dtype=float)
                 usable = x > 0.0
                 if frequency_limit_hz is not None:
@@ -124,14 +160,27 @@ def render_probe_panels(
                 x = x[usable]
                 a = np.maximum(np.asarray(first[value_key][:, column], dtype=float)[usable], 0)
                 b = np.maximum(np.asarray(second[value_key][:, column], dtype=float)[usable], 0)
-                norm_a, norm_b = np.linalg.norm(a), np.linalg.norm(b)
-                if norm_a > 0 and norm_b > 0:
-                    a, b = a / norm_a, b / norm_b
-                    meaningful = (a >= np.max(a) * 0.01) & (b >= np.max(b) * 0.01)
+                peak_a, peak_b = np.max(a, initial=0.0), np.max(b, initial=0.0)
+                if peak_a > 0 and peak_b > 0:
+                    normalization, scale = _FFT_RATIO_KINDS[kind]
+                    if normalization == "unit_l2":
+                        a, b = a / np.linalg.norm(a), b / np.linalg.norm(b)
+                    meaningful = (
+                        (a >= np.max(a) * minimum_relative_amplitude)
+                        & (b >= np.max(b) * minimum_relative_amplitude)
+                    )
                     ratio = np.full(len(x), np.nan)
-                    ratio[meaningful] = 20.0 * np.log10(b[meaningful] / a[meaningful])
+                    ratio[meaningful] = (
+                        b[meaningful] / a[meaningful]
+                        if scale == "linear"
+                        else 20.0 * np.log10(b[meaningful] / a[meaningful])
+                    )
                     axis.plot(x, ratio, color="#6a3d9a", linewidth=1.8)
-                    axis.axhline(0.0, color="0.5", linewidth=0.8)
+                    axis.axhline(
+                        1.0 if scale == "linear" else 0.0,
+                        color="0.5",
+                        linewidth=0.8,
+                    )
                 else:
                     axis.text(
                         0.5,
@@ -179,11 +228,11 @@ def render_probe_panels(
                     ]
                 if len(positive_frequency):
                     axis.set_xlim(positive_frequency[0], positive_frequency[-1])
-                if kind != "fft_shape_ratio" and any(
+                if kind not in _FFT_RATIO_KINDS and any(
                     np.isfinite(line.get_ydata()).any() for line in axis.lines
                 ):
                     axis.set_yscale("log")
-                elif kind != "fft_shape_ratio":
+                elif kind not in _FFT_RATIO_KINDS:
                     axis.text(
                         0.5,
                         0.5,
@@ -199,15 +248,20 @@ def render_probe_panels(
         fig.suptitle(f"{variable.capitalize()}: {title}", y=0.995)
         if handles:
             fig.legend(handles, labels, loc="upper center", ncol=2, bbox_to_anchor=(0.5, 0.965))
-        if kind == "fft_shape_ratio":
+        if kind in _FFT_RATIO_KINDS:
+            floor_db = 20.0 * np.log10(minimum_relative_amplitude)
+            relative = "relative " if _FFT_RATIO_KINDS[kind][0] == "unit_l2" else ""
             fig.text(
                 0.5,
-                0.92,
-                "Positive: Gaussian has more relative amplitude · both above −40 dB peak",
+                0.94,
+                f"Above reference: {comparison_name} has more {relative}amplitude "
+                f"· both above {floor_db:.0f} dB of own peak",
                 ha="center",
                 fontsize=9,
             )
-        fig.tight_layout(rect=(0, 0, 1, 0.85 if kind == "fft_shape_ratio" else 0.90))
+        fig.tight_layout(
+            rect=(0, 0, 1, 0.90)
+        )
         fig.savefig(destination, dpi=180, bbox_inches="tight")
         plt.close(fig)
     return destination
@@ -219,11 +273,21 @@ def render_komega_comparison(
     first_label: str,
     second_label: str,
     map_path: Path,
-    spectrum_path: Path,
+    spectrum_path: Path | None,
     frequency_band_hz: tuple[float, float],
     power_unit: str = "variable²",
-) -> tuple[Path, Path] | None:
-    """Show signed f-k power, a gated dB ratio, and band-integrated k shapes."""
+    *,
+    ratio_scale: str = "db",
+    ratio_normalization: str = "absolute",
+    minimum_relative_amplitude: float = 0.01,
+) -> tuple[Path, Path | None] | None:
+    """Show signed f-k power, a gated amplitude ratio, and optional k shapes."""
+    if ratio_scale not in ("db", "linear"):
+        raise ValueError("ratio_scale must be db or linear")
+    if ratio_normalization not in ("absolute", "unit_l2"):
+        raise ValueError("ratio_normalization must be absolute or unit_l2")
+    if not 0.0 < minimum_relative_amplitude < 1.0:
+        raise ValueError("minimum_relative_amplitude must lie in (0, 1)")
     with (
         np.load(first_path, allow_pickle=False) as first,
         np.load(second_path, allow_pickle=False) as second,
@@ -255,8 +319,22 @@ def render_komega_comparison(
         relative_a = np.clip(10.0 * np.log10(np.maximum(a, floor) / reference), -60, 0)
         relative_b = np.clip(10.0 * np.log10(np.maximum(b, floor) / reference), -60, 0)
         ratio = np.full(a.shape, np.nan)
-        meaningful = (a >= reference * 1e-4) & (b >= reference * 1e-4)
-        ratio[meaningful] = 10.0 * np.log10(b[meaningful] / a[meaningful])
+        meaningful = (
+            (a >= reference * minimum_relative_amplitude**2)
+            & (b >= reference * minimum_relative_amplitude**2)
+        )
+        ratio_a, ratio_b = a, b
+        if ratio_normalization == "unit_l2" and np.sum(a) > 0 and np.sum(b) > 0:
+            # Power is squared FFT amplitude; dividing by total power makes
+            # each displayed f-k amplitude map have unit L2 norm.
+            ratio_a = a / np.sum(a)
+            ratio_b = b / np.sum(b)
+        power_ratio = ratio_b[meaningful] / ratio_a[meaningful]
+        ratio[meaningful] = (
+            np.sqrt(power_ratio)
+            if ratio_scale == "linear"
+            else 10.0 * np.log10(power_ratio)
+        )
         extent = [k[0] / 1e3, k[-1] / 1e3, f[use][0] / 1e6, f[use][-1] / 1e6]
 
         fig, axes = plt.subplots(
@@ -280,16 +358,21 @@ def render_komega_comparison(
                 vmax=0,
             )
             axis.set_title(title)
-        difference = axes[2].imshow(
-            ratio,
-            origin="lower",
-            aspect="auto",
-            extent=extent,
-            cmap="RdBu_r",
-            vmin=-12,
-            vmax=12,
+        ratio_options = (
+            {"norm": LogNorm(vmin=0.25, vmax=4.0)}
+            if ratio_scale == "linear"
+            else {"vmin": -12, "vmax": 12}
         )
-        axes[2].set_title(f"{_case_name(second_label)} / {_case_name(first_label)} [dB]")
+        difference = axes[2].imshow(
+            ratio, origin="lower", aspect="auto", extent=extent,
+            cmap="RdBu_r", **ratio_options,
+        )
+        shape = "normalized " if ratio_normalization == "unit_l2" else ""
+        suffix = " [dB]" if ratio_scale == "db" else " [×]"
+        axes[2].set_title(
+            f"{_case_name(second_label)} / {_case_name(first_label)} "
+            f"{shape}amplitude{suffix}"
+        )
         fig.supxlabel("Signed wavenumber [10³ rad/m]")
         axes[0].set_ylabel("Frequency [MHz]")
         axes[0].set_yscale("log")
@@ -298,10 +381,17 @@ def render_komega_comparison(
         ticks = ticks[(ticks >= extent[2] - 1e-9) & (ticks <= extent[3] + 1e-9)]
         axes[0].set_yticks(ticks, [f"{tick:g}" for tick in ticks])
         fig.colorbar(image, ax=axes[:2], label="Relative power [dB]")
-        fig.colorbar(difference, ax=axes[2], label="Power ratio [dB]")
+        fig.colorbar(
+            difference, ax=axes[2],
+            label=f"{shape.capitalize()}amplitude ratio{suffix}",
+            ticks=[0.25, 0.5, 1.0, 2.0, 4.0] if ratio_scale == "linear" else None,
+            format="%.2g" if ratio_scale == "linear" else None,
+        )
         fig.savefig(map_path, dpi=180, bbox_inches="tight")
         plt.close(fig)
 
+        if spectrum_path is None:
+            return map_path, None
         power_a = np.sum(a, axis=0)
         power_b = np.sum(b, axis=0)
         fig, axes = plt.subplots(2, 1, figsize=(9, 7), sharex=True)

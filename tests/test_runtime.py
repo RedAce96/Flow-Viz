@@ -427,7 +427,11 @@ class RuntimeTests(unittest.TestCase):
                     "id": "compare", "recipe": "case_comparison",
                     "baseline": {"analysis_id": "asym"},
                     "comparison": {"analysis_id": "gaus"},
-                    "product_ids": ["spectral.psd"],
+                    "product_ids": ["spectral.probe_signals", "spectral.psd"],
+                    "fft_ratio_plotting": {
+                        "scales": ["linear"],
+                        "normalizations": ["absolute"],
+                    },
                 },
             ])
             result = run_project(project)
@@ -437,6 +441,9 @@ class RuntimeTests(unittest.TestCase):
             )
             self.assertEqual(metrics["baseline"], {"analysis_id": "asym", "archived_run_id": None})
             self.assertTrue(metrics["metrics"])
+            figures = result.run_dir / "figures" / "compare"
+            self.assertTrue((figures / "comparison_fft_amplitude_linear_ratio.png").is_file())
+            self.assertFalse((figures / "comparison_fft_amplitude_ratio.png").exists())
 
     def test_interruption_is_atomic_and_reportable(self):
         with tempfile.TemporaryDirectory() as temporary:
