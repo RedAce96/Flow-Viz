@@ -1,5 +1,42 @@
 # Recipe reference
 
+## Spectral comparison conventions
+
+Probe FFT comparisons retain the single-sided amplitude calculation used by
+the original run. Absolute amplitude ratio is `A_G/A_A`; its dB view is
+`20 log10(A_G/A_A)`. A normalized shape divides each spectrum by
+`sqrt(sum(A(f)^2))` over the declared reference band before any display mask
+or crop is applied. The ratio mask is a support rule: a point is omitted when
+either unnormalized amplitude is below the configured fraction of that case's
+own peak. It is not a measured noise floor or an SNR estimate.
+
+Metrics, figures, peak tables, and threshold diagnostics use the same configured
+physical-coordinate alignment policy. Strict alignment rejects unmatched grids;
+intersection and interpolation policies record their exact target coordinates and
+never extrapolate beyond either product's coverage.
+
+Wave maps use squared Fourier coefficients for the absolute panels. Their
+optional amplitude ratio is `sqrt(power_G/power_A)`, with support determined
+from the shared selected-band peak. Unit-L2 shape maps normalize first and then
+require each normalized map to exceed the configured fraction of its own peak.
+Signed-k summaries use
+`S(k)=sum_f |C(f,k)|^2` and report both the band sum and its fraction per k
+bin; they are not PSD densities or physical energy without additional factors
+and normalization assumptions.
+
+The default wave comparison band is 0.1–3 MHz on a logarithmic frequency
+axis. Linear amplitude-ratio maps use ordinary linear color spacing from 0 to
+4, with equality at 1. Unsupported cells are gray and clipped values are
+reported in sidecar metadata. The 100 MHz probe display limit is a
+presentation limit, not a validated physical bandwidth.
+
+When both Welch products contain overlap-corrected equivalent degrees of freedom,
+PSD ratios include configurable pointwise F-distribution confidence intervals.
+These intervals assume approximately stationary Gaussian, independent spectral
+estimates. They are not simultaneous bands or proof of physical significance.
+Legacy or interpolated PSD products remain descriptively comparable but report
+confidence as unavailable rather than substituting nominal `2K` uncertainty.
+
 This file is generated from the central workflow registry. `pelec-post recipes show NAME` presents the same contract.
 
 ## `flow_overview`
@@ -236,33 +273,7 @@ Schema- and provenance-checked comparison of existing artifacts.
 - Required plotfile fields: none
 - Dependencies: none
 - Conflicts: none
-- Artifact IDs: comparison.metrics, comparison.figures, comparison.overlay_figure
-
-When the selected products include `spectral.probe_signals`, the comparison
-also writes paired raw histories, a 2 µs history zoom, per-probe FFT amplitude
-overlays, separately normalized FFT shapes, and amplitude-ratio figures. Set
-`fft_ratio_plotting.scales` to any selection of `db` and `linear`, and
-`fft_ratio_plotting.normalizations` to any selection of `absolute` and `unit_l2`.
-The defaults write all four combinations. The absolute linear ratio is
-`comparison amplitude / baseline amplitude` at each frequency; the dB view is
-`20 log10` of that ratio. Unit-L2 ratios compare spectral shape after each
-displayed spectrum is normalized. Ratio figures mask frequencies below 1% of
-either case's own FFT peak by default; change
-`fft_ratio_plotting.minimum_relative_amplitude` to adjust this cutoff. Probe
-panels omit locations that have zero disturbance in both cases.
-The panel layout places the leftmost and rightmost selected probes together,
-then works inward, so mirrored distances are adjacent regardless of YAML order.
-`spectral.psd` adds paired Welch PSD curves. Put `wave.komega` first to
-make the main comparison figure
-a shared-scale signed frequency–wavenumber map with a logarithmic positive-
-frequency axis and amplitude-ratio panel. The same ratio scale and normalization
-options generate additional f–k maps; the first selected combination is used in
-the main figure. Linear f–k amplitude ratios are the square root of the power
-ratio. The comparison also adds absolute and normalized band-integrated signed-k
-curves. Ratio-map pixels below the configured amplitude threshold relative to
-the shared peak in either case are masked. The summary
-chart uses relative L2 differences so quantities with different physical
-units are not placed on a common absolute-difference axis.
+- Artifact IDs: comparison.metrics, comparison.figures, comparison.overlay_figure, comparison.psd_ratio_confidence, comparison.psd_ratio_figure
 
 Assumptions:
 
@@ -272,52 +283,5 @@ Interpretation limits:
 
 - Incompatible artifacts are rejected rather than interpolated silently.
 
-For example, on a `case_comparison` entry with `spectral.probe_signals` or
-`wave.komega`:
-
-```yaml
-fft_ratio_plotting:
-  scales: [db, linear]
-  normalizations: [absolute, unit_l2]
-  minimum_relative_amplitude: 0.01
-```
-
 All current numerical recipes support 2-D only. Inspection recognizes 3-D datasets,
 but planning blocks unsupported algorithms before expensive loading.
-
-## Probe histories with separate panel scales
-
-`probe_spectrum`, `single_pulse`, and other probe recipes can save named raw
-history views alongside the regular overlay. Set `probe_plotting.trace_views`
-to choose a time range and probe groups. Each group gets its own vertical axis;
-`value_limits` is optional when a fixed axis is needed. For one two-probe group,
-`pair_difference: true` adds a difference panel. The view reads only the record
-selected by the analysis's `record_start_time_s` and `end_time_s`.
-
-```yaml
-probe_plotting:
-  mode: both
-  normalization: none
-  label: index
-  trace_views:
-    - id: pulse-symmetry
-      title: Symmetric near-source probe response
-      time_end_s: 1.25e-7
-      groups:
-        - title: Near-source
-          probe_indices: [150, 170]
-      pair_difference: true
-    - id: symmetric-pairs
-      title: Symmetric probe pairs on separate vertical scales
-      time_end_s: 1.0e-5
-      groups:
-        - title: Near-source
-          probe_indices: [150, 170]
-        - title: Outer
-          probe_indices: [120, 200]
-```
-
-The resulting figures are `trace_pulse-symmetry.png` and
-`trace_symmetric-pairs.png` in the analysis figure directory. These settings
-are already present in the focused `Flow-Viz/Post-Processing/analyses.yaml`
-recipe for both kernel cases and both pressure and temperature.

@@ -8,8 +8,14 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import (
-    BaseModel, ConfigDict, Field, NonNegativeFloat, PositiveFloat, PositiveInt,
-    field_validator, model_validator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    NonNegativeFloat,
+    PositiveFloat,
+    PositiveInt,
+    field_validator,
+    model_validator,
 )
 
 
@@ -46,7 +52,7 @@ class FigurePresentation(StrictModel):
     transparent: bool = False
 
     @model_validator(mode="after")
-    def unique_formats(self) -> "FigurePresentation":
+    def unique_formats(self) -> FigurePresentation:
         if not self.formats:
             raise ValueError("figure formats cannot be empty")
         if len(self.formats) != len(set(self.formats)):
@@ -93,7 +99,7 @@ class ContourRange(StrictModel):
     upper_percentile: float = Field(default=99.0, ge=0.0, le=100.0)
 
     @model_validator(mode="after")
-    def valid_range(self) -> "ContourRange":
+    def valid_range(self) -> ContourRange:
         if self.lower_percentile >= self.upper_percentile:
             raise ValueError("lower_percentile must be below upper_percentile")
         if self.mode == "fixed":
@@ -131,14 +137,16 @@ class ContourRendering(StrictModel):
     levels: PositiveInt | tuple[float, ...] | None = None
 
     @model_validator(mode="after")
-    def valid_levels(self) -> "ContourRendering":
+    def valid_levels(self) -> ContourRendering:
         if self.mode == "discrete" and self.levels is None:
             raise ValueError("discrete contours require levels")
-        if isinstance(self.levels, tuple):
-            if len(self.levels) < 2 or any(
+        if isinstance(self.levels, tuple) and (
+            len(self.levels) < 2
+            or any(
                 second <= first for first, second in zip(self.levels, self.levels[1:])
-            ):
-                raise ValueError("explicit contour levels must be strictly increasing")
+            )
+        ):
+            raise ValueError("explicit contour levels must be strictly increasing")
         return self
 
 
@@ -166,7 +174,7 @@ class ContourStyle(StrictModel):
         return value
 
     @model_validator(mode="after")
-    def compatible_normalization(self) -> "ContourStyle":
+    def compatible_normalization(self) -> ContourStyle:
         if self.symlog_linear_threshold is not None and self.normalization != "symlog":
             raise ValueError("symlog_linear_threshold requires symlog normalization")
         if self.symmetric_about_zero and self.normalization == "log":
@@ -299,7 +307,7 @@ class RegionBounds(StrictModel):
     y_m: tuple[float, float]
 
     @model_validator(mode="after")
-    def increasing(self) -> "RegionBounds":
+    def increasing(self) -> RegionBounds:
         if self.x_m[1] <= self.x_m[0] or self.y_m[1] <= self.y_m[0]:
             raise ValueError("freestream region bounds must be strictly increasing")
         return self
@@ -325,7 +333,7 @@ class FlatPlateGeometry(StrictModel):
     fluid_side: Literal["above", "below"] = "above"
 
     @model_validator(mode="after")
-    def increasing_chord(self) -> "FlatPlateGeometry":
+    def increasing_chord(self) -> FlatPlateGeometry:
         if (
             self.trailing_edge_x_m is not None
             and self.trailing_edge_x_m <= self.leading_edge_x_m
@@ -350,7 +358,7 @@ class PolylineGeometry(StrictModel):
     fluid_side: Literal["left", "right", "outside", "inside"]
 
     @model_validator(mode="after")
-    def enough_points(self) -> "PolylineGeometry":
+    def enough_points(self) -> PolylineGeometry:
         minimum = 3 if self.closed else 2
         if len(self.points_m) < minimum:
             raise ValueError(f"polyline geometry requires at least {minimum} points")
@@ -370,7 +378,7 @@ class VolumeFractionGeometry(StrictModel):
     smoothing_window: PositiveInt = 1
 
     @model_validator(mode="after")
-    def valid_smoothing(self) -> "VolumeFractionGeometry":
+    def valid_smoothing(self) -> VolumeFractionGeometry:
         if self.smoothing_window % 2 == 0:
             raise ValueError("smoothing_window must be odd")
         return self
@@ -403,7 +411,7 @@ class ProbeTraceGroup(StrictModel):
     value_limits: tuple[float, float] | None = None
 
     @model_validator(mode="after")
-    def valid_group(self) -> "ProbeTraceGroup":
+    def valid_group(self) -> ProbeTraceGroup:
         if len(self.probe_indices) != len(set(self.probe_indices)):
             raise ValueError("trace group probe_indices must be unique")
         if any(index < 0 for index in self.probe_indices):
@@ -423,7 +431,7 @@ class ProbeTraceView(StrictModel):
     grid: bool = True
 
     @model_validator(mode="after")
-    def valid_view(self) -> "ProbeTraceView":
+    def valid_view(self) -> ProbeTraceView:
         if self.time_end_s is not None and self.time_end_s <= self.time_start_s:
             raise ValueError("trace view time_end_s must exceed time_start_s")
         if self.pair_difference and (
@@ -439,13 +447,21 @@ class ProbePlottingConfig(StrictModel):
     mode: Literal["overlay", "panels", "both"] = "both"
     normalization: Literal["none", "per_probe_peak"] = "none"
     label: Literal["index_coordinates", "coordinates", "index"] = "index_coordinates"
+    scale_policy: Literal["independent", "group", "all"] = "independent"
+    probe_groups: tuple[ProbeTraceGroup, ...] = ()
     trace_views: tuple[ProbeTraceView, ...] = ()
 
     @model_validator(mode="after")
-    def valid_trace_views(self) -> "ProbePlottingConfig":
+    def valid_trace_views(self) -> ProbePlottingConfig:
         ids = [view.id for view in self.trace_views]
         if len(ids) != len(set(ids)):
             raise ValueError("trace view ids must be unique")
+        seen: set[int] = set()
+        for group in self.probe_groups:
+            overlap = seen.intersection(group.probe_indices)
+            if overlap:
+                raise ValueError(f"probe_groups cannot overlap: {sorted(overlap)}")
+            seen.update(group.probe_indices)
         return self
 
 
@@ -458,12 +474,15 @@ class ProbeAnalysis(BaseAnalysis):
     time_grid_policy: Literal["resample_uniform", "require_uniform"] = "resample_uniform"
 
     @model_validator(mode="after")
-    def valid_probe_indices(self) -> "ProbeAnalysis":
+    def valid_probe_indices(self) -> ProbeAnalysis:
         if not self.probe_set_id:
             raise ValueError("probe_set_id cannot be empty")
-        if self.record_start_time_s is not None and self.end_time_s is not None:
-            if self.end_time_s <= self.record_start_time_s:
-                raise ValueError("end_time_s must exceed record_start_time_s")
+        if (
+            self.record_start_time_s is not None
+            and self.end_time_s is not None
+            and self.end_time_s <= self.record_start_time_s
+        ):
+            raise ValueError("end_time_s must exceed record_start_time_s")
         if any(index < 0 for index in self.probe_indices):
             raise ValueError("probe_indices cannot contain negative values")
         if len(self.probe_indices) != len(set(self.probe_indices)):
@@ -500,7 +519,7 @@ class LineProfileConfig(StrictModel):
     fields: dict[Variable, LineStyleOverride] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def increasing_limits(self) -> "LineProfileConfig":
+    def increasing_limits(self) -> LineProfileConfig:
         for name in ("coordinate_range_m", "coordinate_limits", "value_limits"):
             limits = getattr(self, name)
             if limits is not None and limits[1] <= limits[0]:
@@ -550,7 +569,7 @@ class SurfaceNormalProfiles(StrictModel):
     figure: SurfaceProfileFigure = SurfaceProfileFigure()
 
     @model_validator(mode="after")
-    def valid_profiles(self) -> "SurfaceNormalProfiles":
+    def valid_profiles(self) -> SurfaceNormalProfiles:
         if len(self.fields) != len(set(self.fields)):
             raise ValueError("surface-normal fields must be unique")
         ids = [station.id for station in self.stations]
@@ -598,7 +617,7 @@ class FlowOverviewAnalysis(BaseAnalysis):
     streamlines: bool = False
 
     @model_validator(mode="after")
-    def compatible_line_layout(self) -> "FlowOverviewAnalysis":
+    def compatible_line_layout(self) -> FlowOverviewAnalysis:
         if self.line_profiles.layout == "combined" and not self.line_profiles.normalize_values:
             units = {
                 Variable.DENSITY: "density", Variable.PRESSURE: "pressure",
@@ -643,7 +662,7 @@ class ControlVolumeConfig(StrictModel):
     bulk_viscosity_pa_s: float = Field(default=0.0, ge=0.0)
 
     @model_validator(mode="after")
-    def increasing_x(self) -> "ControlVolumeConfig":
+    def increasing_x(self) -> ControlVolumeConfig:
         if self.x_range_m[1] <= self.x_range_m[0]:
             raise ValueError("control-volume x_range_m must be strictly increasing")
         return self
@@ -662,7 +681,7 @@ class ForceProbeLinkageConfig(StrictModel):
     probe_indices: tuple[int, ...] = ()
 
     @model_validator(mode="after")
-    def valid_probe_indices(self) -> "ForceProbeLinkageConfig":
+    def valid_probe_indices(self) -> ForceProbeLinkageConfig:
         if any(index < 0 for index in self.probe_indices):
             raise ValueError("probe_indices cannot contain negative values")
         if len(self.probe_indices) != len(set(self.probe_indices)):
@@ -686,7 +705,7 @@ class AerodynamicForcesAnalysis(BaseAnalysis):
     probe_linkage: ForceProbeLinkageConfig | None = None
 
     @model_validator(mode="after")
-    def baseline_contract(self) -> "AerodynamicForcesAnalysis":
+    def baseline_contract(self) -> AerodynamicForcesAnalysis:
         if self.baseline == "none" and self.baseline_id is not None:
             raise ValueError("baseline_id is only valid for static or paired baselines")
         if self.baseline != "none" and not self.baseline_id:
@@ -702,6 +721,18 @@ class ProbeSpectrumAnalysis(ProbeAnalysis):
     detrend: Literal["mean", "linear", "none"] = "mean"
     welch_segment_samples: PositiveInt | None = None
     overlap_fraction: float = Field(default=0.5, ge=0.0, lt=1.0)
+    diagnostics_enabled: bool = False
+    diagnostic_record_end_fractions: tuple[float, ...] = (0.5, 0.75, 1.0)
+    diagnostic_end_taper_fractions: tuple[float, ...] = (0.1, 0.2)
+
+    @field_validator("diagnostic_record_end_fractions", "diagnostic_end_taper_fractions")
+    @classmethod
+    def valid_diagnostic_fractions(cls, values: tuple[float, ...]) -> tuple[float, ...]:
+        if not values or any(value <= 0.0 or value > 1.0 for value in values):
+            raise ValueError("diagnostic fractions must lie in (0, 1]")
+        if len(values) != len(set(values)):
+            raise ValueError("diagnostic fractions must be unique")
+        return values
 
 
 class SinglePulseAnalysis(ProbeAnalysis):
@@ -754,17 +785,31 @@ class DirectionalWaveAnalysis(ProbeAnalysis):
     variable: Variable
     frequency_min_hz: float = Field(default=0.0, ge=0.0)
     frequency_max_hz: PositiveFloat
+    spectral_display: Literal["amplitude", "relative_db"] = Field(
+        default="amplitude",
+        description="Display spectral magnitude in signal units or power relative to a shared maximum in dB.",
+    )
     expected_speed_min_m_s: PositiveFloat | None = None
     expected_speed_max_m_s: PositiveFloat | None = None
     minimum_coherence: float = Field(default=0.8, ge=0.0, le=1.0)
     spatial_window: Literal["hann", "hamming", "blackman", "rectangular"] = "hann"
     temporal_window: Literal["hann", "hamming", "blackman", "rectangular"] = "rectangular"
-    temporal_wavenumber: "TemporalWavenumberConfig" = Field(
+    temporal_wavenumber: TemporalWavenumberConfig = Field(
         default_factory=lambda: TemporalWavenumberDisabled()
     )
+    diagnostics_enabled: bool = False
+    direction: Literal["positive", "negative", "both"] = Field(
+        default="positive",
+        description=(
+            "Accepted real-wavenumber sign. Expected speed bounds constrain the "
+            "magnitude of phase speed; reported phase speed retains its sign."
+        ),
+    )
+    spatial_sensitivity_enabled: bool = False
+    spatial_aperture_fractions: tuple[float, ...] = (1.0, 0.75, 0.5)
 
     @model_validator(mode="after")
-    def ranges(self) -> "DirectionalWaveAnalysis":
+    def ranges(self) -> DirectionalWaveAnalysis:
         if self.frequency_max_hz <= self.frequency_min_hz:
             raise ValueError("frequency_max_hz must exceed frequency_min_hz")
         if (
@@ -773,6 +818,11 @@ class DirectionalWaveAnalysis(ProbeAnalysis):
             and self.expected_speed_max_m_s <= self.expected_speed_min_m_s
         ):
             raise ValueError("expected speed maximum must exceed minimum")
+        if (not self.spatial_aperture_fractions or
+                any(not math.isfinite(value) or value <= 0.0 or value > 1.0
+                    for value in self.spatial_aperture_fractions) or
+                len(set(self.spatial_aperture_fractions)) != len(self.spatial_aperture_fractions)):
+            raise ValueError("spatial_aperture_fractions must be unique values in (0, 1]")
         return self
 
 
@@ -791,7 +841,7 @@ class TransientWavepacketAnalysis(ProbeAnalysis):
     overlap_fraction: float = Field(default=0.75, ge=0.0, lt=1.0)
 
     @model_validator(mode="after")
-    def band(self) -> "TransientWavepacketAnalysis":
+    def band(self) -> TransientWavepacketAnalysis:
         if self.band_max_hz <= self.band_min_hz:
             raise ValueError("band_max_hz must exceed band_min_hz")
         return self
@@ -809,7 +859,7 @@ class NonlinearCouplingAnalysis(ProbeAnalysis):
     automatic_frequency_selection: bool = False
 
     @model_validator(mode="after")
-    def frequency_selection(self) -> "NonlinearCouplingAnalysis":
+    def frequency_selection(self) -> NonlinearCouplingAnalysis:
         if not self.target_frequencies_hz and not self.automatic_frequency_selection:
             raise ValueError(
                 "provide target_frequencies_hz or explicitly enable automatic_frequency_selection"
@@ -836,7 +886,7 @@ class ComparisonReference(StrictModel):
     )
 
     @model_validator(mode="after")
-    def valid_reference(self) -> "ComparisonReference":
+    def valid_reference(self) -> ComparisonReference:
         if not self.analysis_id:
             raise ValueError("comparison analysis_id cannot be empty")
         if self.archived_run_id == "":
@@ -863,11 +913,31 @@ class ComparisonAlignment(StrictModel):
 class FFTRatioPlottingConfig(StrictModel):
     """Amplitude-ratio views for paired probe FFT and frequency-wavenumber products."""
 
+    spectral_display: Literal["amplitude", "relative_db"] = Field(
+        default="amplitude",
+        description="Display source spectral magnitudes in signal units or relative power in dB.",
+    )
     scales: tuple[Literal["db", "linear"], ...] = ("db", "linear")
     normalizations: tuple[Literal["absolute", "unit_l2"], ...] = (
         "absolute", "unit_l2"
     )
     minimum_relative_amplitude: float = Field(default=0.01, gt=0.0, lt=1.0)
+    reference_frequency_band_hz: tuple[float, float] | None = None
+    wave_frequency_band_hz: tuple[float, float] | None = None
+    linear_ratio_limits: tuple[float, float] = (0.0, 4.0)
+    linear_ratio_color_scale: Literal["linear", "log"] = "linear"
+    db_ratio_limits: tuple[float, float] = (-12.0, 12.0)
+    scale_policy: Literal["independent", "group", "all"] = "independent"
+    probe_groups: tuple[ProbeTraceGroup, ...] = ()
+    amplitude_ratio_panels: bool = True
+    phase_delay_diagnostics: bool = False
+    symmetry_diagnostics: bool = False
+    threshold_sensitivity: bool = False
+    signed_k_ratio: bool = True
+    frequency_slices: bool = True
+    reflection_center_m: float = 0.025
+    scalar_reflection_parity: Literal["even", "odd"] = "even"
+    psd_ratio_confidence_level: float = Field(default=0.95, gt=0.0, lt=1.0)
 
     @model_validator(mode="after")
     def unique_views(self) -> FFTRatioPlottingConfig:
@@ -877,19 +947,58 @@ class FFTRatioPlottingConfig(StrictModel):
         ):
             if not values or len(values) != len(set(values)):
                 raise ValueError(f"fft_ratio_plotting {name} must be nonempty and unique")
+        for name, bounds in (("reference_frequency_band_hz", self.reference_frequency_band_hz),
+                             ("wave_frequency_band_hz", self.wave_frequency_band_hz)):
+            if bounds is None:
+                continue
+            if not all(math.isfinite(value) for value in bounds) or bounds[0] < 0.0 or bounds[1] <= bounds[0]:
+                raise ValueError(f"{name} must be an increasing nonnegative band")
+        if not all(math.isfinite(value) for value in self.linear_ratio_limits):
+            raise ValueError("linear_ratio_limits must be finite")
+        if self.linear_ratio_limits[0] < 0.0 or self.linear_ratio_limits[1] <= self.linear_ratio_limits[0]:
+            raise ValueError("linear_ratio_limits must be an increasing nonnegative range")
+        if not self.linear_ratio_limits[0] <= 1.0 <= self.linear_ratio_limits[1]:
+            raise ValueError("linear_ratio_limits must include equality ratio 1")
+        if self.linear_ratio_color_scale == "log" and self.linear_ratio_limits[0] <= 0.0:
+            raise ValueError("logarithmic linear_ratio_color_scale requires a positive lower limit")
+        if not math.isfinite(self.reflection_center_m):
+            raise ValueError("reflection_center_m must be finite")
+        if (not all(math.isfinite(value) for value in self.db_ratio_limits)
+                or self.db_ratio_limits[1] <= self.db_ratio_limits[0]):
+            raise ValueError("db_ratio_limits must be a finite increasing range")
+        seen: set[int] = set()
+        for group in self.probe_groups:
+            overlap = seen.intersection(group.probe_indices)
+            if overlap:
+                raise ValueError(f"fft_ratio_plotting probe_groups overlap: {sorted(overlap)}")
+            seen.update(group.probe_indices)
+        if self.symmetry_diagnostics:
+            if not self.probe_groups:
+                raise ValueError(
+                    "symmetry_diagnostics requires explicit two-probe probe_groups"
+                )
+            invalid = [
+                group.title for group in self.probe_groups
+                if len(group.probe_indices) != 2
+            ]
+            if invalid:
+                raise ValueError(
+                    "symmetry_diagnostics requires exactly two probes per group; "
+                    f"invalid groups: {invalid}"
+                )
         return self
 
 
 class CaseComparisonAnalysis(BaseAnalysis):
     recipe: Literal["case_comparison"]
-    baseline: "ComparisonReference"
-    comparison: "ComparisonReference"
+    baseline: ComparisonReference
+    comparison: ComparisonReference
     product_ids: tuple[str, ...] = Field(min_length=1, json_schema_extra={"uniqueItems": True})
-    alignment: "ComparisonAlignment" = Field(default_factory=lambda: ComparisonAlignment())
+    alignment: ComparisonAlignment = Field(default_factory=lambda: ComparisonAlignment())
     fft_ratio_plotting: FFTRatioPlottingConfig = Field(default_factory=FFTRatioPlottingConfig)
 
     @model_validator(mode="after")
-    def distinct_products(self) -> "CaseComparisonAnalysis":
+    def distinct_products(self) -> CaseComparisonAnalysis:
         if self.baseline == self.comparison:
             raise ValueError("baseline and comparison references must be different")
         if len(self.product_ids) != len(set(self.product_ids)):
@@ -921,7 +1030,7 @@ class AnalysesFile(StrictModel):
     analyses: tuple[AnalysisConfig, ...] = ()
 
     @model_validator(mode="after")
-    def unique_ids(self) -> "AnalysesFile":
+    def unique_ids(self) -> AnalysesFile:
         ids = [analysis.id for analysis in self.analyses]
         if len(ids) != len(set(ids)):
             raise ValueError("analysis ids must be unique")
@@ -977,7 +1086,7 @@ class ProbeInput(StrictModel):
         return value
 
     @model_validator(mode="after")
-    def one_source(self) -> "ProbeInput":
+    def one_source(self) -> ProbeInput:
         if self.compact_file is not None and self.binary_files:
             raise ValueError("choose compact_file or binary_files, not both")
         if self.compact_file is None and not self.binary_files:
@@ -995,7 +1104,7 @@ class InputConfig(StrictModel):
     source_histories: dict[str, SourceHistoryInput] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def named_sources(self) -> "InputConfig":
+    def named_sources(self) -> InputConfig:
         for field_name, values in (
             ("probe_sets", self.probe_sets), ("archived_runs", self.archived_runs),
             ("baselines", self.baselines), ("source_histories", self.source_histories),

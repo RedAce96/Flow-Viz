@@ -31,7 +31,7 @@ def _windows(time_s: np.ndarray, config: TemporalWavenumberEnabled) -> tuple[int
         dt_values, dt, rtol=1.0e-8, atol=max(abs(dt) * 1.0e-10, 1.0e-15)
     ):
         raise ValueError("time-localized wavenumber analysis requires uniform time samples")
-    n_window = int(round(config.window_duration_s / dt))
+    n_window = round(config.window_duration_s / dt)
     if n_window < 8:
         raise ValueError(
             "temporal_wavenumber.window_duration_s must span at least 8 samples"
@@ -40,7 +40,7 @@ def _windows(time_s: np.ndarray, config: TemporalWavenumberEnabled) -> tuple[int
         raise ValueError(
             "temporal_wavenumber.window_duration_s exceeds the selected record duration"
         )
-    hop = max(1, int(round(n_window * (1.0 - config.overlap_fraction))))
+    hop = max(1, round(n_window * (1.0 - config.overlap_fraction)))
     starts = np.arange(0, len(time_s) - n_window + 1, hop, dtype=int)
     if len(starts) < 2:
         raise ValueError(
@@ -172,7 +172,7 @@ def compute_temporal_wavenumber(
     """Compute bounded sliding-window f-k summaries and snapshot selection."""
     config = analysis.temporal_wavenumber
     if not isinstance(config, TemporalWavenumberEnabled):
-        raise ValueError("temporal wavenumber processing is disabled")
+        raise TypeError("temporal wavenumber processing is disabled")
     values = np.asarray(values, dtype=float)
     time_s = np.asarray(time_s, dtype=float).ravel()
     x_m = np.asarray(x_m, dtype=float).ravel()
@@ -353,7 +353,7 @@ def compute_temporal_wavenumber_parallel(
     """Compute localized summaries and snapshots with bounded worker processes."""
     config = analysis.temporal_wavenumber
     if not isinstance(config, TemporalWavenumberEnabled):
-        raise ValueError("temporal wavenumber processing is disabled")
+        raise TypeError("temporal wavenumber processing is disabled")
     if int(context.project.machine_file.compute.workers) <= 1:
         summary = compute_temporal_wavenumber(values, time_s, x_m, analysis)
         return summary, compute_temporal_snapshots(values, time_s, x_m, analysis, summary)
@@ -522,23 +522,36 @@ def register_temporal_wavenumber_figures(
         context.project.analyses_file.presentation, context.analysis.presentation
     )
     figure, axis = plt.subplots(figsize=(presentation.figure.width_in, max(4.5, presentation.figure.height_in)))
-    image = axis.pcolormesh(
-        summary["time_center_s"], summary["wavenumber_rad_m"],
-        summary["relative_band_power_db"].T, shading="auto",
-        vmin=config.display_floor_db, vmax=0.0,
-    )
+    if context.analysis.spectral_display == "amplitude":
+        band_amplitude = np.sqrt(np.maximum(summary["band_power"], 0.0))
+        amplitude_max = float(np.nanmax(band_amplitude))
+        image = axis.pcolormesh(
+            summary["time_center_s"], summary["wavenumber_rad_m"],
+            band_amplitude.T, shading="auto", vmin=0.0,
+            vmax=amplitude_max if amplitude_max > 0.0 else 1.0,
+        )
+        spectral_label = f"Band amplitude [{units}]"
+        spectral_units = units
+    else:
+        image = axis.pcolormesh(
+            summary["time_center_s"], summary["wavenumber_rad_m"],
+            summary["relative_band_power_db"].T, shading="auto",
+            vmin=config.display_floor_db, vmax=0.0,
+        )
+        spectral_label = "Band power relative to record maximum [dB]"
+        spectral_units = "relative dB"
     valid = np.where(summary["valid_time_mask"], summary["dominant_wavenumber_rad_m"], np.nan)
     axis.plot(summary["time_center_s"], valid, color="white", linewidth=1.5, label="dominant ridge")
     for time_value in snapshots["snapshot_time_s"]:
         axis.axvline(float(time_value), color="black", linestyle="--", alpha=0.5)
     axis.set_xlabel("Time [s]")
     axis.set_ylabel("Wavenumber [rad/m]")
-    figure.colorbar(image, ax=axis, label="Band power relative to record maximum [dB]")
+    figure.colorbar(image, ax=axis, label=spectral_label)
     axis.legend(loc="best")
     figure.tight_layout()
     _register_figure(
         context, figure, "wave.temporal_wavenumber.figure", "temporal_wavenumber",
-        variable, "relative dB", "Globally scaled band-integrated signed wavenumber evolution.",
+        variable, spectral_units, "Band-integrated signed wavenumber evolution.",
         common,
     )
     plt.close(figure)
@@ -584,21 +597,38 @@ def register_temporal_wavenumber_figures(
     rows = len(snapshots["snapshot_time_s"])
     figure, axes = plt.subplots(rows, 1, squeeze=False, figsize=(presentation.figure.width_in, max(4.5, 3.0 * rows)), constrained_layout=True)
     image = None
+    if context.analysis.spectral_display == "amplitude":
+        snapshot_amplitude = np.sqrt(np.maximum(snapshots["power"], 0.0))
+        amplitude_max = float(np.nanmax(snapshot_amplitude))
+        snapshot_vmax = amplitude_max if amplitude_max > 0.0 else 1.0
     for row, time_value in enumerate(snapshots["snapshot_time_s"]):
         axis = axes[row, 0]
-        image = axis.pcolormesh(
-            snapshots["wavenumber_rad_m"], snapshots["frequency_hz"],
-            snapshots["relative_power_db"][row], shading="auto",
-            vmin=config.display_floor_db, vmax=0.0,
-        )
+        if context.analysis.spectral_display == "amplitude":
+            image = axis.pcolormesh(
+                snapshots["wavenumber_rad_m"], snapshots["frequency_hz"],
+                snapshot_amplitude[row], shading="auto", vmin=0.0,
+                vmax=snapshot_vmax,
+            )
+        else:
+            image = axis.pcolormesh(
+                snapshots["wavenumber_rad_m"], snapshots["frequency_hz"],
+                snapshots["relative_power_db"][row], shading="auto",
+                vmin=config.display_floor_db, vmax=0.0,
+            )
         axis.set_ylabel("Frequency [Hz]")
         axis.set_title(f"t={float(time_value):.6g} s ({summary['snapshot_roles'][row]})")
     axes[-1, 0].set_xlabel("Wavenumber [rad/m]")
     if image is not None:
-        figure.colorbar(image, ax=axes[:, 0].tolist(), label="Power relative to record maximum [dB]")
+        colorbar_label = (
+            f"Spectral amplitude [{units}]"
+            if context.analysis.spectral_display == "amplitude"
+            else "Power relative to record maximum [dB]"
+        )
+        figure.colorbar(image, ax=axes[:, 0].tolist(), label=colorbar_label)
     _register_figure(
         context, figure, "wave.komega_snapshots.figure", "komega_snapshots",
-        variable, "relative dB", "Shared-scale time-localized signed f-k snapshots.", common,
+        variable, spectral_units if context.analysis.spectral_display == "relative_db" else units,
+        "Shared-scale time-localized signed f-k snapshots.", common,
     )
     plt.close(figure)
 

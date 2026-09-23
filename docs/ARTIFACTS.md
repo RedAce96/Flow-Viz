@@ -6,6 +6,19 @@ Artifact IDs are independent of directory spelling. Each record includes schema 
 
 Comparison must reject incompatible schema, variable, unit, coordinate, and preprocessing provenance. Reports regenerate from the run directory without simulation inputs.
 
+`spectral.confidence` uses schema version 3 and records overlap-corrected
+equivalent Welch degrees of freedom. f-k ratio statistics use schema version 2
+and always record support counts and masked fraction, including a typed
+`unavailable_no_supported_bins` result. Semantic f-k figure IDs carry their
+normalization, scale, support, limits, units, coordinate, and alignment
+provenance; legacy overlays identify the semantic product they copy.
+
+Saved-product replay writes a separate schema-version-4 manifest. Original
+source-input fingerprints and hashes of saved derived artifacts are reported
+separately. An exact identity match permits resume and replacement of damaged
+replay-owned files. Missing original inputs remain explicitly missing even when
+their saved derived products can be redrawn.
+
 The single-pulse recipe registers `pulse.source_audit` alongside the measured
 or modeled source spectrum and transfer products. A configured measured
 thermal-source history is reported in 2-D J/m terms, with its deposited energy,

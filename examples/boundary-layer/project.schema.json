@@ -247,6 +247,9 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "fft_ratio_plotting": {
+            "$ref": "#/$defs/FFTRatioPlottingConfig"
+          },
           "id": {
             "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
             "title": "Id",
@@ -958,6 +961,22 @@
       "DirectionalWaveAnalysis": {
         "additionalProperties": false,
         "properties": {
+          "diagnostics_enabled": {
+            "default": false,
+            "title": "Diagnostics Enabled",
+            "type": "boolean"
+          },
+          "direction": {
+            "default": "positive",
+            "description": "Accepted real-wavenumber sign. Expected speed bounds constrain the magnitude of phase speed; reported phase speed retains its sign.",
+            "enum": [
+              "positive",
+              "negative",
+              "both"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
           "enabled": {
             "default": true,
             "title": "Enabled",
@@ -1070,6 +1089,23 @@
             "default": null,
             "title": "Record Start Time S"
           },
+          "spatial_aperture_fractions": {
+            "default": [
+              1.0,
+              0.75,
+              0.5
+            ],
+            "items": {
+              "type": "number"
+            },
+            "title": "Spatial Aperture Fractions",
+            "type": "array"
+          },
+          "spatial_sensitivity_enabled": {
+            "default": false,
+            "title": "Spatial Sensitivity Enabled",
+            "type": "boolean"
+          },
           "spatial_window": {
             "default": "hann",
             "enum": [
@@ -1079,6 +1115,16 @@
               "rectangular"
             ],
             "title": "Spatial Window",
+            "type": "string"
+          },
+          "spectral_display": {
+            "default": "amplitude",
+            "description": "Display spectral magnitude in signal units or power relative to a shared maximum in dB.",
+            "enum": [
+              "amplitude",
+              "relative_db"
+            ],
+            "title": "Spectral Display",
             "type": "string"
           },
           "temporal_wavenumber": {
@@ -1131,6 +1177,219 @@
           "frequency_max_hz"
         ],
         "title": "DirectionalWaveAnalysis",
+        "type": "object"
+      },
+      "FFTRatioPlottingConfig": {
+        "additionalProperties": false,
+        "description": "Amplitude-ratio views for paired probe FFT and frequency-wavenumber products.",
+        "properties": {
+          "amplitude_ratio_panels": {
+            "default": true,
+            "title": "Amplitude Ratio Panels",
+            "type": "boolean"
+          },
+          "db_ratio_limits": {
+            "default": [
+              -12.0,
+              12.0
+            ],
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Db Ratio Limits",
+            "type": "array"
+          },
+          "frequency_slices": {
+            "default": true,
+            "title": "Frequency Slices",
+            "type": "boolean"
+          },
+          "linear_ratio_color_scale": {
+            "default": "linear",
+            "enum": [
+              "linear",
+              "log"
+            ],
+            "title": "Linear Ratio Color Scale",
+            "type": "string"
+          },
+          "linear_ratio_limits": {
+            "default": [
+              0.0,
+              4.0
+            ],
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Linear Ratio Limits",
+            "type": "array"
+          },
+          "minimum_relative_amplitude": {
+            "default": 0.01,
+            "exclusiveMaximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Minimum Relative Amplitude",
+            "type": "number"
+          },
+          "normalizations": {
+            "default": [
+              "absolute",
+              "unit_l2"
+            ],
+            "items": {
+              "enum": [
+                "absolute",
+                "unit_l2"
+              ],
+              "type": "string"
+            },
+            "title": "Normalizations",
+            "type": "array"
+          },
+          "phase_delay_diagnostics": {
+            "default": false,
+            "title": "Phase Delay Diagnostics",
+            "type": "boolean"
+          },
+          "probe_groups": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProbeTraceGroup"
+            },
+            "title": "Probe Groups",
+            "type": "array"
+          },
+          "psd_ratio_confidence_level": {
+            "default": 0.95,
+            "exclusiveMaximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Psd Ratio Confidence Level",
+            "type": "number"
+          },
+          "reference_frequency_band_hz": {
+            "anyOf": [
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reference Frequency Band Hz"
+          },
+          "reflection_center_m": {
+            "default": 0.025,
+            "title": "Reflection Center M",
+            "type": "number"
+          },
+          "scalar_reflection_parity": {
+            "default": "even",
+            "enum": [
+              "even",
+              "odd"
+            ],
+            "title": "Scalar Reflection Parity",
+            "type": "string"
+          },
+          "scale_policy": {
+            "default": "independent",
+            "enum": [
+              "independent",
+              "group",
+              "all"
+            ],
+            "title": "Scale Policy",
+            "type": "string"
+          },
+          "scales": {
+            "default": [
+              "db",
+              "linear"
+            ],
+            "items": {
+              "enum": [
+                "db",
+                "linear"
+              ],
+              "type": "string"
+            },
+            "title": "Scales",
+            "type": "array"
+          },
+          "signed_k_ratio": {
+            "default": true,
+            "title": "Signed K Ratio",
+            "type": "boolean"
+          },
+          "spectral_display": {
+            "default": "amplitude",
+            "description": "Display source spectral magnitudes in signal units or relative power in dB.",
+            "enum": [
+              "amplitude",
+              "relative_db"
+            ],
+            "title": "Spectral Display",
+            "type": "string"
+          },
+          "symmetry_diagnostics": {
+            "default": false,
+            "title": "Symmetry Diagnostics",
+            "type": "boolean"
+          },
+          "threshold_sensitivity": {
+            "default": false,
+            "title": "Threshold Sensitivity",
+            "type": "boolean"
+          },
+          "wave_frequency_band_hz": {
+            "anyOf": [
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Wave Frequency Band Hz"
+          }
+        },
+        "title": "FFTRatioPlottingConfig",
         "type": "object"
       },
       "FigurePresentation": {
@@ -2388,6 +2647,32 @@
             ],
             "title": "Normalization",
             "type": "string"
+          },
+          "probe_groups": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProbeTraceGroup"
+            },
+            "title": "Probe Groups",
+            "type": "array"
+          },
+          "scale_policy": {
+            "default": "independent",
+            "enum": [
+              "independent",
+              "group",
+              "all"
+            ],
+            "title": "Scale Policy",
+            "type": "string"
+          },
+          "trace_views": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProbeTraceView"
+            },
+            "title": "Trace Views",
+            "type": "array"
           }
         },
         "title": "ProbePlottingConfig",
@@ -2405,6 +2690,34 @@
             ],
             "title": "Detrend",
             "type": "string"
+          },
+          "diagnostic_end_taper_fractions": {
+            "default": [
+              0.1,
+              0.2
+            ],
+            "items": {
+              "type": "number"
+            },
+            "title": "Diagnostic End Taper Fractions",
+            "type": "array"
+          },
+          "diagnostic_record_end_fractions": {
+            "default": [
+              0.5,
+              0.75,
+              1.0
+            ],
+            "items": {
+              "type": "number"
+            },
+            "title": "Diagnostic Record End Fractions",
+            "type": "array"
+          },
+          "diagnostics_enabled": {
+            "default": false,
+            "title": "Diagnostics Enabled",
+            "type": "boolean"
           },
           "enabled": {
             "default": true,
@@ -2538,6 +2851,111 @@
           "variable"
         ],
         "title": "ProbeSpectrumAnalysis",
+        "type": "object"
+      },
+      "ProbeTraceGroup": {
+        "additionalProperties": false,
+        "properties": {
+          "probe_indices": {
+            "items": {
+              "type": "integer"
+            },
+            "minItems": 1,
+            "title": "Probe Indices",
+            "type": "array"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "value_limits": {
+            "anyOf": [
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Value Limits"
+          }
+        },
+        "required": [
+          "title",
+          "probe_indices"
+        ],
+        "title": "ProbeTraceGroup",
+        "type": "object"
+      },
+      "ProbeTraceView": {
+        "additionalProperties": false,
+        "properties": {
+          "grid": {
+            "default": true,
+            "title": "Grid",
+            "type": "boolean"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/$defs/ProbeTraceGroup"
+            },
+            "minItems": 1,
+            "title": "Groups",
+            "type": "array"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "pair_difference": {
+            "default": false,
+            "title": "Pair Difference",
+            "type": "boolean"
+          },
+          "time_end_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Time End S"
+          },
+          "time_start_s": {
+            "default": 0.0,
+            "minimum": 0.0,
+            "title": "Time Start S",
+            "type": "number"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "groups"
+        ],
+        "title": "ProbeTraceView",
         "type": "object"
       },
       "SinglePulseAnalysis": {

@@ -23,16 +23,19 @@ The report is written to the new timestamped run's `report/index.html`. A failed
 
 The clean-break interface does not accept legacy JSON or old workflow flags. The root `pelec_post.py` is only a launcher, so existing SLURM wrappers can continue forwarding `$@`; pass new CLI arguments such as `run /path/to/project`.
 
-## Redraw the transferred kernel results
+## Replay saved products
 
-From this checkout, run `python replot_saved_kernel_products.py`. It reads the
-exported `Delta_Outputs` folder and the focused `Flow-Viz/Post-Processing`
-project by default, then writes new pressure figures and arrays to
-`Delta_Outputs/replotted-frequency-wave`. The selected first-10-µs probe FFT
-and Welch PSD are recomputed from saved pressure histories. The shared signed
-frequency–wavenumber maps are redrawn from exported power arrays; changing
-their original spatial or temporal transform requires the server probe files.
-The script accepts `--export`, `--project`, and `--output` to use other paths.
+Run `python replot_saved_kernel_products.py --export /path/to/archived-run` to
+redraw supported spectra and comparisons from one run's registered artifacts.
+Replay uses that run's resolved case and analysis settings. Use repeatable
+`--analysis-id ID` options to narrow the selection, `--project DIR` to
+explicitly override those settings, and `--output DIR` to choose a destination.
+`--replay-config LOCAL_REPLAY_CONFIG.yaml` supplies optional command defaults;
+explicit command options take precedence. An existing destination resumes only
+when source, selected settings, and processing build match exactly. The replay
+manifest records missing source inputs and unsupported products. Saved f-k power
+can be redrawn, but its original transform cannot be recalculated without the
+full probe histories.
 
 ## Configuration ownership
 

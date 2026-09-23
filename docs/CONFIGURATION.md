@@ -174,25 +174,7 @@ after each workflow and are not run artifacts.
 | `comparison` | yes | `ComparisonReference` | — | — |
 | `product_ids` | yes | `array[string]` | — | minimum items: `1` |
 | `alignment` | no | `ComparisonAlignment` | — | — |
-| `fft_ratio_plotting` | no | `FFTRatioPlottingConfig` | dB and linear; absolute and unit L2 | — |
-
-### `FFTRatioPlottingConfig`
-
-Applies to both `spectral.probe_signals` and `wave.komega` case-comparison figures.
-
-| Field | Required | Type | Default | Rules |
-| --- | --- | --- | --- | --- |
-| `scales` | no | `array['db' \| 'linear']` | `[db, linear]` | nonempty, unique |
-| `normalizations` | no | `array['absolute' \| 'unit_l2']` | `[absolute, unit_l2]` | nonempty, unique |
-| `minimum_relative_amplitude` | no | `number` | `0.01` | strictly between 0 and 1 |
-
-`linear` displays comparison amplitude divided by baseline amplitude (equality is
-1). `db` displays 20 log₁₀ of that amplitude ratio (equality is 0 dB).
-`unit_l2` divides each amplitude spectrum by its own L2 norm over the displayed
-band before taking the ratio. `absolute` preserves the overall magnitude
-difference. Ratio values are shown only where both cases exceed the configured
-amplitude threshold; the frequency–wavenumber map uses its shared peak as the
-threshold reference.
+| `fft_ratio_plotting` | no | `FFTRatioPlottingConfig` | — | — |
 
 ### `ColorbarOverride`
 
@@ -331,12 +313,42 @@ threshold reference.
 | `variable` | yes | `Variable` | — | — |
 | `frequency_min_hz` | no | `number` | `0.0` | minimum: `0.0` |
 | `frequency_max_hz` | yes | `number` | — | greater than: `0` |
+| `spectral_display` | no | `'amplitude' \| 'relative_db'` | `"amplitude"` | Display spectral magnitude in signal units or power relative to a shared maximum in dB. |
 | `expected_speed_min_m_s` | no | `number \| null` | `null` | — |
 | `expected_speed_max_m_s` | no | `number \| null` | `null` | — |
 | `minimum_coherence` | no | `number` | `0.8` | minimum: `0.0`; maximum: `1.0` |
 | `spatial_window` | no | `'hann' \| 'hamming' \| 'blackman' \| 'rectangular'` | `"hann"` | — |
 | `temporal_window` | no | `'hann' \| 'hamming' \| 'blackman' \| 'rectangular'` | `"rectangular"` | — |
 | `temporal_wavenumber` | no | `TemporalWavenumberDisabled \| TemporalWavenumberEnabled` | — | discriminator: `enabled` |
+| `diagnostics_enabled` | no | `boolean` | `false` | — |
+| `direction` | no | `'positive' \| 'negative' \| 'both'` | `"positive"` | Accepted real-wavenumber sign. Expected speed bounds constrain the magnitude of phase speed; reported phase speed retains its sign. |
+| `spatial_sensitivity_enabled` | no | `boolean` | `false` | — |
+| `spatial_aperture_fractions` | no | `array[number]` | `[1.0, 0.75, 0.5]` | — |
+
+### `FFTRatioPlottingConfig`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `spectral_display` | no | `'amplitude' \| 'relative_db'` | `"amplitude"` | Display source spectral magnitudes in signal units or relative power in dB. |
+| `scales` | no | `array['db' \| 'linear']` | `["db", "linear"]` | — |
+| `normalizations` | no | `array['absolute' \| 'unit_l2']` | `["absolute", "unit_l2"]` | — |
+| `minimum_relative_amplitude` | no | `number` | `0.01` | greater than: `0.0`; less than: `1.0` |
+| `reference_frequency_band_hz` | no | `tuple[number, number] \| null` | `null` | — |
+| `wave_frequency_band_hz` | no | `tuple[number, number] \| null` | `null` | — |
+| `linear_ratio_limits` | no | `tuple[number, number]` | `[0.0, 4.0]` | minimum items: `2`; maximum items: `2` |
+| `linear_ratio_color_scale` | no | `'linear' \| 'log'` | `"linear"` | — |
+| `db_ratio_limits` | no | `tuple[number, number]` | `[-12.0, 12.0]` | minimum items: `2`; maximum items: `2` |
+| `scale_policy` | no | `'independent' \| 'group' \| 'all'` | `"independent"` | — |
+| `probe_groups` | no | `array[ProbeTraceGroup]` | `[]` | — |
+| `amplitude_ratio_panels` | no | `boolean` | `true` | — |
+| `phase_delay_diagnostics` | no | `boolean` | `false` | — |
+| `symmetry_diagnostics` | no | `boolean` | `false` | — |
+| `threshold_sensitivity` | no | `boolean` | `false` | — |
+| `signed_k_ratio` | no | `boolean` | `true` | — |
+| `frequency_slices` | no | `boolean` | `true` | — |
+| `reflection_center_m` | no | `number` | `0.025` | — |
+| `scalar_reflection_parity` | no | `'even' \| 'odd'` | `"even"` | — |
+| `psd_ratio_confidence_level` | no | `number` | `0.95` | greater than: `0.0`; less than: `1.0` |
 
 ### `FigurePresentation`
 
@@ -509,6 +521,9 @@ threshold reference.
 | `mode` | no | `'overlay' \| 'panels' \| 'both'` | `"both"` | — |
 | `normalization` | no | `'none' \| 'per_probe_peak'` | `"none"` | — |
 | `label` | no | `'index_coordinates' \| 'coordinates' \| 'index'` | `"index_coordinates"` | — |
+| `scale_policy` | no | `'independent' \| 'group' \| 'all'` | `"independent"` | — |
+| `probe_groups` | no | `array[ProbeTraceGroup]` | `[]` | — |
+| `trace_views` | no | `array[ProbeTraceView]` | `[]` | — |
 
 ### `ProbeSpectrumAnalysis`
 
@@ -530,6 +545,29 @@ threshold reference.
 | `detrend` | no | `'mean' \| 'linear' \| 'none'` | `"mean"` | — |
 | `welch_segment_samples` | no | `integer \| null` | `null` | — |
 | `overlap_fraction` | no | `number` | `0.5` | minimum: `0.0`; less than: `1.0` |
+| `diagnostics_enabled` | no | `boolean` | `false` | — |
+| `diagnostic_record_end_fractions` | no | `array[number]` | `[0.5, 0.75, 1.0]` | — |
+| `diagnostic_end_taper_fractions` | no | `array[number]` | `[0.1, 0.2]` | — |
+
+### `ProbeTraceGroup`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `title` | yes | `string` | — | minimum length: `1` |
+| `probe_indices` | yes | `array[integer]` | — | minimum items: `1` |
+| `value_limits` | no | `tuple[number, number] \| null` | `null` | — |
+
+### `ProbeTraceView`
+
+| Field | Required | Type | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `id` | yes | `string` | — | pattern: `^[A-Za-z0-9][A-Za-z0-9_.-]*$` |
+| `title` | yes | `string` | — | minimum length: `1` |
+| `time_start_s` | no | `number` | `0.0` | minimum: `0.0` |
+| `time_end_s` | no | `number \| null` | `null` | — |
+| `groups` | yes | `array[ProbeTraceGroup]` | — | minimum items: `1` |
+| `pair_difference` | no | `boolean` | `false` | — |
+| `grid` | no | `boolean` | `true` | — |
 
 ### `SinglePulseAnalysis`
 

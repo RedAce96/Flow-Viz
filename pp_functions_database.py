@@ -17,6 +17,8 @@ import re
 import struct
 import traceback
 import warnings
+from itertools import pairwise
+
 import numpy as np
 
 
@@ -40,7 +42,7 @@ def set_debug_mode(enabled: bool):
     _DEBUG_MODE = enabled
 
 
-def _log_error(msg: str, exception: Exception = None):
+def _log_error(msg: str, exception: Exception | None = None):
     """Print a concise error message.  In debug mode, also write the full
     traceback to ``error_log.txt``."""
     print(f"  [ERROR] {msg}")
@@ -158,10 +160,7 @@ def _resolve_field_aliases(raw_names, alias_map=None):
         for canonical, raw in raw_names.items():
             # If the user provided a raw name that is itself a canonical name
             # in the default map, expand it to all known candidates.
-            if raw in canonical_to_raws:
-                out[canonical] = canonical_to_raws[raw]
-            else:
-                out[canonical] = [raw]
+            out[canonical] = canonical_to_raws.get(raw, [raw])
         return out
 
     # Iterable of names — accept canonical names as documented and expand
@@ -308,6 +307,11 @@ def _compute_native_amr_vorticity(ds):
                 finest_start[0]:finest_end[0],
                 finest_start[1]:finest_end[1],
             ] = curl
+            # YTDataContainer retains materialized ghost-zone fields until
+            # cleared.  Each native grid is independent, so keep only the
+            # composed curl and promptly release its large temporary buffers.
+            ghosted.clear_data()
+            del ghosted, u, v, dv_dx, du_dy, curl
     finally:
         ds.force_periodicity(periodicity_was_forced)
 
@@ -665,39 +669,36 @@ def compute_derived_fields(dataset, gamma=1.4, R=287.05, beta=50.0):
     dy = float(y[1] - y[0]) if len(y) > 1 else 1.0
 
     # Velocity magnitude
-    if "velocity_magnitude" not in f:
-        if "x_velocity" in f and "y_velocity" in f:
-            f["velocity_magnitude"] = np.sqrt(f["x_velocity"]**2 + f["y_velocity"]**2)
-            if "z_velocity" in f:
-                f["velocity_magnitude"] = np.sqrt(
-                    f["x_velocity"]**2 + f["y_velocity"]**2 + f["z_velocity"]**2
-                )
+    if "velocity_magnitude" not in f and "x_velocity" in f and "y_velocity" in f:
+        f["velocity_magnitude"] = np.sqrt(f["x_velocity"]**2 + f["y_velocity"]**2)
+        if "z_velocity" in f:
+            f["velocity_magnitude"] = np.sqrt(
+                f["x_velocity"]**2 + f["y_velocity"]**2 + f["z_velocity"]**2
+            )
 
     # Temperature from ideal gas law
-    if "temperature" not in f:
-        if "pressure" in f and "density" in f:
-            f["temperature"] = f["pressure"] / (f["density"] * R)
+    if "temperature" not in f and "pressure" in f and "density" in f:
+        f["temperature"] = f["pressure"] / (f["density"] * R)
 
     # Mach number
-    if "mach_number" not in f:
-        if "velocity_magnitude" in f and "temperature" in f:
-            a = np.sqrt(gamma * R * f["temperature"])
-            a = np.where(a > 0, a, np.nan)
-            f["mach_number"] = f["velocity_magnitude"] / a
+    if "mach_number" not in f and "velocity_magnitude" in f and "temperature" in f:
+        a = np.sqrt(gamma * R * f["temperature"])
+        a = np.where(a > 0, a, np.nan)
+        f["mach_number"] = f["velocity_magnitude"] / a
 
     # Vorticity (2-D in-plane).  AMR plotfiles must provide a curl computed
     # on native patches; differentiating their finest-level covering grid
     # creates coarse-cell edge impulses.  Uniform datasets remain safe to
     # derive here.
-    if "vorticity" not in f:
-        if (
-            int(dataset.get("amr_max_level", 0)) == 0
-            and "x_velocity" in f
-            and "y_velocity" in f
-        ):
-            dv_dx, _ = np.gradient(f["y_velocity"], dx, dy)
-            _, du_dy = np.gradient(f["x_velocity"], dx, dy)
-            f["vorticity"] = dv_dx - du_dy
+    if (
+        "vorticity" not in f
+        and int(dataset.get("amr_max_level", 0)) == 0
+        and "x_velocity" in f
+        and "y_velocity" in f
+    ):
+        dv_dx, _ = np.gradient(f["y_velocity"], dx, dy)
+        _, du_dy = np.gradient(f["x_velocity"], dx, dy)
+        f["vorticity"] = dv_dx - du_dy
 
     # Never replace a solver-provided ``magvort`` field, which the loader
     # canonicalizes as ``vorticity_magnitude``.
@@ -705,15 +706,14 @@ def compute_derived_fields(dataset, gamma=1.4, R=287.05, beta=50.0):
         f["vorticity_magnitude"] = np.abs(f["vorticity"])
 
     # Schlieren
-    if "schlieren" not in f:
-        if "density" in f:
-            drho_dy, drho_dx = np.gradient(f["density"], dy, dx)
-            grad_mag = np.sqrt(drho_dx**2 + drho_dy**2)
-            gmax = grad_mag.max()
-            if gmax == 0:
-                f["schlieren"] = np.ones_like(grad_mag)
-            else:
-                f["schlieren"] = np.exp(-beta * (grad_mag / gmax))
+    if "schlieren" not in f and "density" in f:
+        drho_dy, drho_dx = np.gradient(f["density"], dy, dx)
+        grad_mag = np.sqrt(drho_dx**2 + drho_dy**2)
+        gmax = grad_mag.max()
+        if gmax == 0:
+            f["schlieren"] = np.ones_like(grad_mag)
+        else:
+            f["schlieren"] = np.exp(-beta * (grad_mag / gmax))
 
     # Normalisations (freestream taken from corner [0, 0])
     if "density" in f:
@@ -885,7 +885,6 @@ def extract_surface_normal_profile(dataset, field_key, x_location,
         raise ValueError("surface_origin is required when surface_angle_deg is provided.")
 
     theta = np.deg2rad(float(surface_angle_deg))
-    tangent = np.array([np.cos(theta), np.sin(theta)], dtype=float)
     normal = np.array([-np.sin(theta), np.cos(theta)], dtype=float)
     if side.lower() == "negative":
         normal = -normal
@@ -1903,7 +1902,6 @@ def extract_surface_properties(dataset, surfaces, rho_inf=0.0267, u_inf=1011.0,
         ``{'upper': {...}, 'lower': {...}}`` with arrays for each quantity.
     """
     x = dataset["x"]
-    y = dataset["y"]
     fields = dataset["fields"]
 
     surface_data = {}
@@ -1980,15 +1978,15 @@ def extract_surface_properties(dataset, surfaces, rho_inf=0.0267, u_inf=1011.0,
                 data["Re_x"][idx] = bl["Re_x"]
                 data["Re_theta"][idx] = bl["Re_theta"]
                 n_ok += 1
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - continue independent surface samples
                 if n_fail < 5:
                     _log_error(f"BL extraction at point {idx} (x={x[i]:.4f})", exc)
                 n_fail += 1
 
         # Smoothing
         try:
-            from scipy.signal import savgol_filter
             from scipy.ndimage import median_filter
+            from scipy.signal import savgol_filter
 
             arc = data["s"][-1] if data["s"][-1] > 0 else 1.0
             pts_mm = n / (arc * 1000.0)
@@ -2001,22 +1999,22 @@ def extract_surface_properties(dataset, surfaces, rho_inf=0.0267, u_inf=1011.0,
             med_win = min(med_win, n if n % 2 == 1 else n - 1)
             sg_win = min(sg_win, n if n % 2 == 1 else n - 1)
 
-            def _smooth(arr):
+            def _smooth(arr, *, median_window=med_win, savgol_window=sg_win):
                 a = arr.copy().astype(float)
                 valid = np.isfinite(a)
-                if np.sum(valid) < sg_win:
+                if np.sum(valid) < savgol_window:
                     return a
                 xi = np.arange(len(a))
                 a[~valid] = np.interp(xi[~valid], xi[valid], a[valid])
-                a = median_filter(a, size=med_win)
-                a = savgol_filter(a, sg_win, polyorder=3)
+                a = median_filter(a, size=median_window)
+                a = savgol_filter(a, savgol_window, polyorder=3)
                 a[~valid] = np.nan
                 return a
 
             for key in ("C_f", "tau_w", "q_w", "delta_99", "delta_star", "theta", "H"):
                 data[key] = _smooth(data[key])
-        except Exception:
-            pass  # smoothing is optional
+        except Exception as exc:  # noqa: BLE001 - smoothing is explicitly optional
+            _log_error("optional boundary-layer smoothing failed", exc)
 
         # Pressure coefficient
         q_inf = 0.5 * rho_inf * u_inf**2
@@ -2346,7 +2344,6 @@ def compute_blasius_reference_profile(y, x_loc, u_inf, T_inf, rho_inf,
     }
 
     # Temperature profile (Crocco-Busemann)
-    M_inf = u_inf / np.sqrt(gamma * R * T_inf) if T_inf > 0 else 0.0
     r = float(recovery_factor) if recovery_factor is not None else np.sqrt(Pr_eff)
     T_aw = T_inf + r * u_inf**2 / (2.0 * Cp)
     T_w = T_aw if T_wall is None else float(T_wall)
@@ -3081,7 +3078,6 @@ def extract_native_flat_plate_wall(
         active = np.asarray(grid.ActiveDimensions, dtype=int)
         if start[1] != 0 or active[1] < fluid_points:
             continue
-        geometry = grid
         dx_cgs = np.asarray(grid.dds.d, dtype=float)
         refinement_to_finest = refine_by ** (finest_level - level)
 
@@ -4593,8 +4589,7 @@ def compute_growth_rate_from_probes(probe_x, freq, P1, target_freq,
     if window_size is None:
         window_size = max(5, n_probes // 10)
     window_size = min(window_size, n_probes)
-    if window_size < 3:
-        window_size = 3
+    window_size = max(window_size, 3)
 
     alpha_i = np.full(n_probes, np.nan)
     r2 = np.full(n_probes, np.nan)
@@ -4893,7 +4888,7 @@ def compute_probe_force_linkage(
         return result
 
     requested_segment = min(int(nperseg), len(force))
-    overlap_samples = int(round(float(noverlap) * requested_segment))
+    overlap_samples = round(float(noverlap) * requested_segment)
     step = requested_segment - overlap_samples
     segment_count = (
         1 + (len(force) - requested_segment) // step if step > 0 else 0
@@ -4949,7 +4944,7 @@ def compute_input_output_spectra(
     if not 0.0 <= overlap_fraction < 1.0:
         raise ValueError("noverlap must be a fraction in [0, 1)")
     requested = min(int(nperseg), x.size)
-    overlap_samples = int(round(overlap_fraction * requested))
+    overlap_samples = round(overlap_fraction * requested)
     step = requested - overlap_samples
     segment_count = (
         1 + (x.size - requested) // step if step > 0 else 0
@@ -5119,7 +5114,7 @@ def compute_frequency_resolved_wavenumber(
         min_phase_r_squared=0.8, min_amplitude_r_squared=0.5,
         min_relative_power_db=-40.0,
         max_edge_phase_rad=0.9 * np.pi, phase_speed_bounds=None,
-        phase_convention="omega_t_minus_alpha_x"):
+        phase_convention="omega_t_minus_alpha_x", direction="positive"):
     """Estimate frequency-resolved complex streamwise wavenumber.
 
     The routine first forms Welch-averaged auto spectra and adjacent-probe
@@ -5169,9 +5164,12 @@ def compute_frequency_resolved_wavenumber(
     max_edge_phase_rad : float
         Phase-alias guard applied to adjacent cross-spectral phase.
     phase_speed_bounds : pair of float, optional
-        Accepted positive phase-speed interval [m/s].
+        Accepted phase-speed magnitude interval [m/s]. The reported speed
+        retains its propagation sign.
     phase_convention : str
         Convention used to interpret the positive-frequency FFT phase.
+    direction : {"positive", "negative", "both"}
+        Accepted sign of the real wavenumber; "both" retains both directions.
 
     Returns
     -------
@@ -5212,8 +5210,7 @@ def compute_frequency_resolved_wavenumber(
         )
     if spatial_window_size < 5:
         raise ValueError("spatial_window_size must be at least 5")
-    if spatial_window_size > x.size:
-        spatial_window_size = x.size
+    spatial_window_size = min(spatial_window_size, x.size)
     if spatial_window_size % 2 == 0:
         spatial_window_size -= 1
     if not 0.0 <= min_coherence <= 1.0:
@@ -5399,9 +5396,16 @@ def compute_frequency_resolved_wavenumber(
         / np.maximum(centre_peak_power, 1.0e-300)
     )
     spectral_valid = relative_power_db >= min_relative_power_db
+    if direction not in ("positive", "negative", "both"):
+        raise ValueError("direction must be positive, negative, or both")
+    direction_valid = (
+        np.ones_like(alpha_real, dtype=bool)
+        if direction == "both" else
+        (alpha_real > 0.0 if direction == "positive" else alpha_real < 0.0)
+    )
     phase_valid = (
         np.isfinite(alpha_real)
-        & (alpha_real > 0.0)
+        & direction_valid
         & np.isfinite(phase_r_squared)
         & (phase_r_squared >= min_phase_r_squared)
         & (coherent_fraction >= min_coherent_fraction)
@@ -5412,8 +5416,8 @@ def compute_frequency_resolved_wavenumber(
     phase_valid &= alias_margin >= (np.pi / max_edge_phase_rad)
     if phase_speed_bounds is not None:
         phase_valid &= (
-            (phase_speed >= phase_speed_bounds[0])
-            & (phase_speed <= phase_speed_bounds[1])
+            (np.abs(phase_speed) >= phase_speed_bounds[0])
+            & (np.abs(phase_speed) <= phase_speed_bounds[1])
         )
     growth_valid = (
         phase_valid
@@ -5528,7 +5532,7 @@ def compute_probe_amplification(wavenumber_data, min_contiguous_centres=3,
             n_probe[frequency_index, reference] = 0.0
             n_lower[frequency_index, reference] = 0.0
             n_upper[frequency_index, reference] = 0.0
-            for previous, current in zip(run[:-1], run[1:]):
+            for previous, current in pairwise(run):
                 dx = x[current] - x[previous]
                 n_probe[frequency_index, current] = (
                     n_probe[frequency_index, previous]
@@ -5624,7 +5628,7 @@ def fit_common_frequency_model(signal_matrix, dt, n_modes=10,
         raise ValueError("n_modes must be at least 1")
     if not 0.2 <= float(train_fraction) <= 0.8:
         raise ValueError("train_fraction must lie between 0.2 and 0.8")
-    n_train = int(round(length * float(train_fraction)))
+    n_train = round(length * float(train_fraction))
     if n_train < 16 or length - n_train < 8:
         raise ValueError("Training and validation intervals are too short")
 
@@ -5727,7 +5731,7 @@ def compute_complex_fft(signal_matrix, dt, win_scale=1.0):
     signal_matrix = np.asarray(signal_matrix, dtype=float)
     if signal_matrix.ndim == 1:
         signal_matrix = signal_matrix.reshape(-1, 1)
-    L, n_signals = signal_matrix.shape
+    L, _n_signals = signal_matrix.shape
     Fs = 1.0 / dt
 
     Y_full = np.fft.fft(signal_matrix, axis=0)
@@ -6362,7 +6366,7 @@ def reconstruct_from_harmonics(signal_matrix, dt, harmonic_freq, num_harmonics):
     harmonic_bins : list of int
         Positive-frequency bin indices used.
     """
-    signal_matrix, L, Fs, nyquist = _validate_reconstruction_sampling(
+    signal_matrix, L, _fs, nyquist = _validate_reconstruction_sampling(
         signal_matrix, dt
     )
     harmonic_freq = float(harmonic_freq)
@@ -6431,7 +6435,7 @@ def reconstruct_from_band(signal_matrix, dt, f_low, f_high):
     bin_mask : ndarray, shape (L,)
         Bool mask of retained frequency bins.
     """
-    signal_matrix, L, Fs, nyquist = _validate_reconstruction_sampling(
+    signal_matrix, L, _fs, nyquist = _validate_reconstruction_sampling(
         signal_matrix, dt
     )
     f_low = float(f_low)
@@ -6612,8 +6616,7 @@ def compute_energy_budget(signal_measured, signal_reconstructed, harmonic_signal
     """
     E_total = float(np.mean(signal_measured**2))
     eps = 1e-30
-    if E_total < eps:
-        E_total = eps
+    E_total = max(E_total, eps)
 
     E_recon = float(np.mean(signal_reconstructed**2))
     residual = signal_measured - signal_reconstructed
@@ -6888,8 +6891,7 @@ def detect_disturbance_window(signal, time, laser_start_time=None,
     noise_scale = float(np.median(np.abs(pre_event - baseline)))
     if noise_scale < 1e-30:
         noise_scale = float(np.std(pre_event))
-    if noise_scale < 1e-30:
-        noise_scale = 1e-30
+    noise_scale = max(noise_scale, 1e-30)
 
     # --- Compute broadband energy metric ---
     signal_c = signal - baseline  # remove baseline offset
@@ -6921,8 +6923,7 @@ def detect_disturbance_window(signal, time, laser_start_time=None,
     metric_noise_scale = float(np.median(np.abs(metric_pre_event - metric_baseline)))
     if metric_noise_scale < 1e-30:
         metric_noise_scale = float(np.std(metric_pre_event))
-    if metric_noise_scale < 1e-30:
-        metric_noise_scale = 1e-30
+    metric_noise_scale = max(metric_noise_scale, 1e-30)
 
     onset_threshold = metric_baseline + onset_sigma * metric_noise_scale
     offset_threshold = metric_baseline + offset_sigma * metric_noise_scale
@@ -7323,7 +7324,7 @@ def estimate_packet_propagation(
     if persistent_samples < 1:
         raise ValueError("persistent_samples must be positive")
     dt = float(np.median(np.diff(time)))
-    edge_count = max(1, int(round(float(filter_edge_fraction) * time.size)))
+    edge_count = max(1, round(float(filter_edge_fraction) * time.size))
     usable = np.zeros(time.size, dtype=bool)
     usable[edge_count:time.size - edge_count] = True
     if baseline_end_time_s is not None:
@@ -7334,7 +7335,7 @@ def estimate_packet_propagation(
         baseline_source = "leading_record_fallback"
     if np.count_nonzero(baseline_mask) < 8:
         baseline_count = max(
-            8, int(round(float(baseline_fraction) * time.size))
+            8, round(float(baseline_fraction) * time.size)
         )
         baseline_mask = np.zeros(time.size, dtype=bool)
         baseline_mask[edge_count:min(baseline_count, time.size - edge_count)] = True

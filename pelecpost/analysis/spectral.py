@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
-from scipy.signal import coherence, csd, detrend as signal_detrend, get_window, welch
+from scipy.signal import coherence, csd, find_peaks, get_window, welch
+from scipy.signal import detrend as signal_detrend
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/pelecpost-matplotlib")
 os.environ.setdefault("XDG_CACHE_HOME", "/tmp/pelecpost-cache")
@@ -45,11 +46,11 @@ from pelecpost.runtime.parallel import ParallelTask, plan_parallel_stage, stage_
 
 from .executors import executor
 from .probe_plotting import register_probe_line_overlay, register_probe_trace_figures
+from .products import product_contract
 from .temporal_wavenumber import (
     register_dispersion_figure,
     register_temporal_wavenumber_figures,
 )
-
 
 FIELD_NAMES = {
     "density": ("density", "rho"),
@@ -420,6 +421,446 @@ def _single_sided_amplitude(
     return frequency, amplitude
 
 
+def _finite_record_transform(
+    values: np.ndarray, dt: float, weights: np.ndarray, time_origin_s: float = 0.0
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the finite-record transform integral without amplitude scaling.
+
+    This diagnostic is deliberately separate from the legacy single-sided
+    amplitude.  Its magnitude has signal-units seconds and is useful for
+    separating record-duration normalization from retained pulse content.
+    """
+    values = np.asarray(values, dtype=float)
+    weights = np.asarray(weights, dtype=float).ravel()
+    frequency = np.fft.rfftfreq(len(values), d=dt)
+    coefficient = np.fft.rfft(values * weights[:, None], axis=0) * float(dt)
+    if time_origin_s:
+        coefficient *= np.exp(-2j * np.pi * frequency[:, None] * float(time_origin_s))
+    return frequency, coefficient
+
+
+def _match_native_frequency_bins(
+    reference_frequency_hz: np.ndarray,
+    candidate_frequency_hz: np.ndarray,
+) -> tuple[list[tuple[int, int, float]], str | None]:
+    """Match native frequency bins one-to-one using the project tolerance."""
+    reference_frequency_hz = np.asarray(reference_frequency_hz, dtype=float).ravel()
+    candidate_frequency_hz = np.asarray(candidate_frequency_hz, dtype=float).ravel()
+    used: set[int] = set()
+    matched: list[tuple[int, int, float]] = []
+    for reference_index, value in enumerate(reference_frequency_hz):
+        tolerance = max(1.0e-6, 1.0e-9 * abs(float(value)))
+        candidates = [
+            index for index, candidate_value in enumerate(candidate_frequency_hz)
+            if index not in used and abs(float(candidate_value) - float(value)) <= tolerance
+        ]
+        if len(candidates) > 1:
+            return [], f"ambiguous native frequency match at reference index {reference_index}"
+        if candidates:
+            candidate_index = candidates[0]
+            used.add(candidate_index)
+            matched.append((reference_index, candidate_index, float(candidate_frequency_hz[candidate_index])))
+    return matched, None
+
+
+def probe_phase_and_symmetry_diagnostic(
+    baseline_values: np.ndarray,
+    comparison_values: np.ndarray,
+    time_s: np.ndarray,
+    probe_indices: np.ndarray,
+    probe_x_m: np.ndarray,
+    mirrored_groups: tuple[tuple[int, int], ...],
+    *,
+    variable: str,
+    minimum_relative_amplitude: float = 0.01,
+    reflection_center_m: float = 0.025,
+    scalar_reflection_parity: str = "even",
+    reference_frequency_band_hz: tuple[float, float] | None = None,
+    values_are_processed: bool = False,
+    time_origin_s: float | None = None,
+    phase_delay_enabled: bool = True,
+    symmetry_enabled: bool = True,
+) -> dict[str, Any]:
+    """Prepare phase, delay, and signed mirrored-residual diagnostics.
+
+    The baseline and comparison arrays must use the same physical timestamps.
+    Gaps in the amplitude support are retained as NaNs and are never unwrapped
+    or fit across.
+    """
+    time_s = np.asarray(time_s, dtype=float).ravel()
+    baseline_values = np.asarray(baseline_values, dtype=float)
+    comparison_values = np.asarray(comparison_values, dtype=float)
+    probe_indices = np.asarray(probe_indices, dtype=int).ravel()
+    probe_x_m = np.asarray(probe_x_m, dtype=float).ravel()
+    if scalar_reflection_parity not in {"even", "odd"}:
+        raise ValueError("scalar_reflection_parity must be 'even' or 'odd'")
+    if baseline_values.shape != comparison_values.shape or baseline_values.shape != (len(time_s), len(probe_indices)):
+        raise ValueError("phase/symmetry inputs must share time and probe dimensions")
+    if not np.all(np.isfinite(time_s)):
+        raise ValueError("phase/symmetry timestamps must be finite")
+    frequency = np.array([], dtype=float)
+    baseline_coeff = comparison_coeff = np.empty((0, len(probe_indices)), dtype=complex)
+    if phase_delay_enabled:
+        dt_values = np.diff(time_s)
+        dt = float(np.median(dt_values))
+        if len(time_s) < 2 or dt <= 0.0 or not np.allclose(dt_values, dt, rtol=1e-8, atol=max(dt * 1e-10, 1e-15)):
+            raise ValueError("phase/delay diagnostics require a uniform time grid")
+        frequency = np.fft.rfftfreq(len(time_s), dt)
+        baseline_input = baseline_values if values_are_processed else baseline_values - np.mean(baseline_values, axis=0)
+        comparison_input = comparison_values if values_are_processed else comparison_values - np.mean(comparison_values, axis=0)
+        baseline_coeff = np.fft.rfft(baseline_input, axis=0) / len(time_s)
+        comparison_coeff = np.fft.rfft(comparison_input, axis=0) / len(time_s)
+        # One-sided amplitude convention: omit doubling of DC and Nyquist (even N).
+        if len(time_s) % 2 == 0:
+            baseline_coeff[1:-1] *= 2.0
+            comparison_coeff[1:-1] *= 2.0
+        else:
+            baseline_coeff[1:] *= 2.0
+            comparison_coeff[1:] *= 2.0
+        if time_origin_s is not None:
+            phase_origin = np.exp(-2j * np.pi * frequency * float(time_origin_s))[:, None]
+            baseline_coeff *= phase_origin
+            comparison_coeff *= phase_origin
+    rows: list[dict[str, Any]] = []
+    for column, probe_index in enumerate(probe_indices if phase_delay_enabled else ()):
+        a, b = np.abs(baseline_coeff[:, column]), np.abs(comparison_coeff[:, column])
+        band_peak_a, band_peak_b = float(np.max(a[1:], initial=0.0)), float(np.max(b[1:], initial=0.0))
+        support = (frequency > 0.0) & (a >= band_peak_a * minimum_relative_amplitude) & (b >= band_peak_b * minimum_relative_amplitude)
+        if reference_frequency_band_hz is not None:
+            support &= (frequency >= reference_frequency_band_hz[0]) & (frequency <= reference_frequency_band_hz[1])
+        phase = np.full(len(frequency), np.nan)
+        phase[support] = np.angle(comparison_coeff[support, column] * np.conj(baseline_coeff[support, column]))
+        # Unwrap only contiguous supported runs.
+        supported_indices = np.flatnonzero(support)
+        for run in np.split(supported_indices, np.flatnonzero(np.diff(supported_indices) > 1) + 1):
+            if len(run):
+                phase[run] = np.unwrap(phase[run])
+        delay = None
+        delay_r2 = None
+        delay_fits: list[dict[str, Any]] = []
+        finite = np.flatnonzero(np.isfinite(phase))
+        for run in np.split(finite, np.flatnonzero(np.diff(finite) > 1) + 1):
+            if len(run) < 5:
+                continue
+            slope, intercept = np.polyfit(frequency[run], phase[run], 1)
+            fitted = slope * frequency[run] + intercept
+            ss_res = float(np.sum((phase[run] - fitted) ** 2))
+            ss_tot = float(np.sum((phase[run] - np.mean(phase[run])) ** 2))
+            current_r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else None
+            fit = {
+                "frequency_min_hz": float(frequency[run[0]]),
+                "frequency_max_hz": float(frequency[run[-1]]),
+                "bin_count": len(run),
+                "slope_rad_per_hz": float(slope),
+                "delay_s": float(-slope / (2.0 * np.pi)),
+                "residual_sum_squares": ss_res,
+                "r_squared": current_r2,
+            }
+            delay_fits.append(fit)
+            if current_r2 is not None and (delay_r2 is None or current_r2 > delay_r2):
+                delay = fit["delay_s"]
+                delay_r2 = float(current_r2)
+        if np.allclose(comparison_coeff[:, column], baseline_coeff[:, column], rtol=1e-10, atol=1e-14):
+            phase[:] = 0.0
+            delay = 0.0
+            delay_r2 = 1.0
+        rows.append({
+            "probe_index": int(probe_index),
+            "x_m": float(probe_x_m[column]),
+            "frequency_hz": frequency.tolist(),
+            "phase_difference_rad": phase.tolist(),
+            "support_fraction": float(np.mean(support[1:])) if len(support) > 1 else 0.0,
+            "delay_s": delay if delay_r2 is not None and delay_r2 >= 0.95 else None,
+            "delay_fit_r_squared": delay_r2,
+            "delay_fits": delay_fits,
+            "delay_interpretation": "positive means comparison/Gaussian arrives later" if delay is not None else "no supported single-delay fit",
+        })
+    symmetry: list[dict[str, Any]] = []
+    index_to_column = {int(index): column for column, index in enumerate(probe_indices)}
+    for left, right in mirrored_groups if symmetry_enabled else ():
+        if left not in index_to_column or right not in index_to_column:
+            symmetry.append({"probe_indices": [left, right], "status": "unavailable_missing_probe"})
+            continue
+        l, r = index_to_column[left], index_to_column[right]
+        mirror_error = abs((probe_x_m[l] + probe_x_m[r]) / 2.0 - reflection_center_m)
+        even_a = 0.5 * (baseline_values[:, l] + baseline_values[:, r])
+        odd_a = 0.5 * (baseline_values[:, l] - baseline_values[:, r])
+        even_b = 0.5 * (comparison_values[:, l] + comparison_values[:, r])
+        odd_b = 0.5 * (comparison_values[:, l] - comparison_values[:, r])
+        even_norm_a = float(np.linalg.norm(even_a))
+        odd_norm_a = float(np.linalg.norm(odd_a))
+        even_norm_b = float(np.linalg.norm(even_b))
+        odd_norm_b = float(np.linalg.norm(odd_b))
+        if scalar_reflection_parity == "even":
+            expected_a, residual_a = even_norm_a, odd_norm_a
+            expected_b, residual_b = even_norm_b, odd_norm_b
+        else:
+            expected_a, residual_a = odd_norm_a, even_norm_a
+            expected_b, residual_b = odd_norm_b, even_norm_b
+        symmetry.append({
+            "probe_indices": [left, right],
+            "reflection_center_m": reflection_center_m,
+            "mirror_coordinate_error_m": float(mirror_error),
+            "baseline_even_l2": even_norm_a,
+            "baseline_odd_l2": odd_norm_a,
+            "comparison_even_l2": even_norm_b,
+            "comparison_odd_l2": odd_norm_b,
+            "baseline_odd_fraction": odd_norm_a / even_norm_a if even_norm_a > 0 else None,
+            "comparison_odd_fraction": odd_norm_b / even_norm_b if even_norm_b > 0 else None,
+            "expected_parity": scalar_reflection_parity,
+            "baseline_parity_residual_fraction": (
+                residual_a / expected_a if expected_a > 0 else None
+            ),
+            "comparison_parity_residual_fraction": (
+                residual_b / expected_b if expected_b > 0 else None
+            ),
+            "parity_residual_status": (
+                "available" if expected_a > 0 and expected_b > 0
+                else "unavailable_zero_expected_component"
+            ),
+            "difference_order": "left minus right",
+        })
+    return {
+        "schema": "pelecpost.probe_phase_symmetry",
+        "schema_version": 3,
+        "variable": variable,
+        "frequency_hz": frequency.tolist(),
+        "minimum_relative_amplitude": minimum_relative_amplitude,
+        "scalar_reflection_parity": scalar_reflection_parity,
+        "phase_rows": rows,
+        "symmetry": symmetry,
+        "preprocessing": {"detrend": "already_processed" if values_are_processed else "mean", "window": "rectangular"},
+        "reference_frequency_band_hz": list(reference_frequency_band_hz) if reference_frequency_band_hz is not None else None,
+        "time_origin_s": float(time_origin_s) if time_origin_s is not None else 0.0,
+    }
+
+
+def _pressure_rise_diagnostic(time: np.ndarray, values: np.ndarray) -> list[dict[str, Any]]:
+    """Report measured samples across the first baseline-to-peak rise."""
+    result: list[dict[str, Any]] = []
+    for column in range(values.shape[1]):
+        signal = np.asarray(values[:, column], dtype=float)
+        finite = np.isfinite(signal) & np.isfinite(time)
+        if not np.any(finite):
+            result.append({"probe_column": column, "status": "unavailable"})
+            continue
+        indices = np.flatnonzero(finite)
+        start = int(indices[0])
+        # ``indices`` may skip non-finite samples.  Index the original signal
+        # with the selected finite index; adding the offset again shifts the
+        # peak and all subsequent crossing times.
+        peak = int(indices[int(np.argmax(signal[indices]))])
+        baseline = float(signal[start])
+        peak_value = float(signal[peak])
+        rise = peak_value - baseline
+        entry: dict[str, Any] = {
+            "probe_column": column,
+            "baseline_value": baseline,
+            "peak_value": peak_value,
+            "peak_time_s": float(time[peak]),
+            "baseline_definition": "first finite recorded sample",
+        }
+        if rise <= 0.0:
+            entry["status"] = "no_positive_rise"
+            result.append(entry)
+            continue
+        crossings: dict[str, int] = {}
+        for fraction in (0.1, 0.9):
+            target = baseline + fraction * rise
+            candidates = np.flatnonzero(signal[start:peak + 1] >= target)
+            if candidates.size:
+                crossings[str(int(fraction * 100))] = start + int(candidates[0])
+        if len(crossings) != 2:
+            entry["status"] = "crossing_unavailable"
+            result.append(entry)
+            continue
+        first, last = crossings["10"], crossings["90"]
+        interval_finite = bool(
+            np.all(np.isfinite(signal[first:last + 1]))
+            and np.all(np.isfinite(np.asarray(time[first:last + 1], dtype=float)))
+        )
+        if not interval_finite:
+            entry.update({
+                "status": "crossing_interval_missing_samples",
+                "crossing_10_index": int(first),
+                "crossing_90_index": int(last),
+            })
+            result.append(entry)
+            continue
+        interpolated: dict[str, float | None] = {}
+        for fraction, key in ((0.1, "10"), (0.9, "90")):
+            target = baseline + fraction * rise
+            crossing_index = crossings[key]
+            if crossing_index <= start or not np.isfinite(signal[crossing_index - 1]):
+                interpolated[key] = None
+                continue
+            previous = signal[crossing_index - 1]
+            current = signal[crossing_index]
+            if current == previous:
+                interpolated[key] = float(time[crossing_index])
+            else:
+                fraction_between = (target - previous) / (current - previous)
+                interpolated[key] = float(
+                    time[crossing_index - 1]
+                    + fraction_between * (time[crossing_index] - time[crossing_index - 1])
+                )
+        entry.update({
+            "status": "ok",
+            "crossing_10_time_s": float(time[first]),
+            "crossing_90_time_s": float(time[last]),
+            "rise_time_10_to_90_s": float(time[last] - time[first]),
+            "sample_intervals_10_to_90": int(last - first),
+            "samples_inclusive_10_to_90": int(last - first + 1),
+            "crossing_10_index": int(first),
+            "crossing_90_index": int(last),
+            "interpolated_crossing_time_s": {
+                "10": interpolated["10"], "90": interpolated["90"]
+            },
+            "interpolated_crossing_is_estimate": True,
+        })
+        result.append(entry)
+    return result
+
+
+def _spectral_sampling_diagnostic(
+    raw_time: np.ndarray,
+    raw_values: np.ndarray,
+    fft_time: np.ndarray,
+    fft_values: np.ndarray,
+    processed: np.ndarray,
+    weights: np.ndarray,
+    dt: float,
+    analysis: ProbeSpectrumAnalysis,
+) -> dict[str, Any]:
+    raw_dt = np.diff(raw_time)
+    median_dt = float(np.median(raw_dt)) if raw_dt.size else float(dt)
+    deviations = np.flatnonzero(np.abs(raw_dt - median_dt) > max(abs(median_dt) * 0.01, 1e-18))
+    frequency, baseline_amplitude = _single_sided_amplitude(processed, dt, weights)
+    baseline_detrended, _ = _processed_probe_signal(fft_values, analysis.detrend, "rectangular")
+    pulse_frequency, pulse_transform = _finite_record_transform(
+        baseline_detrended, dt, weights,
+        time_origin_s=float(fft_time[0]) if len(fft_time) else 0.0,
+    )
+    baseline_peak = np.maximum(np.max(baseline_amplitude, axis=0), 1e-300)
+    endpoint_sensitivity: list[dict[str, Any]] = []
+    for fraction in analysis.diagnostic_record_end_fractions:
+        count = max(2, min(len(fft_values), round(len(fft_values) * fraction)))
+        local = fft_values[:count]
+        local_processed, local_weights = _processed_probe_signal(local, analysis.detrend, analysis.window)
+        local_frequency, local_amplitude = _single_sided_amplitude(local_processed, dt, local_weights)
+        local_detrended, _ = _processed_probe_signal(local, analysis.detrend, "rectangular")
+        _, local_pulse_transform = _finite_record_transform(
+            local_detrended, dt, local_weights, time_origin_s=float(fft_time[0])
+        )
+        endpoint_sensitivity.append({
+            "record_end_fraction": float(fraction),
+            "sample_count": count,
+            "frequency_resolution_hz": float(1.0 / (count * dt)),
+            "peak_amplitude_by_probe": np.max(local_amplitude, axis=0).tolist(),
+            "relative_peak_to_baseline_by_probe": (
+                np.max(local_amplitude, axis=0) / baseline_peak
+            ).tolist(),
+            "native_frequency_bin_count": len(local_frequency),
+            "frequency_hz": local_frequency.tolist(),
+            "amplitude": local_amplitude.tolist(),
+            "pulse_transform_magnitude_by_probe": np.abs(local_pulse_transform).tolist(),
+        })
+    taper_sensitivity: list[dict[str, Any]] = []
+    # End taper sensitivity changes only the final samples.  Apply the same
+    # configured detrend as the baseline, with a rectangular preprocessing
+    # weight before the diagnostic taper so the taper is the only perturbation.
+    detrended, _ = _processed_probe_signal(fft_values, analysis.detrend, "rectangular")
+    for fraction in analysis.diagnostic_end_taper_fractions:
+        width = max(2, round(len(detrended) * fraction))
+        taper = np.ones(len(detrended), dtype=float)
+        taper[-width:] = 0.5 * (1.0 + np.cos(np.linspace(0.0, np.pi, width)))
+        taper[-1] = 0.0
+        local_frequency, local_amplitude = _single_sided_amplitude(detrended * taper[:, None], dt, taper)
+        taper_sensitivity.append({
+            "end_taper_fraction": float(fraction),
+            "sample_count": len(detrended),
+            "taper_sample_count": int(width),
+            "coherent_gain": float(np.mean(taper)),
+            "weights": taper.tolist(),
+            "peak_amplitude_by_probe": np.max(local_amplitude, axis=0).tolist(),
+            "relative_peak_to_baseline_by_probe": (
+                np.max(local_amplitude, axis=0) / baseline_peak
+            ).tolist(),
+            "native_frequency_bin_count": len(local_frequency),
+            "frequency_hz": local_frequency.tolist(),
+            "amplitude": local_amplitude.tolist(),
+        })
+    timing_sensitivity: dict[str, Any]
+    if raw_dt.size:
+        timing_processed, timing_weights = _processed_probe_signal(
+            raw_values, analysis.detrend, analysis.window
+        )
+        timing_frequency, timing_amplitude = _single_sided_amplitude(
+            timing_processed, median_dt, timing_weights
+        )
+        matched, match_reason = _match_native_frequency_bins(frequency, timing_frequency)
+        if match_reason is not None:
+            timing_sensitivity = {
+                "status": "unavailable",
+                "label": "timing-perturbation diagnostic",
+                "reason": match_reason,
+            }
+        else:
+            reference_indices = np.asarray([item[0] for item in matched], dtype=int)
+            candidate_indices = np.asarray([item[1] for item in matched], dtype=int)
+            timing_difference = np.abs(
+                timing_amplitude[candidate_indices] - baseline_amplitude[reference_indices]
+            )
+            timing_sensitivity = {
+                "status": "available",
+                "label": "timing-perturbation diagnostic",
+                "nominal_timestamp_dt_s": median_dt,
+                "matched_frequency_bin_count": len(matched),
+                "matched_reference_indices": reference_indices.tolist(),
+                "matched_candidate_indices": candidate_indices.tolist(),
+                "matched_frequency_hz": [item[2] for item in matched],
+                "median_absolute_difference_by_probe": np.median(timing_difference, axis=0).tolist(),
+                "maximum_absolute_difference_by_probe": np.max(timing_difference, axis=0).tolist(),
+                "frequency_hz": timing_frequency.tolist(),
+                "baseline_amplitude": baseline_amplitude.tolist(),
+                "timing_amplitude": timing_amplitude.tolist(),
+                "interpretation": "Same values assigned nominal median-spacing timestamps; not a more accurate spectrum or an error estimate.",
+            }
+    else:
+        timing_sensitivity = {"status": "unavailable", "reason": "fewer than two raw timestamps"}
+    return {
+        "schema_version": 2,
+        "sample_count_raw": len(raw_time),
+        "sample_count_fft": len(fft_time),
+        "raw_dt_min_s": float(np.min(raw_dt)) if raw_dt.size else None,
+        "raw_dt_median_s": median_dt,
+        "raw_dt_max_s": float(np.max(raw_dt)) if raw_dt.size else None,
+        "raw_irregular_interval_indices": deviations.tolist(),
+        "resampled_dt_s": float(dt),
+        "resampled": bool(not np.allclose(raw_dt, dt, rtol=0.0, atol=max(abs(dt) * 1e-12, 1e-18))) if raw_dt.size else False,
+        "record_duration_s": float(fft_time[-1] - fft_time[0]),
+        "fft_period_s": float(len(fft_time) * dt),
+        "frequency_resolution_hz": float(frequency[1] - frequency[0]) if len(frequency) > 1 else None,
+        "pulse_transform_frequency_hz": pulse_frequency.tolist(),
+        "pulse_transform_magnitude": np.abs(pulse_transform).tolist(),
+        "pulse_transform_units": "signal_units*s",
+        "nominal_nyquist_hz": float(0.5 / dt),
+        "initial_value": np.asarray(raw_values[0], dtype=float).tolist() if len(raw_values) else [],
+        "final_value": np.asarray(raw_values[-1], dtype=float).tolist() if len(raw_values) else [],
+        "endpoint_difference": (np.asarray(raw_values[-1] - raw_values[0], dtype=float).tolist()
+                                if len(raw_values) else []),
+        "pressure_rise": _pressure_rise_diagnostic(raw_time, raw_values)
+        if str(getattr(analysis, "variable", "pressure")) == "pressure" else None,
+        "endpoint_sensitivity": endpoint_sensitivity,
+        "end_taper_sensitivity": taper_sensitivity,
+        "timing_perturbation": timing_sensitivity,
+        "interpretation": (
+            "Display and window sensitivity diagnostics. They do not establish a converged "
+            "physical bandwidth or an uncertainty estimate."
+        ),
+    }
+
+
 def spectrum_from_signal(
     time: np.ndarray,
     values: np.ndarray,
@@ -493,6 +934,7 @@ def spectrum_from_signal(
             "fft_time": fft_time,
             "fft_values": fft_values,
             "processed_values": processed_values,
+            "weights": weights,
             "fft_frequency": fft_frequency[fft_keep],
             "fft_amplitude": fft_amplitude[fft_keep],
             "welch_frequency": frequency,
@@ -501,12 +943,73 @@ def spectrum_from_signal(
             "resampled": resampled,
             "segment": segment,
             "overlap": overlap,
+            "welch_confidence": _welch_confidence_metadata(
+                sample_count=len(fft_time),
+                segment_samples=segment,
+                overlap_samples=overlap,
+                window=window_name,
+                dt=dt,
+            ),
             "cleanup": cleanup_returned,
         }
     except BaseException:
         if fft_cleanup is not None and register_cleanup is None:
             fft_cleanup()
         raise
+
+
+def _welch_confidence_metadata(
+    *,
+    sample_count: int,
+    segment_samples: int,
+    overlap_samples: int,
+    window: str,
+    dt: float,
+) -> dict[str, Any]:
+    """Return overlap-corrected equivalent DOF for a Welch estimate.
+
+    The correction uses the squared, normalized window autocorrelation at
+    each segment displacement. It describes pointwise estimator uncertainty
+    under the usual approximately stationary Gaussian-process assumptions.
+    """
+    hop = segment_samples - overlap_samples
+    if segment_samples < 1 or hop < 1 or sample_count < segment_samples:
+        raise ValueError("invalid Welch segment geometry")
+    segment_count = 1 + (sample_count - segment_samples) // hop
+    weights = np.asarray(get_window(window, segment_samples, fftbins=True), dtype=float)
+    energy = float(np.dot(weights, weights))
+    correlation_sum = 0.0
+    if energy > 0.0:
+        for offset in range(1, segment_count):
+            shift = offset * hop
+            if shift >= segment_samples:
+                break
+            rho = float(np.dot(weights[:-shift], weights[shift:]) / energy)
+            correlation_sum += (1.0 - offset / segment_count) * rho * rho
+    correction = 1.0 + 2.0 * correlation_sum
+    effective_dof = 2.0 * segment_count / correction
+    return {
+        "schema_version": 3,
+        "segment_samples": int(segment_samples),
+        "overlap_samples": int(overlap_samples),
+        "hop_samples": int(hop),
+        "segment_count": int(segment_count),
+        "approximate_degrees_of_freedom": int(2 * segment_count),
+        "effective_degrees_of_freedom": float(effective_dof),
+        "correlation_correction": float(correction),
+        "window": window,
+        "frequency_resolution_hz": float(1.0 / (segment_samples * dt)),
+        "formula": "welch_window_overlap_autocorrelation",
+        "assumptions": [
+            "approximately stationary Gaussian process",
+            "pointwise frequency-bin interval",
+            "window-overlap correlation correction; detrending effects are not modeled",
+        ],
+        "interpretation": (
+            "Equivalent degrees of freedom correct the nominal 2K value for "
+            "correlation between overlapping windowed segments."
+        ),
+    }
 
 
 def _plot_probe_time_fft(
@@ -546,10 +1049,27 @@ def _plot_probe_time_fft(
             column = start + row
             label = f"Probe {probe_index} · x={coordinate * 100.0:.3f} cm"
             raw_axis.plot(raw_time * 1e6, raw_values[:, column], color="tab:blue", linewidth=1.2)
+            rise = (_pressure_rise_diagnostic(raw_time, raw_values)[column]
+                    if unit.lower() in {"pa", "pascal", "pascals"} else {})
+            if rise.get("status") == "ok":
+                margin = 5.0 * (float(np.median(np.diff(raw_time))) if len(raw_time) > 1 else 0.0)
+                sample_mask = (
+                    (raw_time >= rise["crossing_10_time_s"] - margin)
+                    & (raw_time <= rise["crossing_90_time_s"] + margin)
+                )
+                raw_axis.plot(
+                    raw_time[sample_mask] * 1e6,
+                    raw_values[sample_mask, column],
+                    linestyle="none",
+                    marker="o",
+                    markersize=2.2,
+                    color="tab:red",
+                    label="rise samples",
+                )
             raw_axis.set_title(label, fontsize=10)
             if row == rows - 1:
                 raw_axis.set_xlabel("Time [µs]")
-            raw_axis.set_ylabel(f"Signal [{unit}]")
+            raw_axis.set_ylabel(f"{unit} history [{unit}]")
             raw_axis.grid(False)
 
             processed_axis.plot(
@@ -558,7 +1078,7 @@ def _plot_probe_time_fft(
             processed_axis.set_title("Processed", fontsize=10)
             if row == rows - 1:
                 processed_axis.set_xlabel("Time [µs]")
-            processed_axis.set_ylabel(f"Disturbance [{unit}]")
+            processed_axis.set_ylabel(f"Record-mean-subtracted {unit} [{unit}]")
             processed_axis.grid(False)
 
             keep = (frequency > 0.0) & (amplitude[:, column] > 0.0)
@@ -623,7 +1143,30 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
     resampled = products["resampled"]
     segment = products["segment"]
     overlap = products["overlap"]
+    welch_confidence = products["welch_confidence"]
     _ = processed_preview
+    if analysis.diagnostics_enabled:
+        sampling = _spectral_sampling_diagnostic(
+            time,
+            values,
+            fft_time,
+            products["fft_values"],
+            processed_preview,
+            products["weights"],
+            dt,
+            analysis,
+        )
+        diagnostics_path = context.data_dir / "spectral_sampling_diagnostic.json"
+        diagnostics_path.write_text(json.dumps(sampling, indent=2) + "\n", encoding="utf-8")
+        context.register(
+            artifact_id="spectral.sampling_diagnostic",
+            path=diagnostics_path,
+            kind="json",
+            variable=variable,
+            units=unit,
+            interpretation=sampling["interpretation"],
+            provenance={"window": analysis.window, "detrend": analysis.detrend},
+        )
     register_probe_trace_figures(
         context,
         raw_time=time,
@@ -638,6 +1181,9 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
             "time_grid_policy": analysis.time_grid_policy,
             "window": analysis.window,
             "detrend": analysis.detrend,
+            "processed_definition": (
+                "record-mean-subtracted" if analysis.detrend == "mean" else analysis.detrend
+            ),
             "resampled": resampled,
         },
     )
@@ -662,7 +1208,10 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
         variable=variable,
         units=f"({unit})^2/Hz",
         coordinate_metadata={"frequency": "Hz", "probe_x": "m"},
-        interpretation="One-sided Welch power spectral density; peaks are descriptive stationary content.",
+        interpretation=(
+            "Welch PSD of the selected transient record; values are descriptive "
+            "squared-variable density, not a stationarity or mode claim."
+        ),
         provenance={
             "si_boundary": (
                 f"inspected probe field units ({context.project.case_file.case.solver_units.value} "
@@ -672,20 +1221,16 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
             "detrend": analysis.detrend,
             "segment_samples": segment,
             "overlap_samples": overlap,
+            "welch_confidence": welch_confidence,
             "time_grid_policy": analysis.time_grid_policy,
             "resampled": resampled,
             "signal_workspace": (context.resource_metadata or {})["probe_signal"],
         },
     )
-    step = max(1, segment - overlap)
-    segment_count = 1 + max(0, (len(fft_time) - segment) // step)
     confidence = {
-        "schema_version": 1,
-        "segment_count": segment_count,
-        "approximate_degrees_of_freedom": 2 * segment_count,
-        "frequency_resolution_hz": float(1.0 / (segment * dt)),
+        **welch_confidence,
         "record_duration_s": float(fft_time[-1] - fft_time[0]),
-        "interpretation": "Degrees of freedom are approximate because overlapped windowed segments are correlated.",
+        "approximate_degrees_of_freedom_status": "superseded_by_effective_degrees_of_freedom",
     }
     confidence_path = context.data_dir / "spectral_confidence.json"
     confidence_path.write_text(json.dumps(confidence, indent=2) + "\n", encoding="utf-8")
@@ -695,7 +1240,12 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
         kind="json",
         variable=variable,
         units=None,
-        interpretation="Degrees of freedom are approximate because overlapped windowed segments are correlated.",
+        interpretation=welch_confidence["interpretation"],
+        provenance={
+            "formula": welch_confidence["formula"],
+            "assumptions": welch_confidence["assumptions"],
+            "product_contract": product_contract("spectral.confidence", confidence_path),
+        },
     )
     order = np.argsort(x_m)
     pair_columns = (
@@ -986,14 +1536,25 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
         axis.plot(frequency[positive], median[positive], label="probe median")
         axis.text(0.5, 0.5, "No positive spectral power", transform=axis.transAxes, ha="center")
     axis.fill_between(
-        frequency[positive], lower[positive], upper[positive], alpha=0.25, label="10–90%"
+        frequency[positive], lower[positive], upper[positive], alpha=0.25, label="10–90% probe spread"
     )
     axis.set_xlabel("Frequency [Hz]")
     axis.set_ylabel(f"PSD [({unit})²/Hz]")
+    axis.set_title(f"{variable.capitalize()}: Welch PSD of selected transient record")
     axis.grid(False)
     axis.legend()
     fig.tight_layout()
-    fig.savefig(figure_path, dpi=180)
+    fig.savefig(
+        figure_path,
+        dpi=int(context.project.analyses_file.presentation.figure.dpi),
+        bbox_inches="tight",
+    )
+    if figure_path.suffix.lower() == ".png":
+        fig.savefig(
+            figure_path.with_suffix(".pdf"),
+            dpi=int(context.project.analyses_file.presentation.figure.dpi),
+            bbox_inches="tight",
+        )
     plt.close(fig)
     context.register(
         artifact_id="spectral.figure",
@@ -1002,8 +1563,23 @@ def run_probe_spectrum(context: WorkflowContext) -> None:
         variable=variable,
         units=f"({unit})^2/Hz",
         coordinate_metadata={"frequency": "Hz"},
-        interpretation="Median stationary spectrum with the 10th–90th percentile probe envelope.",
+        interpretation=(
+            "Median and 10–90% spread across selected probes for the Welch PSD of "
+            "the selected transient record; the spread is not a confidence interval."
+        ),
     )
+    pdf_path = figure_path.with_suffix(".pdf")
+    if pdf_path.is_file():
+        context.register(
+            artifact_id="spectral.figure.pdf",
+            path=pdf_path,
+            kind="figure",
+            variable=variable,
+            units=f"({unit})^2/Hz",
+            coordinate_metadata={"frequency": "Hz"},
+            interpretation="PDF companion export of the probe-ensemble Welch PSD figure.",
+            provenance={"figure_format": "pdf"},
+        )
 
 
 @executor("single_pulse_response")
@@ -1288,7 +1864,7 @@ def run_single_pulse_response(context: WorkflowContext) -> None:
 
 def _komega_ridge(
     spectrum: dict, minimum_hz: float, maximum_hz: float
-) -> tuple[np.ndarray, np.ndarray]:
+) -> dict[str, Any]:
     frequency = np.asarray(spectrum["frequency_hz"], dtype=float)
     wavenumber = np.asarray(spectrum["wavenumber_rad_per_m"], dtype=float)
     power = np.asarray(spectrum["power"], dtype=float)
@@ -1296,26 +1872,95 @@ def _komega_ridge(
     if not np.any(selected):
         raise ValueError("k-omega sensitivity band contains no temporal FFT bins")
     band_power = power[selected]
-    ridge = wavenumber[np.argmax(band_power, axis=1)]
-    return frequency[selected], ridge
+    selected_frequency = frequency[selected]
+    global_max = float(np.nanmax(band_power)) if np.any(np.isfinite(band_power)) else 0.0
+    result: dict[str, Any] = {
+        "frequency_hz": selected_frequency,
+        "negative_k": np.full(len(selected_frequency), np.nan),
+        "positive_k": np.full(len(selected_frequency), np.nan),
+        "zero_k_power": np.full(len(selected_frequency), np.nan),
+        "negative_supported": np.zeros(len(selected_frequency), dtype=bool),
+        "positive_supported": np.zeros(len(selected_frequency), dtype=bool),
+        "negative_edge_limited": np.zeros(len(selected_frequency), dtype=bool),
+        "positive_edge_limited": np.zeros(len(selected_frequency), dtype=bool),
+        "negative_ambiguous": np.zeros(len(selected_frequency), dtype=bool),
+        "positive_ambiguous": np.zeros(len(selected_frequency), dtype=bool),
+        "support_fraction": 1.0e-4,
+        "ambiguity_fraction": 0.5,
+    }
+    for row, row_power in enumerate(band_power):
+        for name, mask, edge_index in (
+            ("negative", wavenumber < 0.0, 0),
+            ("positive", wavenumber > 0.0, len(wavenumber) - 1),
+        ):
+            branch_indices = np.flatnonzero(mask)
+            if not len(branch_indices):
+                continue
+            branch_values = np.asarray(row_power[branch_indices], dtype=float)
+            peak_position = int(np.nanargmax(branch_values))
+            peak_value = float(branch_values[peak_position])
+            if not np.isfinite(peak_value) or peak_value < global_max * 1.0e-4:
+                continue
+            # Distinct local peaks require separation by at least two native
+            # bins; a broad plateau counts as one peak.
+            peak_indices, _ = find_peaks(
+                branch_values, height=peak_value * 0.5, plateau_size=1, distance=2
+            )
+            if peak_position == 0 or peak_position == len(branch_values) - 1:
+                peak_indices = np.unique(np.r_[peak_indices, peak_position])
+            ambiguous = bool(len(peak_indices) > 1)
+            index = int(branch_indices[peak_position])
+            result[name + "_k"][row] = float(wavenumber[index])
+            result[name + "_supported"][row] = True
+            result[name + "_edge_limited"][row] = index == edge_index
+            result[name + "_ambiguous"][row] = ambiguous
+        zero_indices = np.flatnonzero(wavenumber == 0.0)
+        if len(zero_indices):
+            result["zero_k_power"][row] = float(row_power[zero_indices[0]])
+    return result
 
 
 def _ridge_difference(
-    reference: tuple[np.ndarray, np.ndarray], candidate: tuple[np.ndarray, np.ndarray]
+    reference: dict[str, Any], candidate: dict[str, Any]
 ) -> dict:
-    frequency, ridge = reference
-    candidate_frequency, candidate_ridge = candidate
-    common = (frequency >= candidate_frequency[0]) & (frequency <= candidate_frequency[-1])
-    if not np.any(common):
-        raise ValueError("k-omega sensitivity spectra have no common frequency bins")
-    interpolated = np.interp(frequency[common], candidate_frequency, candidate_ridge)
-    difference = np.abs(ridge[common] - interpolated)
-    return {
-        "compared_frequency_count": int(np.count_nonzero(common)),
-        "median_absolute_ridge_difference_rad_m": float(np.median(difference)),
-        "percentile_90_absolute_ridge_difference_rad_m": float(np.percentile(difference, 90.0)),
-        "maximum_absolute_ridge_difference_rad_m": float(np.max(difference)),
-    }
+    frequency = np.asarray(reference["frequency_hz"])
+    candidate_frequency = np.asarray(candidate["frequency_hz"])
+    result: dict[str, Any] = {"schema_version": 3, "branches": {}}
+    matched, match_reason = _match_native_frequency_bins(frequency, candidate_frequency)
+    if match_reason is not None:
+        return {
+            "schema_version": 3, "branches": {},
+            "compared_frequency_count": 0,
+            "reason": match_reason,
+        }
+    if not matched:
+        return {"schema_version": 3, "branches": {}, "compared_frequency_count": 0,
+                "reason": "no matching native frequency bins"}
+    for branch in ("negative", "positive"):
+        shifts: list[float] = []
+        excluded: dict[str, int] = {}
+        for index, candidate_index, _actual_frequency in matched:
+            if not (reference[f"{branch}_supported"][index] and candidate[f"{branch}_supported"][candidate_index]):
+                excluded["unsupported"] = excluded.get("unsupported", 0) + 1
+                continue
+            if reference[f"{branch}_edge_limited"][index] or candidate[f"{branch}_edge_limited"][candidate_index]:
+                excluded["edge_limited"] = excluded.get("edge_limited", 0) + 1
+                continue
+            if reference[f"{branch}_ambiguous"][index] or candidate[f"{branch}_ambiguous"][candidate_index]:
+                excluded["ambiguous"] = excluded.get("ambiguous", 0) + 1
+                continue
+            shifts.append(float(candidate[f"{branch}_k"][candidate_index] - reference[f"{branch}_k"][index]))
+        result["branches"][branch] = {
+            "compared_frequency_count": len(shifts),
+            "excluded_by_reason": excluded,
+            "median_shift_rad_m": float(np.median(shifts)) if shifts else None,
+            "median_absolute_shift_rad_m": float(np.median(np.abs(shifts))) if shifts else None,
+            "percentile_90_absolute_shift_rad_m": float(np.percentile(np.abs(shifts), 90.0)) if shifts else None,
+            "shifts_rad_m": shifts,
+        }
+    result["compared_frequency_count"] = len(matched)
+    result["matched_frequency_hz"] = [item[2] for item in matched]
+    return result
 
 
 def _komega_sensitivity(
@@ -1355,7 +2000,7 @@ def _komega_sensitivity(
         temporal_mean_subtraction="mean",
     )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "frequency_band_hz": [analysis.frequency_min_hz, analysis.frequency_max_hz],
         "configured_temporal_window": analysis.temporal_window,
         "alternate_temporal_window": alternate_window,
@@ -1373,6 +2018,53 @@ def _komega_sensitivity(
             "Dominant-ridge changes under temporal-window and half-record perturbations; "
             "large differences limit directional-wave interpretation."
         ),
+    }
+
+
+def _spatial_aperture_sensitivity(
+    values: np.ndarray,
+    time: np.ndarray,
+    x_m: np.ndarray,
+    analysis: DirectionalWaveAnalysis,
+) -> dict[str, Any]:
+    """Recompute native f-k maps for centered apertures and spatial windows."""
+    values = np.asarray(values, dtype=float)
+    x_m = np.asarray(x_m, dtype=float)
+    full_count = len(x_m)
+    results: list[dict[str, Any]] = []
+    for fraction in analysis.spatial_aperture_fractions:
+        count = max(5, round(full_count * fraction))
+        if count % 2 == 0:
+            count -= 1
+        count = min(count, full_count if full_count % 2 else full_count - 1)
+        start = (full_count - count) // 2
+        indices = np.arange(start, start + count, dtype=int)
+        for spatial_window in ("rectangular", "hann"):
+            spectrum = reviewed_spectral.compute_wavenumber_frequency_spectrum(
+                values[:, indices], time, x_m[indices],
+                temporal_window=analysis.temporal_window,
+                spatial_window=spatial_window,
+                temporal_mean_subtraction="mean",
+            )
+            ridge = _komega_ridge(spectrum, analysis.frequency_min_hz, analysis.frequency_max_hz)
+            results.append({
+                "aperture_fraction": float(fraction),
+                "spatial_window": spatial_window,
+                "probe_count": int(count),
+                "probe_indices": indices.tolist(),
+                "x_bounds_m": [float(x_m[indices[0]]), float(x_m[indices[-1]])],
+                "delta_k_rad_per_m": float(spectrum["native_wavenumber_resolution_rad_per_m"]),
+                "negative_supported_count": int(np.count_nonzero(ridge["negative_supported"])),
+                "positive_supported_count": int(np.count_nonzero(ridge["positive_supported"])),
+                "negative_edge_limited_count": int(np.count_nonzero(ridge["negative_edge_limited"])),
+                "positive_edge_limited_count": int(np.count_nonzero(ridge["positive_edge_limited"])),
+            })
+    return {
+        "schema": "pelecpost.spatial_aperture_sensitivity",
+        "schema_version": 1,
+        "frequency_band_hz": [analysis.frequency_min_hz, analysis.frequency_max_hz],
+        "results": results,
+        "interpretation": "Native-grid aperture and spatial-window sensitivity; no zero-padding or ridge interpolation is used.",
     }
 
 
@@ -1395,7 +2087,11 @@ def run_directional_wave(context: WorkflowContext) -> None:
         selected=selected,
         variable=variable,
         units=unit,
-        preprocessing={"time_grid_policy": analysis.time_grid_policy, "resampled": resampled},
+        preprocessing={
+            "time_grid_policy": analysis.time_grid_policy,
+            "resampled": resampled,
+            "processed_definition": "raw probe history; temporal mean subtraction is applied inside the k-omega transform",
+        },
     )
     speed_bounds = None
     if analysis.expected_speed_min_m_s is not None and analysis.expected_speed_max_m_s is not None:
@@ -1413,6 +2109,7 @@ def run_directional_wave(context: WorkflowContext) -> None:
         fft_batch_size=context.project.machine_file.compute.fft_batch_size,
         min_coherence=analysis.minimum_coherence,
         phase_speed_bounds=speed_bounds,
+        direction=analysis.direction,
     )
     komega = reviewed_spectral.compute_wavenumber_frequency_spectrum(
         values,
@@ -1422,6 +2119,20 @@ def run_directional_wave(context: WorkflowContext) -> None:
         spatial_window=analysis.spatial_window,
         temporal_mean_subtraction="mean",
     )
+    if analysis.spatial_sensitivity_enabled:
+        aperture_payload = _spatial_aperture_sensitivity(values, time, x_m, analysis)
+        aperture_path = context.data_dir / "spatial_aperture_sensitivity.json"
+        aperture_path.write_text(json.dumps(aperture_payload, indent=2) + "\n", encoding="utf-8")
+        context.register(
+            artifact_id="wave.spatial_aperture_sensitivity",
+            path=aperture_path,
+            kind="json",
+            variable=variable,
+            units="rad/m",
+            coordinate_metadata={"frequency": "Hz", "wavenumber": "rad/m"},
+            interpretation=aperture_payload["interpretation"],
+            provenance={"aperture_fractions": list(analysis.spatial_aperture_fractions)},
+        )
     path = context.data_dir / "complex_wavenumber.npz"
     arrays = {
         "frequency_hz": local["frequency_hz"],
@@ -1452,6 +2163,7 @@ def run_directional_wave(context: WorkflowContext) -> None:
         interpretation="Coherence-gated dominant-wave estimate; it is not an LST/PSE eigensolution.",
         provenance={
             "phase_convention": local["phase_convention"],
+            "direction_selection": analysis.direction,
             "accepted_fraction": accepted,
             "growth_accepted_fraction": growth,
             "spatial_interval_method": local.get("spatial_interval_method"),
@@ -1600,28 +2312,106 @@ def run_directional_wave(context: WorkflowContext) -> None:
         coordinate_metadata={"frequency": "Hz"},
         interpretation=sensitivity["interpretation"],
     )
+    if analysis.diagnostics_enabled:
+        raw_dt = np.diff(raw_time)
+        sampling = {
+            "schema_version": 1,
+            "sample_count_raw": len(raw_time),
+            "sample_count_fft": len(time),
+            "raw_dt_min_s": float(np.min(raw_dt)) if len(raw_dt) else None,
+            "raw_dt_median_s": float(np.median(raw_dt)) if len(raw_dt) else None,
+            "raw_dt_max_s": float(np.max(raw_dt)) if len(raw_dt) else None,
+            "resampled_dt_s": float(np.median(np.diff(time))) if len(time) > 1 else None,
+            "record_duration_s": float(time[-1] - time[0]) if len(time) else None,
+            "nominal_nyquist_hz": float(0.5 / np.median(np.diff(time))) if len(time) > 1 else None,
+            "pressure_rise": _pressure_rise_diagnostic(raw_time, raw_values),
+            "interpretation": (
+                "Directional-wave sampling and rise audit; sensitivity values are diagnostic "
+                "flags and do not establish convergence."
+            ),
+        }
+        sampling_path = context.data_dir / "wave_sampling_diagnostic.json"
+        sampling_path.write_text(json.dumps(sampling, indent=2) + "\n", encoding="utf-8")
+        context.register(
+            artifact_id="wave.sampling_diagnostic",
+            path=sampling_path,
+            kind="json",
+            variable=variable,
+            units=unit,
+            interpretation=sampling["interpretation"],
+        )
     figure_path = context.figure_dir / "komega.png"
-    fig, axis = plt.subplots(figsize=(9, 6))
-    image = axis.pcolormesh(
-        komega["wavenumber_rad_per_m"],
-        komega["frequency_hz"],
-        10.0 * np.log10(komega["power"] / max(float(np.nanmax(komega["power"])), 1e-300) + 1e-300),
-        shading="auto",
-        vmin=-60,
-        vmax=0,
+    display = (
+        (komega["frequency_hz"] > 0.0)
+        & (komega["frequency_hz"] >= analysis.frequency_min_hz)
+        & (komega["frequency_hz"] <= analysis.frequency_max_hz)
     )
-    axis.set_xlabel("Wavenumber [rad/m]")
-    axis.set_ylabel("Frequency [Hz]")
-    fig.colorbar(image, ax=axis, label="Relative power [dB]")
+    display_frequency = komega["frequency_hz"][display]
+    display_power = komega["power"][display]
+    display_amplitude = komega["amplitude"][display]
+    frequency_edges = np.concatenate((
+        [display_frequency[0] - 0.5 * (display_frequency[1] - display_frequency[0])],
+        0.5 * (display_frequency[:-1] + display_frequency[1:]),
+        [display_frequency[-1] + 0.5 * (display_frequency[-1] - display_frequency[-2])],
+    ))
+    wavenumber = komega["wavenumber_rad_per_m"]
+    wavenumber_edges = np.concatenate((
+        [wavenumber[0] - 0.5 * (wavenumber[1] - wavenumber[0])],
+        0.5 * (wavenumber[:-1] + wavenumber[1:]),
+        [wavenumber[-1] + 0.5 * (wavenumber[-1] - wavenumber[-2])],
+    ))
+    figure_title = f"{variable.capitalize()}: signed f–k spectrum · {analysis.frequency_min_hz / 1e6:.3g}–{analysis.frequency_max_hz / 1e6:.3g} MHz"
+    fig, axis = plt.subplots(figsize=(10, 6.5))
+    if analysis.spectral_display == "amplitude":
+        amplitude_max = float(np.nanmax(display_amplitude))
+        image = axis.pcolormesh(
+            wavenumber_edges / 1e3,
+            frequency_edges / 1e6,
+            display_amplitude,
+            shading="auto",
+            vmin=0.0,
+            vmax=amplitude_max if amplitude_max > 0.0 else 1.0,
+        )
+        colorbar_label = f"{variable.capitalize()} spectral amplitude [{unit}]"
+        figure_units = unit
+    else:
+        image = axis.pcolormesh(
+            wavenumber_edges / 1e3,
+            frequency_edges / 1e6,
+            10.0 * np.log10(
+                display_power / max(float(np.nanmax(display_power)), 1e-300) + 1e-300
+            ),
+            shading="auto",
+            vmin=-60,
+            vmax=0,
+        )
+        colorbar_label = "Power relative to map maximum [dB]"
+        figure_units = "relative dB"
+    axis.set_xlabel("Signed wavenumber kₓ [10³ rad m⁻¹]")
+    axis.set_ylabel("Frequency [MHz]")
+    axis.set_xscale("linear")
+    axis.set_yscale("log")
+    axis.set_xticks(np.linspace(wavenumber_edges[0] / 1e3, wavenumber_edges[-1] / 1e3, 5))
+    axis.set_yticks([value / 1e6 for value in (1e5, 2e5, 5e5, 1e6, 2e6, 3e6)
+                     if analysis.frequency_min_hz <= value <= analysis.frequency_max_hz])
+    axis.set_yticklabels([f"{value:g}" for value in axis.get_yticks()])
+    axis.set_title(figure_title)
+    fig.colorbar(image, ax=axis, label=colorbar_label)
     fig.tight_layout()
-    fig.savefig(figure_path, dpi=180)
+    fig.savefig(figure_path, dpi=int(context.project.analyses_file.presentation.figure.dpi), bbox_inches="tight")
+    if figure_path.suffix.lower() == ".png":
+        fig.savefig(
+            figure_path.with_suffix(".pdf"),
+            dpi=int(context.project.analyses_file.presentation.figure.dpi),
+            bbox_inches="tight",
+        )
     plt.close(fig)
     context.register(
         artifact_id="wave.komega.figure",
         path=figure_path,
         kind="figure",
         variable=variable,
-        units="relative dB",
+        units=figure_units,
         coordinate_metadata={"frequency": "Hz", "wavenumber": "rad/m"},
         interpretation="Signed k–omega map; positive k denotes downstream cos(omega t - k x).",
     )

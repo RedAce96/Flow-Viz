@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,9 +15,14 @@ from pelecpost.analysis.comparison import (
     _array_metrics,
     _json_metrics,
     _Product,
+    _psd_ratio_confidence,
     _render_product_overlay,
+    _validate_product_pair,
+    _validity_for_value,
 )
 from pelecpost.analysis.comparison_figures import (
+    _fk_ratio_components,
+    render_komega_amplitude_frequency_slices,
     render_komega_comparison,
     render_probe_panels,
 )
@@ -27,13 +33,18 @@ from pelecpost.analysis.spectral import (
     _si_conversion,
     spectrum_from_signal,
 )
-from pelecpost.analysis.temporal_wavenumber import compute_temporal_wavenumber
+from pelecpost.analysis.temporal_wavenumber import (
+    compute_temporal_wavenumber,
+    register_temporal_wavenumber_figures,
+)
 from pelecpost.config.loader import write_project_schema
 from pelecpost.config.models import (
     ComparisonAlignment,
+    DirectionalWaveAnalysis,
     FFTRatioPlottingConfig,
     PresentationConfig,
     ProbeInput,
+    TemporalWavenumberEnabled,
 )
 from pelecpost.io.signals import open_probe_signal_workspace
 from pelecpost.preflight import create_plan
@@ -55,6 +66,67 @@ def _product_metadata(path: Path, product_id: str, units: str = "Pa") -> dict:
 
 
 class UnifiedProbeComparisonTests(unittest.TestCase):
+    def test_validity_mask_uses_declared_dimension_when_axes_have_equal_lengths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "transfer.npz"
+            np.savez(
+                path, frequency_hz=np.array([1.0, 2.0]),
+                probe_x_m=np.array([0.0, 1.0]),
+                transfer=np.ones((2, 2)),
+                valid_frequency=np.array([True, False]),
+            )
+            with np.load(path, allow_pickle=False) as archive:
+                contract = product_contract("pulse.transfer", path)
+                mask = _validity_for_value(
+                    archive, contract, archive["transfer"],
+                    {"frequency": archive["frequency_hz"], "space": archive["probe_x_m"]},
+                    "pulse.transfer", "transfer",
+                )
+                np.testing.assert_array_equal(mask, [[True, True], [False, False]])
+                ambiguous_contract = {
+                    "validity_by_value": {"transfer": ("valid_frequency",)},
+                }
+                with self.assertRaisesRegex(ValueError, "unambiguously"):
+                    _validity_for_value(
+                        archive, ambiguous_contract, archive["transfer"],
+                        {"frequency": archive["frequency_hz"], "space": archive["probe_x_m"]},
+                        "pulse.transfer", "transfer",
+                    )
+
+    def test_confidence_contract_and_zero_support_fk_statistics(self):
+        self.assertEqual(product_contract("spectral.confidence")["schema_version"], 3)
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            frequency = np.array([1.0e5, 2.0e5])
+            wavenumber = np.array([-1.0, 0.0, 1.0])
+            baseline = np.array([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+            comparison = np.array([[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]])
+            left, right = directory / "left.npz", directory / "right.npz"
+            np.savez(left, frequency_hz=frequency, wavenumber_rad_m=wavenumber, power=baseline)
+            np.savez(right, frequency_hz=frequency, wavenumber_rad_m=wavenumber, power=comparison)
+            target = directory / "ratio.png"
+            render_komega_comparison(
+                left, right, "left.wave.komega", "right.wave.komega",
+                target, None, (1.0e5, 2.0e5), dpi=60,
+            )
+            statistics = json.loads(target.with_suffix(".json").read_text())
+            self.assertEqual(statistics["status"], "unavailable_no_supported_bins")
+            self.assertEqual(statistics["accepted_count"], 0)
+            self.assertEqual(statistics["masked_fraction"], 1.0)
+
+    def test_confidence_payload_version_must_match_its_contract(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            older, current = directory / "older.json", directory / "current.json"
+            older.write_text(json.dumps({"schema_version": 2}))
+            current.write_text(json.dumps({"schema_version": 3}))
+            metadata = {"kind": "json", "variable": "pressure", "units": None}
+            with self.assertRaisesRegex(ValueError, "payload schema version"):
+                _validate_product_pair(
+                    _Product("a.spectral.confidence", metadata, older),
+                    _Product("b.spectral.confidence", metadata, current),
+                )
+
     def test_fft_ratio_plotting_choices_validate(self):
         options = FFTRatioPlottingConfig(
             scales=("linear",), normalizations=("absolute",),
@@ -66,6 +138,22 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
             FFTRatioPlottingConfig(scales=("linear", "linear"))
         with self.assertRaises(ValueError):
             FFTRatioPlottingConfig(minimum_relative_amplitude=0.0)
+        self.assertTrue(FFTRatioPlottingConfig().amplitude_ratio_panels)
+        self.assertEqual(FFTRatioPlottingConfig().spectral_display, "amplitude")
+        self.assertEqual(FFTRatioPlottingConfig().psd_ratio_confidence_level, 0.95)
+        self.assertEqual(
+            DirectionalWaveAnalysis(
+                id="wave", recipe="directional_wave", probe_set_id="probe",
+                variable="pressure", frequency_max_hz=1.0e8,
+            ).spectral_display,
+            "amplitude",
+        )
+        self.assertEqual(
+            FFTRatioPlottingConfig(spectral_display="relative_db").spectral_display,
+            "relative_db",
+        )
+        with self.assertRaisesRegex(ValueError, "requires explicit"):
+            FFTRatioPlottingConfig(symmetry_diagnostics=True)
 
     def test_probe_overlay_legend_stays_above_axes_and_uses_microseconds(self):
         figure = build_probe_overlay_figure(
@@ -146,6 +234,92 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
                     self.assertEqual(axis.get_xscale(), "log")
             finally:
                 plt.close(figure)
+
+    def test_fft_ratio_plot_honors_frequency_alignment(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            first, second = directory / "baseline.npz", directory / "comparison.npz"
+            common = {
+                "x_m": np.array([0.025]),
+                "probe_indices": np.array([160]),
+                "signal_unit": np.array("Pa"),
+            }
+            np.savez(
+                first,
+                **common,
+                frequency_hz=np.array([0.0, 1.0, 2.0]),
+                amplitude=np.array([[0.0], [1.0], [2.0]]),
+            )
+            np.savez(
+                second,
+                **common,
+                frequency_hz=np.array([0.0, 1.5, 3.0]),
+                amplitude=np.array([[0.0], [1.5], [3.0]]),
+            )
+            with self.assertRaises(ValueError):
+                render_probe_panels(
+                    first, second, "baseline", "comparison", "pressure",
+                    directory / "strict.png", kind="fft_amplitude_linear_ratio",
+                )
+            with patch("pelecpost.analysis.comparison_figures.plt.close") as close:
+                render_probe_panels(
+                    first, second, "baseline", "comparison", "pressure",
+                    directory / "aligned.png", kind="fft_amplitude_linear_ratio",
+                    alignment=ComparisonAlignment(frequency="interpolate_to_baseline"),
+                )
+            figure = close.call_args.args[0]
+            try:
+                np.testing.assert_allclose(figure.axes[0].lines[0].get_xdata(), [1.0, 2.0])
+                np.testing.assert_allclose(figure.axes[0].lines[0].get_ydata(), [1.0, 1.0])
+            finally:
+                plt.close(figure)
+
+    def test_unit_l2_fk_support_is_scale_invariant(self):
+        baseline = np.array([[1.0, 4.0], [9.0, 16.0]])
+        for scale in (1.0e-12, 1.0e12):
+            ratio_a, ratio_b, support, basis = _fk_ratio_components(
+                baseline, baseline * scale, "unit_l2", 0.01
+            )
+            self.assertEqual(basis, "normalized_own_peak")
+            self.assertTrue(np.all(support))
+            np.testing.assert_allclose(
+                np.sqrt(ratio_b[support] / ratio_a[support]), 1.0
+            )
+
+    def test_psd_ratio_confidence_uses_native_bins_and_effective_dof(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            first, second = directory / "baseline.npz", directory / "comparison.npz"
+            common = {
+                "frequency_hz": np.array([0.0, 1.0, 2.0]),
+                "probe_indices": np.array([7]),
+                "x_m": np.array([0.25]),
+            }
+            np.savez(first, **common, psd=np.array([[0.0], [2.0], [4.0]]))
+            np.savez(second, **common, psd=np.array([[0.0], [4.0], [8.0]]))
+            confidence = {
+                "segment_count": 8,
+                "effective_degrees_of_freedom": 12.0,
+            }
+            metadata = {
+                "kind": "array",
+                "variable": "pressure",
+                "units": "Pa^2/Hz",
+                "provenance": {"welch_confidence": confidence},
+            }
+            payload, arrays = _psd_ratio_confidence(
+                _Product("baseline", metadata, first),
+                _Product("comparison", metadata, second),
+                ComparisonAlignment(),
+                (1.0, 2.0),
+                0.01,
+                0.95,
+            )
+            self.assertEqual(payload["status"], "available")
+            self.assertIsNotNone(arrays)
+            np.testing.assert_allclose(arrays["ratio"], 2.0)
+            self.assertTrue(np.all(arrays["lower"] < 2.0))
+            self.assertTrue(np.all(arrays["upper"] > 2.0))
 
     def test_normalized_fft_ratio_identifies_enrichment_and_masks_weak_bins(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -341,7 +515,7 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
             try:
                 self.assertIsNotNone(result)
                 self.assertTrue(all(path.is_file() for path in result))
-                ratio = np.asarray(figures[0].axes[2].images[0].get_array())
+                ratio = np.asarray(figures[0].axes[2].collections[0].get_array()).reshape(3, 3)
                 self.assertAlmostEqual(ratio[0, 1], 10 * np.log10(2))
                 self.assertTrue(np.isnan(ratio[-1, -1]))
                 self.assertEqual(figures[0].axes[0].get_ylabel(), "Frequency [MHz]")
@@ -371,11 +545,172 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
             figure = close.call_args.args[0]
             try:
                 self.assertEqual(result, (directory / "linear_map.png", None))
-                ratio = np.asarray(figure.axes[2].images[0].get_array())
+                ratio = np.asarray(figure.axes[2].collections[0].get_array()).reshape(2, 3)
                 np.testing.assert_allclose(ratio, 2.0)
-                self.assertEqual(figure.axes[2].images[0].norm(1.0), 0.5)
+                self.assertAlmostEqual(figure.axes[2].collections[0].norm(1.0), 0.25)
             finally:
                 plt.close(figure)
+
+    def test_fk_source_panels_use_shared_physical_amplitude_or_relative_db(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            first, second = directory / "baseline.npz", directory / "comparison.npz"
+            common = {
+                "frequency_hz": np.array([2e5, 3e5]),
+                "wavenumber_rad_m": np.array([-1000.0, 0.0]),
+            }
+            power_a = np.array([[1.0, 4.0], [9.0, 16.0]])
+            power_b = 4.0 * power_a
+            np.savez(first, **common, power=power_a, amplitude=np.sqrt(power_a))
+            np.savez(second, **common, power=power_b, amplitude=np.sqrt(power_b))
+
+            with patch("pelecpost.analysis.comparison_figures.plt.close") as close:
+                render_komega_comparison(
+                    first, second, "baseline.wave.komega", "comparison.wave.komega",
+                    directory / "amplitude.png", None, (2e5, 3e5), "(Pa)^2",
+                )
+            amplitude_figure = close.call_args.args[0]
+            try:
+                plotted = np.asarray(
+                    amplitude_figure.axes[0].collections[0].get_array()
+                ).reshape(power_a.shape)
+                np.testing.assert_allclose(plotted, np.sqrt(power_a))
+                self.assertEqual(amplitude_figure.axes[0].collections[0].norm.vmin, 0.0)
+                self.assertEqual(amplitude_figure.axes[0].collections[0].norm.vmax, 8.0)
+                self.assertEqual(amplitude_figure.axes[3].get_ylabel(), "Spectral amplitude [Pa]")
+            finally:
+                plt.close(amplitude_figure)
+
+            with patch("pelecpost.analysis.comparison_figures.plt.close") as close:
+                render_komega_comparison(
+                    first, second, "baseline.wave.komega", "comparison.wave.komega",
+                    directory / "relative_db.png", None, (2e5, 3e5), "(Pa)^2",
+                    spectral_display="relative_db",
+                )
+            db_figure = close.call_args.args[0]
+            try:
+                plotted = np.asarray(db_figure.axes[0].collections[0].get_array()).reshape(power_a.shape)
+                np.testing.assert_allclose(plotted, 10.0 * np.log10(power_a / power_b.max()))
+                self.assertEqual(db_figure.axes[0].collections[0].norm.vmin, -60.0)
+                self.assertEqual(db_figure.axes[3].get_ylabel(), "Relative power [dB]")
+            finally:
+                plt.close(db_figure)
+
+    def test_signed_k_amplitude_curve_and_frequency_slice_use_shared_units(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            first, second = directory / "baseline.npz", directory / "comparison.npz"
+            common = {
+                "frequency_hz": np.array([0.5e6, 1.0e6]),
+                "wavenumber_rad_m": np.array([-1000.0, 0.0, 1000.0]),
+            }
+            power_a = np.array([[1.0, 4.0, 1.0], [4.0, 9.0, 4.0]])
+            power_b = 4.0 * power_a
+            np.savez(first, **common, power=power_a)
+            np.savez(second, **common, power=power_b)
+
+            with patch("pelecpost.analysis.comparison_figures.plt.close") as close:
+                render_komega_comparison(
+                    first, second, "baseline.wave.komega", "comparison.wave.komega",
+                    directory / "map.png", directory / "signed_k.png",
+                    (0.5e6, 1.0e6), "(Pa)^2",
+                )
+            figures = [call.args[0] for call in close.call_args_list]
+            try:
+                spectrum = figures[1]
+                np.testing.assert_allclose(
+                    spectrum.axes[0].lines[0].get_ydata(), np.sqrt(np.sum(power_a, axis=0))
+                )
+                self.assertEqual(spectrum.axes[0].get_yscale(), "linear")
+                self.assertIn("[Pa]", spectrum.axes[0].get_ylabel())
+            finally:
+                for figure in figures:
+                    plt.close(figure)
+
+            with patch("pelecpost.analysis.comparison_figures.plt.close") as close:
+                render_komega_amplitude_frequency_slices(
+                    first, second, "baseline.wave.komega", "comparison.wave.komega",
+                    directory / "slices.png", (0.5e6, 1.0e6), power_unit="(Pa)^2",
+                )
+            slices = close.call_args.args[0]
+            try:
+                self.assertEqual(len(slices.axes[0].lines), 2)
+                self.assertEqual(slices.axes[0].lines[0].get_ydata()[1], 2.0)
+                self.assertEqual(slices.axes[0].lines[1].get_ydata()[1], 4.0)
+                self.assertEqual(slices.axes[0].get_ylim(), slices.axes[1].get_ylim())
+                self.assertTrue(
+                    any(text.get_text() == "Spectral amplitude [Pa]" for text in slices.texts)
+                )
+            finally:
+                plt.close(slices)
+
+    def test_time_localized_amplitude_maps_share_a_linear_record_scale(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            analysis = DirectionalWaveAnalysis(
+                id="wave", recipe="directional_wave", probe_set_id="probe",
+                variable="pressure", frequency_max_hz=2.0e6,
+                temporal_wavenumber=TemporalWavenumberEnabled(
+                    enabled=True, window_duration_s=1.0e-6,
+                ),
+            )
+            registered = []
+            context = SimpleNamespace(
+                analysis=analysis,
+                project=SimpleNamespace(
+                    analyses_file=SimpleNamespace(presentation=PresentationConfig())
+                ),
+                figure_dir=directory,
+                register=lambda **record: registered.append(record),
+            )
+            band_power = np.array([[1.0, 4.0], [9.0, 16.0]])
+            snapshot_power = np.array([
+                [[1.0, 4.0], [4.0, 1.0]],
+                [[9.0, 16.0], [16.0, 9.0]],
+            ])
+            summary = {
+                "preprocessing": {"window_duration_s": 1.0e-6},
+                "snapshot_roles": np.array(["early", "late"]),
+                "valid_time_mask": np.array([True, True]),
+                "time_center_s": np.array([1.0e-6, 2.0e-6]),
+                "snapshot_time_s": np.array([1.0e-6, 2.0e-6]),
+                "snapshot_valid_mask": np.array([True, True]),
+                "wavenumber_rad_m": np.array([-1000.0, 0.0]),
+                "band_power": band_power,
+                "relative_band_power_db": 10.0 * np.log10(band_power / 16.0),
+                "dominant_wavenumber_rad_m": np.array([0.0, 0.0]),
+                "dominant_frequency_hz": np.array([1.0e6, 1.0e6]),
+                "wavelength_m": np.array([np.inf, np.inf]),
+                "phase_speed_m_s": np.array([1.0, 1.0]),
+            }
+            snapshots = {
+                "snapshot_time_s": np.array([1.0e-6, 2.0e-6]),
+                "wavenumber_rad_m": np.array([-1000.0, 0.0]),
+                "frequency_hz": np.array([1.0e6, 2.0e6]),
+                "power": snapshot_power,
+                "relative_power_db": 10.0 * np.log10(snapshot_power / 16.0),
+                "valid_snapshot_mask": np.array([True, True]),
+            }
+            with patch("pelecpost.analysis.temporal_wavenumber.plt.close") as close:
+                register_temporal_wavenumber_figures(
+                    context, values=np.ones((2, 2)), time_s=np.array([1.0e-6, 2.0e-6]),
+                    x_m=np.array([0.0, 1.0]), variable="pressure", units="Pa",
+                    summary=summary, snapshots=snapshots,
+                )
+            figures = list({
+                id(call.args[0]): call.args[0] for call in close.call_args_list
+            }.values())
+            try:
+                self.assertEqual(len(figures), 4)
+                self.assertEqual(figures[0].axes[0].collections[0].norm.vmax, 4.0)
+                snapshot_axes = figures[3].axes[:2]
+                self.assertTrue(all(axis.collections[0].norm.vmin == 0.0 for axis in snapshot_axes))
+                self.assertTrue(all(axis.collections[0].norm.vmax == 4.0 for axis in snapshot_axes))
+                self.assertEqual(registered[0]["units"], "Pa")
+                self.assertEqual(registered[-1]["units"], "Pa")
+            finally:
+                for figure in figures:
+                    plt.close(figure)
 
     def test_signed_fk_unit_normalized_linear_ratio_removes_overall_scale(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -396,7 +731,7 @@ class UnifiedProbeComparisonTests(unittest.TestCase):
                 )
             figure = close.call_args.args[0]
             try:
-                ratio = np.asarray(figure.axes[2].images[0].get_array())
+                ratio = np.asarray(figure.axes[2].collections[0].get_array()).reshape(2, 3)
                 np.testing.assert_allclose(ratio, 1.0)
             finally:
                 plt.close(figure)

@@ -247,6 +247,9 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "fft_ratio_plotting": {
+            "$ref": "#/$defs/FFTRatioPlottingConfig"
+          },
           "id": {
             "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
             "title": "Id",
@@ -504,6 +507,23 @@
             "default": 1e-15,
             "minimum": 0.0,
             "title": "Time Tolerance S",
+            "type": "number"
+          },
+          "wavenumber": {
+            "default": "strict",
+            "enum": [
+              "strict",
+              "intersection",
+              "interpolate_to_baseline",
+              "interpolate_to_comparison"
+            ],
+            "title": "Wavenumber",
+            "type": "string"
+          },
+          "wavenumber_tolerance_rad_m": {
+            "default": 1e-09,
+            "minimum": 0.0,
+            "title": "Wavenumber Tolerance Rad M",
             "type": "number"
           }
         },
@@ -941,6 +961,22 @@
       "DirectionalWaveAnalysis": {
         "additionalProperties": false,
         "properties": {
+          "diagnostics_enabled": {
+            "default": false,
+            "title": "Diagnostics Enabled",
+            "type": "boolean"
+          },
+          "direction": {
+            "default": "positive",
+            "description": "Accepted real-wavenumber sign. Expected speed bounds constrain the magnitude of phase speed; reported phase speed retains its sign.",
+            "enum": [
+              "positive",
+              "negative",
+              "both"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
           "enabled": {
             "default": true,
             "title": "Enabled",
@@ -1053,6 +1089,23 @@
             "default": null,
             "title": "Record Start Time S"
           },
+          "spatial_aperture_fractions": {
+            "default": [
+              1.0,
+              0.75,
+              0.5
+            ],
+            "items": {
+              "type": "number"
+            },
+            "title": "Spatial Aperture Fractions",
+            "type": "array"
+          },
+          "spatial_sensitivity_enabled": {
+            "default": false,
+            "title": "Spatial Sensitivity Enabled",
+            "type": "boolean"
+          },
           "spatial_window": {
             "default": "hann",
             "enum": [
@@ -1063,6 +1116,34 @@
             ],
             "title": "Spatial Window",
             "type": "string"
+          },
+          "spectral_display": {
+            "default": "amplitude",
+            "description": "Display spectral magnitude in signal units or power relative to a shared maximum in dB.",
+            "enum": [
+              "amplitude",
+              "relative_db"
+            ],
+            "title": "Spectral Display",
+            "type": "string"
+          },
+          "temporal_wavenumber": {
+            "discriminator": {
+              "mapping": {
+                "False": "#/$defs/TemporalWavenumberDisabled",
+                "True": "#/$defs/TemporalWavenumberEnabled"
+              },
+              "propertyName": "enabled"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/TemporalWavenumberDisabled"
+              },
+              {
+                "$ref": "#/$defs/TemporalWavenumberEnabled"
+              }
+            ],
+            "title": "Temporal Wavenumber"
           },
           "temporal_window": {
             "default": "rectangular",
@@ -1096,6 +1177,219 @@
           "frequency_max_hz"
         ],
         "title": "DirectionalWaveAnalysis",
+        "type": "object"
+      },
+      "FFTRatioPlottingConfig": {
+        "additionalProperties": false,
+        "description": "Amplitude-ratio views for paired probe FFT and frequency-wavenumber products.",
+        "properties": {
+          "amplitude_ratio_panels": {
+            "default": true,
+            "title": "Amplitude Ratio Panels",
+            "type": "boolean"
+          },
+          "db_ratio_limits": {
+            "default": [
+              -12.0,
+              12.0
+            ],
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Db Ratio Limits",
+            "type": "array"
+          },
+          "frequency_slices": {
+            "default": true,
+            "title": "Frequency Slices",
+            "type": "boolean"
+          },
+          "linear_ratio_color_scale": {
+            "default": "linear",
+            "enum": [
+              "linear",
+              "log"
+            ],
+            "title": "Linear Ratio Color Scale",
+            "type": "string"
+          },
+          "linear_ratio_limits": {
+            "default": [
+              0.0,
+              4.0
+            ],
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Linear Ratio Limits",
+            "type": "array"
+          },
+          "minimum_relative_amplitude": {
+            "default": 0.01,
+            "exclusiveMaximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Minimum Relative Amplitude",
+            "type": "number"
+          },
+          "normalizations": {
+            "default": [
+              "absolute",
+              "unit_l2"
+            ],
+            "items": {
+              "enum": [
+                "absolute",
+                "unit_l2"
+              ],
+              "type": "string"
+            },
+            "title": "Normalizations",
+            "type": "array"
+          },
+          "phase_delay_diagnostics": {
+            "default": false,
+            "title": "Phase Delay Diagnostics",
+            "type": "boolean"
+          },
+          "probe_groups": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProbeTraceGroup"
+            },
+            "title": "Probe Groups",
+            "type": "array"
+          },
+          "psd_ratio_confidence_level": {
+            "default": 0.95,
+            "exclusiveMaximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Psd Ratio Confidence Level",
+            "type": "number"
+          },
+          "reference_frequency_band_hz": {
+            "anyOf": [
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reference Frequency Band Hz"
+          },
+          "reflection_center_m": {
+            "default": 0.025,
+            "title": "Reflection Center M",
+            "type": "number"
+          },
+          "scalar_reflection_parity": {
+            "default": "even",
+            "enum": [
+              "even",
+              "odd"
+            ],
+            "title": "Scalar Reflection Parity",
+            "type": "string"
+          },
+          "scale_policy": {
+            "default": "independent",
+            "enum": [
+              "independent",
+              "group",
+              "all"
+            ],
+            "title": "Scale Policy",
+            "type": "string"
+          },
+          "scales": {
+            "default": [
+              "db",
+              "linear"
+            ],
+            "items": {
+              "enum": [
+                "db",
+                "linear"
+              ],
+              "type": "string"
+            },
+            "title": "Scales",
+            "type": "array"
+          },
+          "signed_k_ratio": {
+            "default": true,
+            "title": "Signed K Ratio",
+            "type": "boolean"
+          },
+          "spectral_display": {
+            "default": "amplitude",
+            "description": "Display source spectral magnitudes in signal units or relative power in dB.",
+            "enum": [
+              "amplitude",
+              "relative_db"
+            ],
+            "title": "Spectral Display",
+            "type": "string"
+          },
+          "symmetry_diagnostics": {
+            "default": false,
+            "title": "Symmetry Diagnostics",
+            "type": "boolean"
+          },
+          "threshold_sensitivity": {
+            "default": false,
+            "title": "Threshold Sensitivity",
+            "type": "boolean"
+          },
+          "wave_frequency_band_hz": {
+            "anyOf": [
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Wave Frequency Band Hz"
+          }
+        },
+        "title": "FFTRatioPlottingConfig",
         "type": "object"
       },
       "FigurePresentation": {
@@ -1668,7 +1962,7 @@
             "type": "string"
           },
           "grid": {
-            "default": true,
+            "default": false,
             "title": "Grid",
             "type": "boolean"
           },
@@ -2207,7 +2501,7 @@
             "default": {
               "color": null,
               "coordinate_scale": "linear",
-              "grid": true,
+              "grid": false,
               "legend_position": "best",
               "linestyle": "solid",
               "linewidth": 2.0,
@@ -2353,6 +2647,32 @@
             ],
             "title": "Normalization",
             "type": "string"
+          },
+          "probe_groups": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProbeTraceGroup"
+            },
+            "title": "Probe Groups",
+            "type": "array"
+          },
+          "scale_policy": {
+            "default": "independent",
+            "enum": [
+              "independent",
+              "group",
+              "all"
+            ],
+            "title": "Scale Policy",
+            "type": "string"
+          },
+          "trace_views": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProbeTraceView"
+            },
+            "title": "Trace Views",
+            "type": "array"
           }
         },
         "title": "ProbePlottingConfig",
@@ -2370,6 +2690,34 @@
             ],
             "title": "Detrend",
             "type": "string"
+          },
+          "diagnostic_end_taper_fractions": {
+            "default": [
+              0.1,
+              0.2
+            ],
+            "items": {
+              "type": "number"
+            },
+            "title": "Diagnostic End Taper Fractions",
+            "type": "array"
+          },
+          "diagnostic_record_end_fractions": {
+            "default": [
+              0.5,
+              0.75,
+              1.0
+            ],
+            "items": {
+              "type": "number"
+            },
+            "title": "Diagnostic Record End Fractions",
+            "type": "array"
+          },
+          "diagnostics_enabled": {
+            "default": false,
+            "title": "Diagnostics Enabled",
+            "type": "boolean"
           },
           "enabled": {
             "default": true,
@@ -2505,6 +2853,111 @@
         "title": "ProbeSpectrumAnalysis",
         "type": "object"
       },
+      "ProbeTraceGroup": {
+        "additionalProperties": false,
+        "properties": {
+          "probe_indices": {
+            "items": {
+              "type": "integer"
+            },
+            "minItems": 1,
+            "title": "Probe Indices",
+            "type": "array"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "value_limits": {
+            "anyOf": [
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Value Limits"
+          }
+        },
+        "required": [
+          "title",
+          "probe_indices"
+        ],
+        "title": "ProbeTraceGroup",
+        "type": "object"
+      },
+      "ProbeTraceView": {
+        "additionalProperties": false,
+        "properties": {
+          "grid": {
+            "default": true,
+            "title": "Grid",
+            "type": "boolean"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/$defs/ProbeTraceGroup"
+            },
+            "minItems": 1,
+            "title": "Groups",
+            "type": "array"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "pair_difference": {
+            "default": false,
+            "title": "Pair Difference",
+            "type": "boolean"
+          },
+          "time_end_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Time End S"
+          },
+          "time_start_s": {
+            "default": 0.0,
+            "minimum": 0.0,
+            "title": "Time Start S",
+            "type": "number"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "groups"
+        ],
+        "title": "ProbeTraceView",
+        "type": "object"
+      },
       "SinglePulseAnalysis": {
         "additionalProperties": false,
         "properties": {
@@ -2566,6 +3019,12 @@
             "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
             "title": "Id",
             "type": "string"
+          },
+          "maximum_source_energy_relative_error": {
+            "default": 0.01,
+            "minimum": 0,
+            "title": "Maximum Source Energy Relative Error",
+            "type": "number"
           },
           "minimum_baseline_samples": {
             "default": 8,
@@ -2634,6 +3093,18 @@
             ],
             "default": null,
             "title": "Record Start Time S"
+          },
+          "source_history_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source History Id"
           },
           "start_time_s": {
             "default": 0.0,
@@ -2837,7 +3308,7 @@
             "$ref": "#/$defs/SurfaceProfileFigure",
             "default": {
               "coordinate_scale": "linear",
-              "grid": true,
+              "grid": false,
               "layout": "separate_fields",
               "normalize_values": false,
               "value_scale": "linear"
@@ -2983,7 +3454,7 @@
             "type": "string"
           },
           "grid": {
-            "default": true,
+            "default": false,
             "title": "Grid",
             "type": "boolean"
           },
@@ -3035,6 +3506,78 @@
         "title": "SurfaceXLocation",
         "type": "object"
       },
+      "TemporalWavenumberDisabled": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "const": false,
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "title": "TemporalWavenumberDisabled",
+        "type": "object"
+      },
+      "TemporalWavenumberEnabled": {
+        "additionalProperties": false,
+        "properties": {
+          "display_floor_db": {
+            "default": -60.0,
+            "maximum": 0.0,
+            "title": "Display Floor Db",
+            "type": "number"
+          },
+          "enabled": {
+            "const": true,
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "minimum_relative_energy_db": {
+            "default": -30.0,
+            "maximum": 0.0,
+            "title": "Minimum Relative Energy Db",
+            "type": "number"
+          },
+          "overlap_fraction": {
+            "default": 0.75,
+            "exclusiveMaximum": 1.0,
+            "minimum": 0.0,
+            "title": "Overlap Fraction",
+            "type": "number"
+          },
+          "snapshot_times_s": {
+            "default": [],
+            "items": {
+              "type": "number"
+            },
+            "title": "Snapshot Times S",
+            "type": "array"
+          },
+          "window": {
+            "default": "hann",
+            "enum": [
+              "hann",
+              "hamming",
+              "blackman",
+              "rectangular"
+            ],
+            "title": "Window",
+            "type": "string"
+          },
+          "window_duration_s": {
+            "exclusiveMinimum": 0,
+            "title": "Window Duration S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "window_duration_s"
+        ],
+        "title": "TemporalWavenumberEnabled",
+        "type": "object"
+      },
       "TimeAnnotationOverride": {
         "additionalProperties": false,
         "properties": {
@@ -3071,7 +3614,10 @@
                   "top_right",
                   "bottom_left",
                   "bottom_center",
-                  "bottom_right"
+                  "bottom_right",
+                  "above_axes_left",
+                  "above_axes_center",
+                  "above_axes_right"
                 ],
                 "type": "string"
               },
@@ -3121,7 +3667,10 @@
               "top_right",
               "bottom_left",
               "bottom_center",
-              "bottom_right"
+              "bottom_right",
+              "above_axes_left",
+              "above_axes_center",
+              "above_axes_right"
             ],
             "title": "Position",
             "type": "string"
@@ -3140,6 +3689,19 @@
       "TransientWavepacketAnalysis": {
         "additionalProperties": false,
         "properties": {
+          "arrival_edge_margin_s": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Arrival Edge Margin S"
+          },
           "band_max_hz": {
             "exclusiveMinimum": 0,
             "title": "Band Max Hz",
@@ -3184,6 +3746,24 @@
             "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
             "title": "Id",
             "type": "string"
+          },
+          "minimum_arrival_r_squared": {
+            "default": 0.8,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Minimum Arrival R Squared",
+            "type": "number"
+          },
+          "minimum_baseline_samples": {
+            "default": 8,
+            "exclusiveMinimum": 0,
+            "title": "Minimum Baseline Samples",
+            "type": "integer"
+          },
+          "minimum_packet_snr_db": {
+            "default": 6.0,
+            "title": "Minimum Packet Snr Db",
+            "type": "number"
           },
           "overlap_fraction": {
             "default": 0.75,
@@ -3236,6 +3816,11 @@
             ],
             "default": null,
             "title": "Record Start Time S"
+          },
+          "require_monotonic_arrivals": {
+            "default": true,
+            "title": "Require Monotonic Arrivals",
+            "type": "boolean"
           },
           "stft_segment_samples": {
             "default": 2048,
@@ -3575,7 +4160,7 @@
           "line_defaults": {
             "color": null,
             "coordinate_scale": "linear",
-            "grid": true,
+            "grid": false,
             "legend_position": "best",
             "linestyle": "solid",
             "linewidth": 2.0,
@@ -3648,6 +4233,18 @@
             "default": "pelec",
             "title": "Solver",
             "type": "string"
+          },
+          "solver_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Solver Revision"
           },
           "solver_units": {
             "$ref": "#/$defs/SolverUnits",
@@ -4076,6 +4673,12 @@
             "title": "Memory Limit Gb",
             "type": "number"
           },
+          "parallel_task_timeout_s": {
+            "default": 21600.0,
+            "exclusiveMinimum": 0,
+            "title": "Parallel Task Timeout S",
+            "type": "number"
+          },
           "scratch_directory": {
             "anyOf": [
               {
@@ -4091,6 +4694,7 @@
           },
           "workers": {
             "default": 1,
+            "description": "Safe upper bound for process workers inside an independent workflow stage; workflows themselves remain serial.",
             "exclusiveMinimum": 0,
             "title": "Workers",
             "type": "integer"
@@ -4134,6 +4738,13 @@
             },
             "title": "Probe Sets",
             "type": "object"
+          },
+          "source_histories": {
+            "additionalProperties": {
+              "$ref": "#/$defs/SourceHistoryInput"
+            },
+            "title": "Source Histories",
+            "type": "object"
           }
         },
         "title": "InputConfig",
@@ -4157,6 +4768,19 @@
       "PlotfileInput": {
         "additionalProperties": false,
         "properties": {
+          "identity_manifest": {
+            "anyOf": [
+              {
+                "format": "path",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Identity Manifest"
+          },
           "prefix": {
             "default": "plt",
             "title": "Prefix",
@@ -4184,6 +4808,12 @@
               },
               "compact_file": {
                 "type": "string"
+              },
+              "identity_manifest": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -4197,6 +4827,12 @@
               },
               "compact_file": {
                 "type": "null"
+              },
+              "identity_manifest": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -4225,9 +4861,55 @@
             ],
             "default": null,
             "title": "Compact File"
+          },
+          "identity_manifest": {
+            "anyOf": [
+              {
+                "format": "path",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Identity Manifest"
           }
         },
         "title": "ProbeInput",
+        "type": "object"
+      },
+      "SourceHistoryInput": {
+        "additionalProperties": false,
+        "properties": {
+          "identity_manifest": {
+            "anyOf": [
+              {
+                "format": "path",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Identity Manifest"
+          },
+          "prefix": {
+            "default": "thermal-source.segment",
+            "title": "Prefix",
+            "type": "string"
+          },
+          "source": {
+            "format": "path",
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "SourceHistoryInput",
         "type": "object"
       }
     },
@@ -4238,6 +4920,7 @@
         "default": {
           "fft_batch_size": 32,
           "memory_limit_gb": 8.0,
+          "parallel_task_timeout_s": 21600.0,
           "scratch_directory": null,
           "workers": 1
         }
@@ -4248,7 +4931,8 @@
           "archived_runs": {},
           "baselines": {},
           "plotfiles": null,
-          "probe_sets": {}
+          "probe_sets": {},
+          "source_histories": {}
         }
       },
       "outputs": {

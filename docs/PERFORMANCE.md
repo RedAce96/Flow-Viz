@@ -24,3 +24,24 @@ The benchmark reports a sampled checksum to ensure the staged matrix is read.
 It does not set a performance threshold. Compare results only when dataset
 dimensions, selected probe count, storage policy, software environment, and
 filesystem class match.
+
+## High-AMR flow overview memory check
+
+The process-recycling change must also be measured on representative server
+plotfiles. Run one high-AMR snapshot, then at least ten consecutive snapshots
+with one worker and recycling enabled. Record dataset identity and dimensions,
+worker count, process IDs, peak resident memory for each snapshot, the parent
+process peak, and the configured memory limit. The single-snapshot peak tests
+whether one task fits; the sequence tests whether memory accumulates across
+tasks. Keep the observed measurements in the acceptance record. If the server
+dataset is unavailable locally, leave this check open rather than claiming an
+OOM resolution from unit tests alone.
+
+On Linux, wrap the single-snapshot `pelec-post run` command with
+`/usr/bin/time -v -o single-time.txt`. After each run, use
+`python -m tools.flow_overview_memory_report RUN_DIR --time-log single-time.txt`
+for the single snapshot and
+`python -m tools.flow_overview_memory_report RUN_DIR` for the sequence. The
+report reads task process IDs and per-process high-water marks from `run.log`;
+the external time log supplies the single-run process peak. Compare these
+measurements with the original failed-run log and the Slurm allocation.

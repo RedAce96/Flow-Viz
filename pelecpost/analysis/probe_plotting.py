@@ -121,6 +121,7 @@ def _save_line_figure(
         log_x=log_x,
         log_y=log_y,
     )
+    figure.suptitle(f"{variable.capitalize()}: {filename.replace('_', ' ')}", y=0.995)
     return _register_figure_variants(
         context,
         figure=figure,
@@ -429,10 +430,10 @@ def register_probe_trace_figures(
             values=raw_display,
             labels=labels,
             x_label="Time [s]",
-            y_label=f"Signal [{normalization_units}]",
+            y_label=f"{variable.capitalize()} history [{normalization_units}]",
             variable=variable,
             units=normalization_units,
-            interpretation="Overlay of the selected probe histories before recipe preprocessing.",
+            interpretation="Overlay of the selected probe histories before recipe preprocessing; physical variable and units are shown on the axis.",
             provenance=common | {"stage": "raw"},
         )
         _save_line_figure(
@@ -443,10 +444,10 @@ def register_probe_trace_figures(
             values=prepared_display,
             labels=labels,
             x_label="Time [s]",
-            y_label=f"Signal [{normalization_units}]",
+            y_label=f"Record-mean-subtracted {variable.capitalize()} [{normalization_units}]",
             variable=variable,
             units=normalization_units,
-            interpretation="Overlay of the selected probe signals supplied to the recipe method.",
+            interpretation="Overlay of the record-mean-subtracted probe signals supplied to the recipe method.",
             provenance=common | {"stage": "method_ready"},
         )
         return
@@ -477,7 +478,7 @@ def register_probe_trace_figures(
                 "labels": labels,
                 "presentation": _figure_config(context).model_dump(mode="json"),
                 "x_label": "Time [s]",
-                "y_label": f"Signal [{normalization_units}]",
+                "y_label": f"{variable.capitalize()} history [{normalization_units}]",
                 "stem": str(context.figure_dir / "raw_history_overlay"),
             },
             {
@@ -486,7 +487,7 @@ def register_probe_trace_figures(
                 "labels": labels,
                 "presentation": _figure_config(context).model_dump(mode="json"),
                 "x_label": "Time [s]",
-                "y_label": f"Signal [{normalization_units}]",
+                "y_label": f"Record-mean-subtracted {variable.capitalize()} [{normalization_units}]",
                 "stem": str(context.figure_dir / "method_ready_overlay"),
             },
         )
@@ -520,7 +521,7 @@ def register_probe_trace_figures(
             variable=variable,
             units=normalization_units,
             coordinate_metadata={"time": "s", "probe_x": "m", "probe_y": "m"},
-            interpretation="Overlay of the selected probe histories before recipe preprocessing.",
+            interpretation="Overlay of the selected probe histories before recipe preprocessing; physical variable and units are shown on the axis.",
             provenance=raw_common,
         )
         _register_saved_line_paths(
@@ -530,7 +531,7 @@ def register_probe_trace_figures(
             variable=variable,
             units=normalization_units,
             coordinate_metadata={"time": "s", "probe_x": "m", "probe_y": "m"},
-            interpretation="Overlay of the selected probe signals supplied to the recipe method.",
+            interpretation="Overlay of the record-mean-subtracted probe signals supplied to the recipe method.",
             provenance=prepared_common,
         )
     except BaseException:

@@ -1,0 +1,10 @@
+# Optional defaults for --replay-config. CLI options take precedence.
+# Omit project_dir to use the archived run's resolved configuration.
+replay:
+  # Must name one run containing manifest.json and artifacts.json.
+  export_root: /Users/sbrollia/Documents/Programming/My-CFD/Delta_Outputs/FlowViz
+  # output_root: /path/to/a/new-or-exactly-matching-replay-directory
+  # analysis_ids: [compare-pressure-frequency, compare-pressure-wave]
+
+# Example:
+# .venv/bin/python replot_saved_kernel_products.py --replay-config LOCAL_REPLAY_CONFIG.yaml

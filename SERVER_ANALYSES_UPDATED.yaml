@@ -1,0 +1,234 @@
+schema_version: 1
+
+# Focused first-arrival frequency and signed-wavenumber kernel comparison.
+# The original broad recipe is preserved as analyses.before-kernel-spectra.yaml.
+# YAML merges keep both cases on the same time, frequency, and probe settings.
+# The FFT ratio options below require the updated ratio-capable Flow Viz code.
+# The linear views are amplitude ratios; the dB views are 20 log10 of those
+# same amplitude ratios.
+presentation:
+  preset: publication
+  figure:
+    formats: [png, pdf]
+    dpi: 300
+    width_in: 10.0
+    height_in: 6.5
+  typography:
+    font_family: DejaVu Sans
+    base_size: 12
+    axes_label_size: 14
+    tick_label_size: 11
+    legend_size: 10
+  line_defaults:
+    linewidth: 2.0
+    linestyle: solid
+    marker: none
+    grid: false
+
+analyses:
+  # The pulse begins near t=0, so a full-record Hann taper would suppress
+  # its onset. Rectangular preserves the first arrival; the resulting FFT
+  # remains a finite-record pulse spectrum, not a stationary mode estimate.
+  # Welch PSD is supplied as a secondary descriptive estimate.
+  - &probe_spectrum
+    id: asym-pressure-spectrum
+    enabled: true
+    recipe: probe_spectrum
+    probe_set_id: asym
+    variable: pressure
+    # Outer mirrored pair first, then the near-source mirrored pair.
+    probe_indices: [120, 200, 150, 170]
+    end_time_s: 1.0e-5
+    # Extend the line spectra through 100 MHz; the 10 µs record supports the
+    # full positive FFT range to about 250 MHz, but 100 MHz keeps the requested
+    # comparison context compact. This display limit is not a validated physical
+    # bandwidth or a measured noise-floor cutoff.
+    frequency_max_hz: 1.0e8
+    window: rectangular
+    detrend: mean
+    welch_segment_samples: 1024
+    overlap_fraction: 0.5
+    diagnostics_enabled: true
+    diagnostic_record_end_fractions: [0.5, 0.75, 1.0]
+    diagnostic_end_taper_fractions: [0.1, 0.2]
+    time_grid_policy: resample_uniform
+    probe_plotting:
+      mode: both
+      normalization: none
+      label: index
+      scale_policy: group
+      probe_groups:
+        - {title: Outer mirrored pair, probe_indices: [120, 200]}
+        - {title: Inner mirrored pair, probe_indices: [150, 170]}
+
+  - <<: *probe_spectrum
+    id: gaus-pressure-spectrum
+    probe_set_id: gaus
+
+  - <<: *probe_spectrum
+    id: asym-temperature-spectrum
+    variable: temperature
+
+  - <<: *probe_spectrum
+    id: gaus-temperature-spectrum
+    probe_set_id: gaus
+    variable: temperature
+
+  # All 321 evenly spaced probes are needed for the signed spatial spectrum.
+  # Rectangular preserves the near-start pulse. Check the alternate-Hann
+  # sensitivity result before interpreting any wave ridge.
+  - &directional_wave
+    id: asym-pressure-wave
+    recipe: directional_wave
+    probe_set_id: asym
+    variable: pressure
+    end_time_s: 1.0e-5
+    # The 10 µs record resolves frequency in ~0.1 MHz steps. A true log
+    # frequency axis cannot include DC, so the map starts at its first
+    # positive bin; that lowest bin contains only one pulse-record cycle.
+    frequency_min_hz: 1.0e5
+    frequency_max_hz: 3.0e6
+    expected_speed_min_m_s: 500.0
+    expected_speed_max_m_s: 2500.0
+    minimum_coherence: 0.8
+    spatial_window: hann
+    temporal_window: rectangular
+    diagnostics_enabled: true
+    direction: both
+    spatial_sensitivity_enabled: true
+    spatial_aperture_fractions: [1.0, 0.75, 0.5]
+    time_grid_policy: resample_uniform
+    probe_plotting:
+      mode: panels
+      normalization: none
+      label: index_coordinates
+      scale_policy: group
+      probe_groups:
+        - {title: Outer mirrored pair, probe_indices: [120, 200]}
+        - {title: Inner mirrored pair, probe_indices: [150, 170]}
+
+  - <<: *directional_wave
+    id: gaus-pressure-wave
+    probe_set_id: gaus
+
+  - <<: *directional_wave
+    id: asym-temperature-wave
+    variable: temperature
+
+  - <<: *directional_wave
+    id: gaus-temperature-wave
+    probe_set_id: gaus
+    variable: temperature
+
+  # The first product drives the paired time plot. Additional comparison
+  # figures show paired FFT amplitudes, normalized FFT shapes, and Welch PSD.
+  - &frequency_comparison
+    id: compare-pressure-frequency
+    enabled: true
+    recipe: case_comparison
+    baseline: {analysis_id: asym-pressure-spectrum}
+    comparison: {analysis_id: gaus-pressure-spectrum}
+    product_ids: [spectral.probe_signals, spectral.psd]
+    fft_ratio_plotting:
+      scales: [linear, db]
+      normalizations: [absolute, unit_l2]
+      minimum_relative_amplitude: 0.01
+      reference_frequency_band_hz: [1.0e5, 1.0e8]
+      wave_frequency_band_hz: [1.0e5, 3.0e6]
+      linear_ratio_limits: [0.0, 4.0]
+      linear_ratio_color_scale: linear
+      phase_delay_diagnostics: true
+      symmetry_diagnostics: true
+      threshold_sensitivity: true
+      signed_k_ratio: true
+      frequency_slices: true
+      scale_policy: group
+      probe_groups:
+        - {title: Outer mirrored pair, probe_indices: [120, 200]}
+        - {title: Inner mirrored pair, probe_indices: [150, 170]}
+    alignment:
+      time: intersection
+      frequency: intersection
+      space: strict
+      wavenumber: strict
+
+  - <<: *frequency_comparison
+    id: compare-temperature-frequency
+    baseline: {analysis_id: asym-temperature-spectrum}
+    comparison: {analysis_id: gaus-temperature-spectrum}
+
+  # The first product drives a shared-scale signed f-k map with a gated
+  # Gaussian/asymmetric power-ratio panel. The signed-k line plot shows both
+  # absolute band power and separately normalized spectral shape.
+  - &wave_comparison
+    id: compare-pressure-wave
+    enabled: true
+    recipe: case_comparison
+    baseline: {analysis_id: asym-pressure-wave}
+    comparison: {analysis_id: gaus-pressure-wave}
+    product_ids: [wave.komega, wave.wavenumber]
+    fft_ratio_plotting:
+      scales: [linear, db]
+      normalizations: [absolute, unit_l2]
+      minimum_relative_amplitude: 0.01
+      reference_frequency_band_hz: [1.0e5, 1.0e8]
+      wave_frequency_band_hz: [1.0e5, 3.0e6]
+      linear_ratio_limits: [0.0, 4.0]
+      linear_ratio_color_scale: linear
+      phase_delay_diagnostics: true
+      symmetry_diagnostics: true
+      threshold_sensitivity: true
+      signed_k_ratio: true
+      frequency_slices: true
+      scale_policy: group
+      probe_groups:
+        - {title: Outer mirrored pair, probe_indices: [120, 200]}
+        - {title: Inner mirrored pair, probe_indices: [150, 170]}
+    alignment:
+      time: intersection
+      frequency: intersection
+      space: intersection
+      wavenumber: strict
+
+  - <<: *wave_comparison
+    id: compare-temperature-wave
+    baseline: {analysis_id: asym-temperature-wave}
+    comparison: {analysis_id: gaus-temperature-wave}
+
+  # Vorticity templates are intentionally disabled: the current Probe V2
+  # binaries contain rho, u, p, and T, but no vorticity history. Enable
+  # these only after both solver runs write a field named "vorticity" at
+  # the same 321 probes and sample rate.
+  - <<: *probe_spectrum
+    id: asym-vorticity-spectrum
+    enabled: false
+    variable: vorticity
+
+  - <<: *probe_spectrum
+    id: gaus-vorticity-spectrum
+    enabled: false
+    probe_set_id: gaus
+    variable: vorticity
+
+  - <<: *directional_wave
+    id: asym-vorticity-wave
+    enabled: false
+    variable: vorticity
+
+  - <<: *directional_wave
+    id: gaus-vorticity-wave
+    enabled: false
+    probe_set_id: gaus
+    variable: vorticity
+
+  - <<: *frequency_comparison
+    id: compare-vorticity-frequency
+    enabled: false
+    baseline: {analysis_id: asym-vorticity-spectrum}
+    comparison: {analysis_id: gaus-vorticity-spectrum}
+
+  - <<: *wave_comparison
+    id: compare-vorticity-wave
+    enabled: false
+    baseline: {analysis_id: asym-vorticity-wave}
+    comparison: {analysis_id: gaus-vorticity-wave}

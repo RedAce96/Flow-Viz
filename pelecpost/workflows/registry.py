@@ -215,7 +215,10 @@ RECIPES: dict[str, RecipeDefinition] = {
             inputs=(),
             fields=(),
             assumptions=("Compared artifacts use compatible coordinates and preprocessing.",),
-            outputs=("comparison.metrics", "comparison.figures", "comparison.overlay_figure"),
+            outputs=(
+                "comparison.metrics", "comparison.figures", "comparison.overlay_figure",
+                "comparison.psd_ratio_confidence", "comparison.psd_ratio_figure",
+            ),
             limitations=("Incompatible artifacts are rejected rather than interpolated silently.",),
         ),
     )

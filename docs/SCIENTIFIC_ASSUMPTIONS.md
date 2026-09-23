@@ -6,6 +6,11 @@ Stationary Welch, one-pulse finite-record transfer, transient STFT/envelope, and
 
 Positive directional wavenumber follows `cos(omega*t-k*x)`. Complex spatial wavenumber uses the documented `exp(i*(alpha*x-omega*t))` convention, so `-alpha_i` is amplification. Probe-derived waves and modes are measurement descriptions; they are not LST/PSE eigenmodes and do not establish causality.
 
+Directional-wave `direction` selects the sign of the fitted real wavenumber.
+With `direction: both`, positive and negative branches remain eligible. The
+configured expected-speed interval is applied to the magnitude of phase speed;
+the reported phase speed retains its propagation sign.
+
 Bicoherence is retained only with surrogate and false-discovery controls and still indicates association. Packet speed is a kinematic envelope regression with a confidence interval. Force conclusions inherit geometry coverage, normal-fit residual, grid/fit sensitivity, transport, baseline, reference area/span, and moment-origin assumptions.
 
 The optional flat-plate control-volume result is a steady momentum balance and

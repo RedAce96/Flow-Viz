@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import time
 import unittest
 from pathlib import Path
-import tempfile
 from unittest.mock import patch
 
 import numpy as np
 
 import pp_functions_database as reviewed_nonlinear
 import pp_modal_database as reviewed_modal
-
 from pelecpost.runtime.parallel import (
     ParallelStagePlan,
     ParallelTask,
@@ -106,6 +105,21 @@ class ParallelTests(unittest.TestCase):
         )
         self.assertEqual([item.value for item in results], [0, 1, 2])
         self.assertTrue(all(item.succeeded for item in results))
+
+    def test_single_effective_worker_recycles_process_when_requested(self):
+        plan = ParallelStagePlan(
+            stage="recycled-serial", requested_workers=5, effective_workers=1,
+            task_count=3, available_cpus=1, parent_resident_gb=0.0,
+            per_worker_peak_gb=0.1, estimated_concurrent_peak_gb=0.1,
+            limiting_reasons=("available_cpus",),
+        )
+        results = run_parallel_stage(
+            "recycled-serial",
+            [ParallelTask(i, f"task-{i}", i) for i in range(3)],
+            _double, plan, recycle_after_tasks=1,
+        )
+        self.assertEqual([item.value for item in results], [0, 2, 4])
+        self.assertEqual(len({item.worker_pid for item in results}), 3)
 
     def test_worker_failure_contains_task_identity_and_remote_traceback(self):
         plan = ParallelStagePlan(

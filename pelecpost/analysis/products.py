@@ -13,7 +13,6 @@ from typing import Any
 
 import numpy as np
 
-
 COMPARISON_POLICIES = (
     "strict", "intersection", "interpolate_to_baseline",
     "interpolate_to_comparison",
@@ -57,6 +56,11 @@ PRODUCT_DEFINITIONS: dict[str, dict[str, Any]] = {
             "raw_values": ("time", "space"),
             "processed_values": ("time", "space"),
             "amplitude": ("frequency", "space"),
+        },
+        "field_coordinates": {
+            "raw_values": ("raw_time_s", "x_m"),
+            "processed_values": ("time_s", "x_m"),
+            "amplitude": ("frequency_hz", "x_m"),
         },
     },
     "transient.stft": {
@@ -252,8 +256,11 @@ PRODUCT_DEFINITIONS: dict[str, dict[str, Any]] = {
         ),
     },
     "spectral.confidence": {
+        "schema_version": 3,
         "json_value_paths": (
             "segment_count", "approximate_degrees_of_freedom",
+            "effective_degrees_of_freedom", "correlation_correction",
+            "segment_samples", "overlap_samples", "hop_samples",
             "frequency_resolution_hz", "record_duration_s",
         ),
     },
@@ -394,6 +401,7 @@ def product_contract(
         "json_value_paths": tuple(definition.get("json_value_paths", ())),
         "required_json_value_paths": tuple(definition.get("json_value_paths", ())),
         "value_dimensions": definition.get("value_dimensions", {}),
+        "field_coordinates": definition.get("field_coordinates", {}),
         "value_units": definition.get("value_units", {}),
         "plotting_value_keys": tuple(definition.get("plotting_value_keys", ())),
         "validity_by_value": definition.get("validity_by_value"),

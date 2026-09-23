@@ -8,19 +8,19 @@ all user-visible logging.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 import multiprocessing as mp
-from multiprocessing.pool import ApplyResult
 import os
-from pathlib import Path
 import queue
 import resource
 import sys
 import time
 import traceback
-from typing import Any, Callable, Iterable
-
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from multiprocessing.pool import ApplyResult
+from pathlib import Path
+from typing import Any
 
 TaskFunction = Callable[[Any], Any]
 EventCallback = Callable[[str, dict[str, Any]], None]
@@ -103,6 +103,7 @@ def stage_readonly_array(
     """Write one temporary NumPy array that spawned workers can reopen read-only."""
 
     import tempfile
+
     import numpy as np
 
     data = np.asarray(array)
@@ -279,7 +280,7 @@ def _emit_worker_event(event: str, **details: Any) -> None:
         return
     payload = {
         "event": event,
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "timestamp_utc": datetime.now(UTC).isoformat(),
         "worker_pid": os.getpid(),
         **details,
     }
@@ -333,7 +334,7 @@ def _worker_entry(task: ParallelTask) -> ParallelTaskResult:
         except ImportError:
             pass
         value = _TASK_FUNCTION(task.payload)
-    except BaseException as exc:
+    except Exception as exc:  # noqa: BLE001 - task failures must become structured results.
         elapsed = time.perf_counter() - started
         result = ParallelTaskResult(
             index=task.index, task_id=task.task_id, elapsed_s=elapsed,
@@ -389,7 +390,7 @@ def _emit_parent_event(
     if callback is not None:
         callback(event, {
             "event": event,
-            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "timestamp_utc": datetime.now(UTC).isoformat(),
             **details,
         })
 
@@ -421,7 +422,7 @@ def _inline_result(
     )
     try:
         value = function(task.payload)
-    except BaseException as exc:
+    except Exception as exc:  # noqa: BLE001 - task failures must become structured results.
         _emit_parent_event(
             event_callback, "parallel-task-phase-failed", stage=stage,
             task_id=task.task_id, task_index=task.index, worker_pid=os.getpid(),
@@ -491,7 +492,12 @@ def run_parallel_stage(
     if not task_list:
         _emit_parent_event(event_callback, "parallel-stage-complete", stage=stage, task_count=0)
         return ()
-    if plan.effective_workers <= 1:
+    # A one-worker stage is still a process stage when recycling was requested.
+    # Running inline would make ``maxtasksperchild`` ineffective and lets native
+    # libraries (yt/NumPy/Matplotlib) retain allocator high-water memory across
+    # otherwise independent tasks.  A one-process pool preserves serial order
+    # while giving each task a fresh process when recycle_after_tasks=1.
+    if plan.effective_workers <= 1 and recycle_after_tasks is None:
         results: list[ParallelTaskResult] = []
         for task in task_list:
             result = _inline_result(stage, task, function, event_callback)
@@ -523,8 +529,9 @@ def run_parallel_stage(
     _configure_worker_environment()
     multiprocessing_context = mp.get_context("spawn")
     event_queue = multiprocessing_context.Queue(maxsize=max(64, plan.effective_workers * 8))
+    process_count = max(1, plan.effective_workers)
     pool = multiprocessing_context.Pool(
-        processes=plan.effective_workers,
+        processes=process_count,
         initializer=_worker_initializer,
         initargs=(event_queue, function),
         maxtasksperchild=recycle_after_tasks,
@@ -702,7 +709,7 @@ def run_parallel_stage(
                     pool.join()
                     raise ParallelTaskError(stage, result) from exc
                 if not isinstance(result, ParallelTaskResult):
-                    raise RuntimeError(f"parallel task {task.task_id!r} returned an invalid result")
+                    raise TypeError(f"parallel task {task.task_id!r} returned an invalid result")
                 if not result.succeeded:
                     _emit_parent_event(
                         event_callback, "parallel-task-failed", stage=stage,

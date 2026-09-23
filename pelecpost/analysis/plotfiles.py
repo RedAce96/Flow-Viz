@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-import json
 import csv
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
 import pp_functions_database as fields_api
 import pp_plotting_database as plotting_api
-import pelecpost.visualization as visualization
+from pelecpost import visualization
 from pelecpost.config.models import (
     AerodynamicForcesAnalysis,
     BoundaryLayerAnalysis,
@@ -431,8 +431,14 @@ def _flow_overview_render_worker(payload: dict) -> dict:
     presentation = PresentationConfig.model_validate(payload["presentation"])
     case_file = CaseFile.model_validate(payload["case_file"])
     worker_context = SimpleNamespace(
-        project=SimpleNamespace(case_file=case_file),
+        project=SimpleNamespace(
+            case_file=case_file,
+            analyses_file=SimpleNamespace(presentation=presentation),
+        ),
+        figure_dir=Path(payload["figure_dir"]),
+        data_dir=Path(payload["data_dir"]),
     )
+    worker_context.data_dir.mkdir(parents=True, exist_ok=True)
     path = str(payload["plotfile"])
     output_dir = Path(payload["figure_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -447,6 +453,14 @@ def _flow_overview_render_worker(payload: dict) -> dict:
     }
     output_fields = {item.value for item in analysis.fields}
     created: list[str] = []
+    contour_figures: list[str] = []
+    line_artifacts: list[dict] = []
+
+    def collect_artifact(**artifact: dict) -> None:
+        line_artifacts.append(artifact)
+        created.append(str(artifact["path"]))
+
+    worker_context.register = collect_artifact
     try:
         dataset = _load(worker_context, path, requested, _region(analysis))
         label = dataset["plot_label"]
@@ -459,7 +473,7 @@ def _flow_overview_render_worker(payload: dict) -> dict:
                 limits = _contour_limits(
                     dataset["fields"][field], style, shared_ranges.get(field),
                 )
-                figure, contour_axis, colorbar_axis, _, time_artist, resolved_limits = (
+                figure, contour_axis, colorbar_axis, _, time_artist, _resolved_limits = (
                     visualization.render_contour(
                         dataset, field, presentation, style, limits,
                         x_limits_m=analysis.x_limits_m,
@@ -482,20 +496,72 @@ def _flow_overview_render_worker(payload: dict) -> dict:
                         figure, output_dir / f"{label}_{field}", presentation.figure,
                     )
                     created.extend(str(item) for item in paths)
+                    contour_figures.extend(str(item) for item in paths)
                 except BaseException:
                     plt.close(figure)
                     raise
+            for station in analysis.line_stations_x_m:
+                profiles = []
+                for field in sorted(output_fields):
+                    if field not in dataset["fields"]:
+                        continue
+                    profile = _resample_cartesian_profile(
+                        fields_api.extract_line(dataset, station, field),
+                        analysis.line_profiles,
+                    )
+                    profile["label"] = field
+                    profiles.append(profile)
+                    table_path = worker_context.data_dir / (
+                        f"{label}_line_x_{station:.6g}_{field}.csv"
+                    )
+                    with table_path.open("w", newline="", encoding="utf-8") as stream:
+                        writer = csv.writer(stream)
+                        writer.writerow(("y_m", field))
+                        writer.writerows(zip(profile["y"], profile["values"]))
+                    collect_artifact(
+                        artifact_id=f"field.lines.data.{label}.x-{station:.9g}.{field}",
+                        path=table_path, kind="table", variable=field,
+                        units=f"y: m; value: {plotting_api.field_label(field)}",
+                        coordinate_metadata={
+                            "coordinate": "y_m", "requested_x_m": float(station),
+                            "sampled_x_m": float(profile["x_sampled"]),
+                        },
+                        interpretation="Configured Cartesian line extraction with explicit sampled coordinate.",
+                        provenance={
+                            "plotfile": path,
+                            "interpolation": analysis.line_profiles.interpolation,
+                        },
+                    )
+                if profiles:
+                    _render_cartesian_profiles(
+                        worker_context, analysis, dataset, label, station,
+                        profiles, time_text,
+                    )
+            if analysis.streamlines:
+                streamline = fields_api.extract_streamline_field(
+                    dataset, color_key="velocity_magnitude",
+                )
+                streamline_path = worker_context.figure_dir / f"{label}_streamlines.png"
+                plotting_api.plot_streamlines([streamline], output_path=streamline_path)
+                collect_artifact(
+                    artifact_id=f"field.streamlines.{label}", path=streamline_path,
+                    kind="figure", variable="velocity", units="m/s",
+                    coordinate_metadata={"x": "m", "y": "m"},
+                    interpretation="Steady streamlines of one instantaneous velocity field.",
+                )
         return {
             "plotfile": path,
             "plot_label": label,
             "time_text": time_text,
+            "freestream_reference": dataset.get("freestream_reference"),
             "resolved_ranges": {
                 field: list(_contour_limits(
                     dataset["fields"][field], styles[field], shared_ranges.get(field),
                 ))
                 for field in sorted(output_fields)
             },
-            "figures": created,
+            "figures": contour_figures,
+            "line_artifacts": line_artifacts,
         }
     except BaseException:
         for item in created:
@@ -800,7 +866,10 @@ def run_flow_overview(context: WorkflowContext) -> None:
         field: _field_contour_style(context, analysis, field)
         for field in sorted(output_fields)
     }
-    parallel_contours = int(context.project.machine_file.compute.workers) > 1 and len(paths) > 1
+    # The per-plotfile worker is also the memory-reclamation boundary when
+    # Slurm exposes one CPU.  Keep all plotfile loading/rendering in recycled
+    # children instead of silently reverting the memory-intensive stage inline.
+    parallel_contours = len(paths) > 1
     with context.timed_phase(
         "shared-contour-range-scan", plotfile_count=len(paths),
         fields=sorted(output_fields),
@@ -811,11 +880,11 @@ def run_flow_overview(context: WorkflowContext) -> None:
             )
         else:
             shared_ranges = _shared_contour_ranges(context, analysis, paths, requested, styles)
-    if parallel_contours:
-        payloads = [
+    payloads = [
             {
                 "plotfile": path,
                 "figure_dir": str(context.figure_dir),
+                "data_dir": str(context.data_dir),
                 "analysis": analysis.model_dump(mode="json"),
                 "case_file": context.project.case_file.model_dump(mode="json"),
                 "presentation": presentation.model_dump(mode="json"),
@@ -825,6 +894,8 @@ def run_flow_overview(context: WorkflowContext) -> None:
             }
             for path in paths
         ]
+    render_values = []
+    if parallel_contours:
         tasks = tuple(
             ParallelTask(index, f"plotfile-{index:06d}", payload, {"plotfile": payload["plotfile"]})
             for index, payload in enumerate(payloads)
@@ -852,123 +923,54 @@ def run_flow_overview(context: WorkflowContext) -> None:
                             ).unlink()
                         except FileNotFoundError:
                             pass
+                    try:
+                        (context.figure_dir / f"{label}_{field}_streamlines.png").unlink()
+                    except FileNotFoundError:
+                        pass
+                for station in analysis.line_stations_x_m:
+                    for field in sorted(output_fields):
+                        try:
+                            (context.data_dir / f"{label}_line_x_{station:.6g}_{field}.csv").unlink()
+                        except FileNotFoundError:
+                            pass
+                    profile_groups = (
+                        ["combined"] if analysis.line_profiles.layout == "combined"
+                        and len(output_fields) > 1 else sorted(output_fields)
+                    )
+                    for suffix in profile_groups:
+                        for output_format in formats:
+                            try:
+                                (context.figure_dir / f"{label}_line_x_{station:.6g}_{suffix}.{output_format}").unlink()
+                            except FileNotFoundError:
+                                pass
             raise
-        for result in contour_results:
-            value = result.value
-            for field in sorted(output_fields):
-                figure_paths = tuple(Path(item) for item in value["figures"] if f"_{field}." in item)
-                _register_figure_variants(
-                    context, artifact_id=f"field.contours.{value['plot_label']}.{field}",
-                    paths=figure_paths, variable=field, units="SI; see field label",
-                    coordinate_metadata={"x": "m", "y": "m"},
-                    interpretation="Descriptive two-dimensional field view at one registered plotfile time.",
-                    provenance={
-                        "plotfile": value["plotfile"],
-                        "resolved_color_range": value["resolved_ranges"].get(field),
-                        "parallel_stage": "flow-overview-contour-render",
-                    },
-                )
-    with visualization.presentation_context(presentation):
-        for plotfile_index, plotfile in enumerate(paths, start=1):
-            with context.timed_phase(
-                "render-pass-plotfile-load", plotfile=plotfile,
-                plotfile_index=plotfile_index, plotfile_count=len(paths),
-            ):
-                dataset = _load(context, plotfile, requested, _region(analysis))
-            label = dataset["plot_label"]
-            time_text = plotting_api.format_dataset_time(
-                dataset, precision=presentation.time_annotation.precision,
+        render_values = [result.value for result in contour_results]
+    elif payloads:
+        # A one-file run has no cross-task allocator accumulation to mitigate;
+        # keeping it inline also preserves the normal test and interactive path.
+        render_values = [_flow_overview_render_worker(payloads[0])]
+
+    for value in render_values:
+        for artifact in value.get("line_artifacts", []):
+            context.register(**artifact)
+        for field in sorted(output_fields):
+            figure_paths = tuple(Path(item) for item in value["figures"] if f"_{field}." in item)
+            _register_figure_variants(
+                context, artifact_id=f"field.contours.{value['plot_label']}.{field}",
+                paths=figure_paths, variable=field, units="SI; see field label",
+                coordinate_metadata={"x": "m", "y": "m"},
+                interpretation="Descriptive two-dimensional field view at one registered plotfile time.",
+                provenance={
+                    "plotfile": value["plotfile"],
+                    "freestream_reference": value.get("freestream_reference"),
+                    "contour_style": styles[field].model_dump(mode="json"),
+                    "resolved_color_range": value["resolved_ranges"].get(field),
+                    "parallel_stage": "flow-overview-contour-render" if parallel_contours else None,
+                },
             )
-            if not parallel_contours:
-                for field in sorted(output_fields):
-                    with context.timed_phase(
-                    "contour-render-and-save", field=field, plotfile=plotfile,
-                    plotfile_label=label, plotfile_index=plotfile_index,
-                    plotfile_count=len(paths),
-                ):
-                        style = styles[field]
-                        limits = _contour_limits(
-                            dataset["fields"][field], style, shared_ranges.get(field),
-                        )
-                        figure, contour_axis, colorbar_axis, _, time_artist, resolved_limits = (
-                            visualization.render_contour(
-                                dataset, field, presentation, style, limits,
-                                x_limits_m=analysis.x_limits_m, y_limits_m=analysis.y_limits_m,
-                                time_text=time_text,
-                            )
-                        )
-                        if time_artist is not None and visualization.artists_overlap(
-                            figure, time_artist, colorbar_axis,
-                        ):
-                            plt.close(figure)
-                            raise RuntimeError("time annotation overlaps the contour colorbar")
-                        if time_artist is not None and visualization.artists_overlap(
-                            figure, time_artist, contour_axis,
-                        ):
-                            plt.close(figure)
-                            raise RuntimeError("time annotation overlaps the contour data axes")
-                        if visualization.artists_overlap(figure, colorbar_axis, contour_axis):
-                            plt.close(figure)
-                            raise RuntimeError("contour colorbar or label overlaps the data axes")
-                        figure_paths = visualization.save_figure_variants(
-                            figure, context.figure_dir / f"{label}_{field}", presentation.figure,
-                        )
-                        _register_figure_variants(
-                            context, artifact_id=f"field.contours.{label}.{field}",
-                            paths=figure_paths, variable=field, units="SI; see field label",
-                            coordinate_metadata={"x": "m", "y": "m"},
-                            interpretation="Descriptive two-dimensional field view at one registered plotfile time.",
-                            provenance={
-                                "plotfile": plotfile,
-                                "freestream_reference": dataset.get("freestream_reference"),
-                                "contour_style": style.model_dump(mode="json"),
-                                "resolved_color_range": list(resolved_limits),
-                            },
-                        )
-            for station in analysis.line_stations_x_m:
-                profiles = []
-                for field in sorted(output_fields):
-                    if field not in dataset["fields"]:
-                        continue
-                    profile = _resample_cartesian_profile(
-                        fields_api.extract_line(dataset, station, field), analysis.line_profiles,
-                    )
-                    profile["label"] = field
-                    profiles.append(profile)
-                    table_path = context.data_dir / f"{label}_line_x_{station:.6g}_{field}.csv"
-                    with table_path.open("w", newline="", encoding="utf-8") as stream:
-                        writer = csv.writer(stream)
-                        writer.writerow(("y_m", field))
-                        writer.writerows(zip(profile["y"], profile["values"]))
-                    context.register(
-                        artifact_id=f"field.lines.data.{label}.x-{station:.9g}.{field}",
-                        path=table_path, kind="table", variable=field,
-                        units=f"y: m; value: {plotting_api.field_label(field)}",
-                        coordinate_metadata={
-                            "coordinate": "y_m", "requested_x_m": float(station),
-                            "sampled_x_m": float(profile["x_sampled"]),
-                        },
-                        interpretation="Configured Cartesian line extraction with explicit sampled coordinate.",
-                        provenance={
-                            "plotfile": plotfile,
-                            "interpolation": analysis.line_profiles.interpolation,
-                        },
-                    )
-                if profiles:
-                    _render_cartesian_profiles(
-                        context, analysis, dataset, label, station, profiles, time_text,
-                    )
-            if analysis.streamlines:
-                streamline = fields_api.extract_streamline_field(
-                    dataset, color_key="velocity_magnitude",
-                )
-                path = context.figure_dir / f"{label}_streamlines.png"
-                plotting_api.plot_streamlines([streamline], output_path=path)
-                context.register(
-                    artifact_id=f"field.streamlines.{label}", path=path, kind="figure",
-                    variable="velocity", units="m/s", coordinate_metadata={"x": "m", "y": "m"},
-                    interpretation="Steady streamlines of one instantaneous velocity field.",
-                )
+    # All selected files have been rendered and their artifacts registered from
+    # the worker results.  Do not reload them in the parent: that would recreate
+    # the same large yt/AMR object graph outside the recycling boundary.
 
 
 @executor("boundary_layer_reference")
@@ -1669,7 +1671,7 @@ def run_aerodynamic_forces(context: WorkflowContext) -> None:
                 sensitivity_item["grid_sensitivity_unavailable"] = coarsened_unavailable
             if unsmoothed_force is not None and unsmoothed_moment is not None:
                 sensitivity_item.update({
-                    "geometry_smoothing_window": getattr(geometry, "smoothing_window"),
+                    "geometry_smoothing_window": geometry.smoothing_window,
                     "unsmoothed_force_delta_n_m": (unsmoothed_force - force).tolist(),
                     "unsmoothed_moment_delta_n": unsmoothed_moment - moment,
                 })
